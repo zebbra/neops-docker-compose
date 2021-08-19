@@ -1,0 +1,21 @@
+version: "3.3"
+
+services:
+  tftpd:
+    image: quay.io/zebbra/neops-atftpd:latest
+    network_mode: "host"
+    #build:
+    #  network: host
+    # ports:
+    #   - 69:69/udp
+    expose:
+      - 69/udp
+    environment:
+      DEBUG: "${DEBUG}"
+    restart: "always"
+    volumes:
+      - ./data/tftp:/tftp
+
+networks:
+  private:
+    driver: bridge

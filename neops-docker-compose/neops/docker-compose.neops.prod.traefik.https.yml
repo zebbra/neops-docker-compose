@@ -1,0 +1,26 @@
+version: "3.3"
+
+services:
+  frontend:
+    labels:
+      traefik.http.routers.neops-https-router.entrypoints: https
+      traefik.http.routers.neops-https-router.tls: "true"
+      traefik.http.routers.neops-https-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`)
+      traefik.http.middlewares.neops-redirect.redirectscheme.scheme: https
+      traefik.http.routers.neops-http-router.middlewares: neops-redirect
+
+  flower:
+    labels:
+      traefik.http.routers.flower-https-router.entrypoints: https
+      traefik.http.routers.flower-https-router.tls: "true"
+      traefik.http.routers.flower-https-router.rule: Host(`${PUBLIC_FLOWER_HOSTNAME}`)
+      traefik.http.middlewares.flower-redirect.redirectscheme.scheme: https
+      traefik.http.routers.flower-http-router.middlewares: flower-redirect
+
+  kibana:
+    labels:
+      traefik.http.routers.kibana-https-router.entrypoints: https
+      traefik.http.routers.kibana-https-router.tls: "true"
+      traefik.http.routers.kibana-https-router.rule: Host(`${PUBLIC_KIBANA_HOSTNAME}`)
+      traefik.http.middlewares.kibana-redirect.redirectscheme.scheme: https
+      traefik.http.routers.kibana-https-router.middlewares: kibana-redirect

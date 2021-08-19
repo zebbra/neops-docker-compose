@@ -1,0 +1,210 @@
+version: "3.3"
+
+services:
+  redis:
+    image: redis:5
+    networks:
+      - private
+    restart: "on-failure"
+
+  postgres:
+    image: postgres:11-alpine
+    environment:
+      POSTGRES_USER: "neops"
+      POSTGRES_DB: "neops"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    volumes:
+      - ./data/neops_postgres:/var/lib/postgresql/data
+    networks:
+      - private
+    restart: "on-failure"
+
+  etcd:
+    image: quay.io/coreos/etcd
+    expose:
+      - 2379
+    networks:
+      - private
+    command: sh -c 'etcd -listen-client-urls http://0.0.0.0:2379 -advertise-client-urls http://etcd-srv:2379'
+
+  neops_init:
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    depends_on:
+      - elasticsearch
+      - postgres
+      - etcd
+    entrypoint: ["/app/init.sh"]
+    environment:
+      DEBUG: "False"
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY}"
+      DJANGO_ALLOWED_HOSTS: "${DOMAIN}"
+      REDIS_URL: "redis://redis:6379"
+      CORS_ORIGIN_ALLOW_ALL: "${CORS_ORIGIN_ALLOW_ALL}"
+      # ASGI_THREADS: "${ASGI_THREADS}"
+      NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
+      ELASTICSEARCH_HOSTS: "elasticsearch:9200"
+      ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
+      CORS_ORIGIN_ALLOW_ALL: "${CORS_ORIGIN_ALLOW_ALL}"
+      SENTRY_DSN: "${SENTRY_DSN}"
+      SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT}"
+      EMAIL_URL: "${EMAIL_URL}"
+      IMPORT_DEVICE_DEFAULT_PLATFORM: "${IMPORT_DEVICE_DEFAULT_PLATFORM}"
+      IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
+      IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
+    networks:
+      - private
+      
+  frontend:
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    depends_on:
+      - redis
+      - postgres
+      - elasticsearch
+      - neops_init
+    environment:
+      DEBUG: "False"
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY}"
+      DJANGO_ALLOWED_HOSTS: "${DOMAIN}"
+      REDIS_URL: "redis://redis:6379"
+      CORS_ORIGIN_ALLOW_ALL: "${CORS_ORIGIN_ALLOW_ALL}"
+      # ASGI_THREADS: "${ASGI_THREADS}"
+      NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
+      ELASTICSEARCH_HOSTS: "elasticsearch:9200"
+      ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
+      CORS_ORIGIN_ALLOW_ALL: "${CORS_ORIGIN_ALLOW_ALL}"
+      SENTRY_DSN: "${SENTRY_DSN}"
+      SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT}"
+      EMAIL_URL: "${EMAIL_URL}"
+      IMPORT_DEVICE_DEFAULT_PLATFORM: "${IMPORT_DEVICE_DEFAULT_PLATFORM}"
+      IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
+      IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
+    networks:
+      - private
+    volumes:
+      - ./data/neops_frontend/tmp:/tmp/
+    restart: "on-failure"
+
+  worker:
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    # entrypoint: ["sh", "-c", "sleep infinity"]
+    # pipenv run celery -A neopsapp worker -n w1 -l INFO --concurrency=1
+    command:
+      [
+        "/usr/local/bin/celery",
+        "-A",
+        "neopsapp",
+        "worker",
+        "-l",
+        "INFO",
+        "--concurrency=1",
+        "--prefetch-multiplier",
+        "1",
+        "-O",
+        "fair",
+        "--without-heartbeat"
+      ]
+    depends_on:
+      - redis
+      - postgres
+      - elasticsearch
+      - neops_init
+      - etcd
+    networks:
+      - private
+    environment:
+      DEBUG: "False"
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY}"
+      DJANGO_ALLOWED_HOSTS: "${DOMAIN}"
+      REDIS_URL: "redis://redis:6379"
+      NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
+      ELASTICSEARCH_HOSTS: "elasticsearch:9200"
+      ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
+      ELASTICSEARCH_DSL_SIGNAL_PROCESSOR: "${ELASTICSEARCH_DSL_SIGNAL_PROCESSOR}"
+      NORNIR_CLOSE_CONNECTION: "${NORNIR_CLOSE_CONNECTION}"
+      NORNIR_CONNECTION_DELAY_FACTOR: "${NORNIR_CONNECTION_DELAY_FACTOR}"
+      NORNIR_THREADS: "${NORNIR_THREADS}"
+      SENTRY_DSN: "${SENTRY_DSN}"
+      SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT}"
+      EMAIL_URL: "${EMAIL_URL}"
+      IMPORT_DEVICE_DEFAULT_PLATFORM: "${IMPORT_DEVICE_DEFAULT_PLATFORM}"
+      IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
+      IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
+      ETCD_HOST: "etcd"
+      ETCD_PORT: "2379"
+    restart: "on-failure"
+
+  beat:
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    # pipenv run celery -A neopsapp beat -l info --scheduler neops.enterprise.celery.cron.scheduler:NeopsCeleryScheduler
+    command:
+      [
+        "/usr/local/bin/celery",
+        "-A",
+        "neopsapp",
+        "beat",
+        "--scheduler",
+        "neops.enterprise.celery.cron.scheduler:NeopsCeleryScheduler",
+        "-l",
+        "INFO",
+      ]
+    depends_on:
+      - redis
+      - postgres
+      - elasticsearch
+      - neops_init
+    networks:
+      - private
+    environment:
+      DEBUG: "False"
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY}"
+      DJANGO_ALLOWED_HOSTS: "${DOMAIN}"
+      REDIS_URL: "redis://redis:6379"
+      NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
+      SENTRY_DSN: "${SENTRY_DSN}"
+      SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT}"
+    restart: "on-failure"
+
+  flower:
+    image: mher/flower
+    entrypoint: ["/bin/true"]
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - private
+
+  elasticsearch:
+    # image: docker.elastic.co/elasticsearch/elasticsearch:7.4.1
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.9.0
+    environment:
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      - discovery.type=single-node
+      - cluster.routing.allocation.disk.threshold_enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      - private
+    restart: "on-failure"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.9.0
+    entrypoint: ["/bin/true"]
+    networks:
+      - private
+
+volumes:
+  elasticsearch:
+    driver: local
+
+networks:
+  private:
+    driver: bridge

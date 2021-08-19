@@ -1,0 +1,41 @@
+version: "3.3"
+
+services:
+  frontend:
+    expose:
+      - "8000"
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.neops-http-router.entrypoints: http
+      traefik.http.routers.neops-http-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`)
+      traefik.http.services.neops-service.loadbalancer.server.port: "8000"
+      traefik.http.services.neops-service.loadbalancer.server.scheme: http
+
+  flower:
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.flower-http-router.entrypoints: http
+      traefik.http.routers.flower-http-router.rule: Host(`${PUBLIC_FLOWER_HOSTNAME}`)
+      traefik.http.services.flower-service.loadbalancer.server.port: "5555"
+      traefik.http.services.flower-service.loadbalancer.server.scheme: http
+
+  kibana:
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.kibana-http-router.entrypoints: http
+      traefik.http.routers.kibana-http-router.rule: Host(`${PUBLIC_KIBANA_HOSTNAME}`)
+      traefik.http.services.kibana-service.loadbalancer.server.port: "5601"
+      traefik.http.services.kibana-service.loadbalancer.server.scheme: http
+
+networks:
+  traefik:
+    external: true

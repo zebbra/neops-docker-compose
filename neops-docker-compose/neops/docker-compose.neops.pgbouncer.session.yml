@@ -1,0 +1,40 @@
+version: "3.3"
+
+services:
+  pgbouncer:
+    image: edoburu/pgbouncer
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
+      POOL_MODE: "session"
+      LISTEN_PORT: 6432
+      ADMIN_USERS: neops
+      DEFAULT_POOL_SIZE: 50
+    expose:
+      - 6432
+    networks:
+      - private
+    restart: "on-failure"
+
+  frontend:
+    depends_on:
+      - pgbouncer
+    environment:
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@pgbouncer:6432/neops"
+      DATABASE_HEALTH_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
+      PGBOUNCER_TRANSACTION: "False"
+
+  worker:
+    depends_on:
+      - pgbouncer
+    environment:
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@pgbouncer:6432/neops"
+      PGBOUNCER_TRANSACTION: "False"
+
+  beat:
+    depends_on:
+      - pgbouncer
+    environment:
+      DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@pgbouncer:6432/neops"
+      PGBOUNCER_TRANSACTION: "False"

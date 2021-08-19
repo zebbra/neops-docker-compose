@@ -1,0 +1,28 @@
+version: "3.3"
+
+services:
+  kea:
+    image: quay.io/zebbra/neops-kea-dhcp:latest
+    networks:
+      - private
+    ports:
+      - 67:67/udp
+    environment:
+      KEA_DEBUG: "${DEBUG}"
+      KEA_TFTP_IP: "${TFTP_IP}"
+      KEA_DNS_IP: "${DNS_IP}"
+      KEA_HOOK_NEOPS_API_URL: "${NEOPS_API_URL}"
+      KEA_HOOK_NEOPS_API_KEY: "${NEOPS_API_KEY}"
+      KEA_HOOK_NEOPS_UNIQUE_TASK: "${NEOPS_UNIQUE_TASK}"
+      KEA_HOOK_DEVICES_DEFAULT_USERNAME: "${DEVICES_DEFAULT_USERNAME}"
+      KEA_HOOK_DEVICE_DEFAULT_PW: "${DEVICE_DEFAULT_PW}"
+      KEA_HOOK_DEBUG: "${HOOK_DEBUG}"
+      KEA_HOOK_ADDITIONAL_INFORMATION: "${ADDITIONAL_INFORMATION}"
+      KEA_HOOK_HOSTNAME_STARTSWITH: "${HOSTNAME_STARTSWITH}"
+    restart: "always"
+    volumes:
+      - ./data/kea:/etc/kea
+
+networks:
+  private:
+    driver: bridge

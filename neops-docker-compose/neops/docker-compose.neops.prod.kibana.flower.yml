@@ -1,0 +1,10 @@
+version: "3.3"
+
+services:
+  flower:
+    entrypoint:
+      ["celery", "flower", "--broker=redis://redis:6379/0", "--port=5555"]
+
+  kibana:
+    entrypoint: ["/usr/local/bin/dumb-init", "--"]
+    command: ["/usr/local/bin/kibana-docker"]

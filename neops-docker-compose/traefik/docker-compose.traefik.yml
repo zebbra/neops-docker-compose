@@ -1,0 +1,46 @@
+version: "3.3"
+
+services:
+  traefik:
+    container_name: traefik
+    image: traefik:2.2
+    ports:
+      - "80:80"
+      - "443:443"
+    command:
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      - --providers.docker.exposedByDefault=false
+      - --log.level=DEBUG
+      - --api=true
+      - --api.dashboard=true
+      - --providers.file.filename=/etc/traefik/certs.yml
+      - --providers.file.watch=true
+
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.traefik-dashboard-http-router.entrypoints: http
+      traefik.http.routers.traefik-dashboard-http-router.rule: Host(`${PUBLIC_TRAEFIK_HOSTNAME}`)
+      traefik.http.middlewares.traefik-dashboard-redirect.redirectscheme.scheme: https
+      traefik.http.routers.traefik-dashboard-http-router.middlewares: traefik-dashboard-redirect
+      # traefik.http.middlewares.traefik-dashboard-auth.basicauth.users: admin:$$apr1$$YCBR.H9G$$GZunUHf1cdN/X8ao.YTDT/
+      # traefik.http.routers.traefik-dashboard-https-router.middlewares: traefik-dashboard-auth
+      traefik.http.routers.traefik-dashboard-https-router.service: api@internal
+      traefik.http.routers.traefik-dashboard-https-router.entrypoints: https
+      traefik.http.routers.traefik-dashboard-https-router.tls: "true"
+      traefik.http.routers.traefik-dashboard-https-router.rule: Host(`${PUBLIC_TRAEFIK_HOSTNAME}`)
+    environment:
+      no_proxy: "*"
+      NO_PROXY: "*"
+    networks:
+      - traefik
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./certs/:/etc/traefik/certs/:ro"
+      - "./certs.yml:/etc/traefik/certs.yml"
+
+    restart: "always"
+
+networks:
+  traefik:
+    external: true

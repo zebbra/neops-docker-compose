@@ -1,0 +1,20 @@
+version: "3.3"
+services:
+  keycloak:
+    expose:
+      - "8080"
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.keycloak-http-router.entrypoints: http
+      traefik.http.routers.keycloak-http-router.rule: Host(`${PUBLIC_KEYCLOAK_HOSTNAME}`)
+      traefik.http.services.keycloak-service.loadbalancer.server.port: "8080"
+      traefik.http.services.keycloak-service.loadbalancer.server.scheme: http
+
+networks:
+  private:
+    driver: bridge
+  traefik:
+    external: true

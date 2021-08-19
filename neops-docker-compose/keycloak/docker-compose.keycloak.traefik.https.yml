@@ -1,0 +1,9 @@
+version: "3.3"
+services:
+  keycloak:
+    labels:
+      traefik.http.routers.keycloak-https-router.entrypoints: https
+      traefik.http.routers.keycloak-https-router.tls: "true"
+      traefik.http.routers.keycloak-https-router.rule: Host(`${PUBLIC_KEYCLOAK_HOSTNAME}`)
+      traefik.http.middlewares.keycloak-redirect.redirectscheme.scheme: https
+      traefik.http.routers.keycloak-http-router.middlewares: keycloak-redirect
