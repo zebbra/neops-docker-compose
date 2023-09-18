@@ -2,7 +2,7 @@ version: "3.3"
 
 services:
   pgbouncer:
-    image: edoburu/pgbouncer
+    image: edoburu/pgbouncer:1.18.0
     depends_on:
       - postgres
     environment:
