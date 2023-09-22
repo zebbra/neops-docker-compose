@@ -8,7 +8,7 @@ services:
     restart: "on-failure"
 
   postgres:
-    image: postgres:11-alpine
+    image: postgres:15-alpine
     environment:
       POSTGRES_USER: "neops"
       POSTGRES_DB: "neops"
@@ -51,6 +51,8 @@ services:
       IMPORT_DEVICE_DEFAULT_PLATFORM: "${IMPORT_DEVICE_DEFAULT_PLATFORM}"
       IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
       IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
+      DJANGO_ALLOW_ASYNC_UNSAFE: "True"
+
     networks:
       - private
       
@@ -78,6 +80,7 @@ services:
       IMPORT_DEVICE_DEFAULT_PLATFORM: "${IMPORT_DEVICE_DEFAULT_PLATFORM}"
       IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
       IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
+      DJANGO_ALLOW_ASYNC_UNSAFE: "True"
     networks:
       - private
     volumes:
@@ -133,6 +136,7 @@ services:
       ETCD_HOST: "etcd"
       ETCD_PORT: "2379"
       NEOPS_ELASTIC_CONVERT_FACTS: "${NEOPS_ELASTIC_CONVERT_FACTS}"
+      DJANGO_ALLOW_ASYNC_UNSAFE: "True"
     restart: "on-failure"
 
   beat:
@@ -165,6 +169,7 @@ services:
       NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
       SENTRY_DSN: "${SENTRY_DSN}"
       SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT}"
+      DJANGO_ALLOW_ASYNC_UNSAFE: "True"
     restart: "on-failure"
 
   flower:
@@ -178,7 +183,7 @@ services:
 
   elasticsearch:
     # image: docker.elastic.co/elasticsearch/elasticsearch:7.4.1
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.9.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.2
     environment:
       - bootstrap.memory_lock=true
       - ES_JAVA_OPTS=-Xms2g -Xmx2g
@@ -195,7 +200,7 @@ services:
     restart: "on-failure"
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:7.9.0
+    image: docker.elastic.co/kibana/kibana:8.9.2
     entrypoint: ["/bin/true"]
     networks:
       - private
