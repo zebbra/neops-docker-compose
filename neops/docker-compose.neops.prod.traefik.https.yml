@@ -4,16 +4,16 @@ services:
       traefik.http.routers.neops-frontend-https-router.entrypoints: https
       traefik.http.routers.neops-frontend-https-router.tls: "true"
       traefik.http.routers.neops-frontend-https-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`)
-      # traefik.http.middlewares.neops-frontend-redirect.redirectscheme.scheme: https
-      # traefik.http.routers.neops-frontend-http-router.middlewares: neops-frontend-redirect
+      traefik.http.middlewares.neops-frontend-redirect.redirectscheme.scheme: https
+      traefik.http.routers.neops-frontend-http-router.middlewares: neops-frontend-redirect
 
   backend:
     labels:
       traefik.http.routers.neops-backend-https-router.entrypoints: https
       traefik.http.routers.neops-backend-https-router.tls: "true"
       traefik.http.routers.neops-backend-https-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`) && (Path(`/graphql`) || PathPrefix(`/graphiql/`) || PathPrefix(`/admin/`) || PathPrefix(`/djstatic`) || Headers(`Upgrade`, `websocket`) || Headers(`Sec-Websocket-Protocol`, `graphql-ws`))
-      # traefik.http.middlewares.neops-backend-redirect.redirectscheme.scheme: https
-      # traefik.http.routers.neops-backend-http-router.middlewares: neops-backend-redirect
+      traefik.http.middlewares.neops-backend-redirect.redirectscheme.scheme: https
+      traefik.http.routers.neops-backend-http-router.middlewares: neops-backend-redirect
 
   flower:
     labels:

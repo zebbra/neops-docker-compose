@@ -1,20 +1,21 @@
 services:
   frontend:
     deploy:
+      replicas: ${NEOPS_FRONTEND_REPLICAS:-1}
       resources:
         limits:
           memory: "${NEOPS_FRONTEND_MEMORY:-500M}"
 
   backend:
     deploy:
+      replicas: ${NEOPS_BACKEND_REPLICAS:-1}
       resources:
         limits:
-          cpus: "${NEOPS_BACKEND_MEMORY:-1G}"
-          memory: 500M
+          memory: "${NEOPS_BACKEND_MEMORY:-1G}"
 
   worker:
     deploy:
+      replicas: ${NEOPS_WORKER_REPLICAS:-3}
       resources:
         limits:
-          cpus: "${NEOPS_WORKER_MEMORY:-1G}"
-          memory: 500M
+          memory: "${NEOPS_WORKER_MEMORY:-1G}"
