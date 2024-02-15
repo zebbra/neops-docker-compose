@@ -1,5 +1,3 @@
-version: "3.3"
-
 services:
   redis:
     image: redis:7
@@ -28,7 +26,7 @@ services:
     command: sh -c 'etcd -listen-client-urls http://0.0.0.0:2379 -advertise-client-urls http://etcd-srv:2379'
 
   neops_init:
-    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG:-1}
     depends_on:
       - elasticsearch
       - postgres
@@ -43,7 +41,7 @@ services:
       CORS_ORIGIN_ALLOW_ALL: "${CORS_ORIGIN_ALLOW_ALL}"
       # ASGI_THREADS: "${ASGI_THREADS}"
       NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
-      ELASTICSEARCH_HOSTS: "elasticsearch:9200"
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
       ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
       SENTRY_DSN: "${SENTRY_DSN}"
       SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT}"
@@ -52,12 +50,23 @@ services:
       IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
       IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
       DJANGO_ALLOW_ASYNC_UNSAFE: "True"
-
     networks:
       - private
       
   frontend:
-    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    image: quay.io/zebbra/neops-legacy-frontend:${NEOPS_LEGACY_FRONTEND_TAG:-1}
+    depends_on:
+      - redis
+      - postgres
+      - elasticsearch
+      - neops_init
+    environment:
+      - FRONTEND_NEOPS_URL=${NEOPS_API_URL:-}
+    networks:
+      - private
+
+  backend:
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG:-1}
     depends_on:
       - redis
       - postgres
@@ -72,7 +81,7 @@ services:
       CORS_ORIGIN_ALLOW_ALL: "${CORS_ORIGIN_ALLOW_ALL}"
       # ASGI_THREADS: "${ASGI_THREADS}"
       NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
-      ELASTICSEARCH_HOSTS: "elasticsearch:9200"
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
       ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
       SENTRY_DSN: "${SENTRY_DSN}"
       SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT}"
@@ -88,7 +97,7 @@ services:
     restart: "on-failure"
 
   worker:
-    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG:-1}
     # entrypoint: ["sh", "-c", "sleep infinity"]
     # pipenv run celery -A neopsapp worker -n w1 -l INFO --concurrency=1
     command:
@@ -121,7 +130,7 @@ services:
       DJANGO_ALLOWED_HOSTS: "${DOMAIN}"
       REDIS_URL: "redis://redis:6379"
       NEOPS_PLUGINS: "${NEOPS_PLUGINS}"
-      ELASTICSEARCH_HOSTS: "elasticsearch:9200"
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
       ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
       ELASTICSEARCH_DSL_SIGNAL_PROCESSOR: "${ELASTICSEARCH_DSL_SIGNAL_PROCESSOR}"
       NORNIR_CLOSE_CONNECTION: "${NORNIR_CLOSE_CONNECTION}"
@@ -140,7 +149,7 @@ services:
     restart: "on-failure"
 
   beat:
-    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG}
+    image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG:-1}
     # pipenv run celery -A neopsapp beat -l info --scheduler neops.enterprise.celery.cron.scheduler:NeopsCeleryScheduler
     command:
       [
