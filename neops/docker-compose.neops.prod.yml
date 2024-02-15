@@ -61,7 +61,7 @@ services:
       - elasticsearch
       - neops_init
     environment:
-      - FRONTEND_NEOPS_URL=
+      - FRONTEND_NEOPS_URL=${NEOPS_API_URL:-}
     networks:
       - private
 
