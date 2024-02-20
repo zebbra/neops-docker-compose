@@ -24,7 +24,7 @@ services:
       - private
     restart: "on-failure"
 
-  frontend:
+  backend:
     depends_on:
       - pgbouncer
     environment:
