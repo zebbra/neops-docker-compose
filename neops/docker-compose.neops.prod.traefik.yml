@@ -21,7 +21,7 @@ services:
       traefik.enable: "true"
       traefik.docker.network: traefik
       traefik.http.routers.neops-backend-http-router.entrypoints: http
-      traefik.http.routers.neops-backend-http-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`) && (Path(`/graphql`) || PathPrefix(`/graphiql/`) || PathPrefix(`/admin/`) || PathPrefix(`/djstatic`))
+      traefik.http.routers.neops-backend-http-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`) && (Path(`/graphql`) || PathPrefix(`/graphiql/`) || PathPrefix(`/admin/`) || PathPrefix(`/djstatic`) || PathPrefix(`/webhook/`))
       traefik.http.services.neops-backend-service.loadbalancer.server.port: "8000"
       traefik.http.services.neops-backend-service.loadbalancer.server.scheme: http
 
