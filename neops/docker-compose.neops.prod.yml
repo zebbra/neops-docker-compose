@@ -17,20 +17,20 @@ services:
       - private
     restart: "on-failure"
 
-  etcd:
-    image: quay.io/coreos/etcd
-    expose:
-      - 2379
-    networks:
-      - private
-    command: sh -c 'etcd -listen-client-urls http://0.0.0.0:2379 -advertise-client-urls http://etcd-srv:2379'
+  # etcd:
+  #  image: quay.io/coreos/etcd
+  #  expose:
+  #    - 2379
+  #  networks:
+  #    - private
+  #  command: sh -c 'etcd -listen-client-urls http://0.0.0.0:2379 -advertise-client-urls http://etcd-srv:2379'
 
   neops_init:
     image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG:-1}
     depends_on:
       - elasticsearch
       - postgres
-      - etcd
+      # - etcd
     entrypoint: ["/app/init.sh"]
     environment:
       DEBUG: "False"
@@ -120,7 +120,7 @@ services:
       - postgres
       - elasticsearch
       - neops_init
-      - etcd
+      # - etcd
     networks:
       - private
     environment:
@@ -142,8 +142,8 @@ services:
       IMPORT_DEVICE_DEFAULT_PLATFORM: "${IMPORT_DEVICE_DEFAULT_PLATFORM}"
       IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
       IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
-      ETCD_HOST: "etcd"
-      ETCD_PORT: "2379"
+      # ETCD_HOST: "etcd"
+      # ETCD_PORT: "2379"
       NEOPS_ELASTIC_CONVERT_FACTS: "${NEOPS_ELASTIC_CONVERT_FACTS}"
       DJANGO_ALLOW_ASYNC_UNSAFE: "True"
     restart: "on-failure"
