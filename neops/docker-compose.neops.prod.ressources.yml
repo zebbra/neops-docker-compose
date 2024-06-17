@@ -19,3 +19,9 @@ services:
       resources:
         limits:
           memory: "${NEOPS_WORKER_MEMORY:-1G}"
+
+  elasticsearch:
+    deploy:
+      resources:
+        limits:
+          memory: "${NEOPS_ELASTICSEARCH_MEMORY:-2G}"
