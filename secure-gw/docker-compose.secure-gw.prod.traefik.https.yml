@@ -1,0 +1,16 @@
+services:
+  web-client-sgw:
+    labels:
+      traefik.http.routers.neops-webclient-sgw-https-router.entrypoints: https
+      traefik.http.routers.neops-webclient-sgw-https-router.tls: "true"
+      traefik.http.routers.neops-webclient-sgw-https-router.rule: Host(`${PUBLIC_SECURE_GW_HOSTNAME}`)
+      traefik.http.middlewares.neops-webclient-sgw-redirect.redirectscheme.scheme: https
+      traefik.http.routers.neops-webclient-sgw-http-router.middlewares: neops-webclient-sgw-redirect
+
+  secure-gw:
+    labels:
+      traefik.http.routers.neops-secure-gw-https-router.entrypoints: https
+      traefik.http.routers.neops-secure-gw-https-router.tls: "true"
+      traefik.http.routers.neops-secure-gw-https-router.rule: Host(`${PUBLIC_SECURE_GW_HOSTNAME}`) && Path(`/graphql`)
+      traefik.http.middlewares.neops-secure-gw-redirect.redirectscheme.scheme: https
+      traefik.http.routers.neops-secure-gw-http-router.middlewares: neops-secure-gw-redirect

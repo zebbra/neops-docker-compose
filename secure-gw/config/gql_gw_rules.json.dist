@@ -1,0 +1,14 @@
+{
+  "transformers": {
+    "operationAllow": [],
+    "operationDeny": []
+  },
+  "resolvers": {
+    "valueErasers": [],
+    "jsonData": [],
+    "tasksAllow": null,
+    "tasksDeny": [],
+    "reportsAllow": null,
+    "reportsDeny": []
+  }
+}
