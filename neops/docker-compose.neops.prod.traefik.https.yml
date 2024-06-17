@@ -1,4 +1,12 @@
 services:
+  web-client:
+    labels:
+      traefik.http.routers.neops-webclient-https-router.entrypoints: https
+      traefik.http.routers.neops-webclient-https-router.tls: "true"
+      traefik.http.routers.neops-webclient-https-router.rule: Host(`${PUBLIC_WEBCLIENT_HOSTNAME}`)
+      traefik.http.middlewares.neops-webclient-redirect.redirectscheme.scheme: https
+      traefik.http.routers.neops-webclient-http-router.middlewares: neops-webclient-redirect
+
   frontend:
     labels:
       traefik.http.routers.neops-frontend-https-router.entrypoints: https

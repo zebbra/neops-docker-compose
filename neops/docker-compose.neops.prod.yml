@@ -53,6 +53,13 @@ services:
     networks:
       - private
       
+  web-client:
+    image: quay.io/zebbra/neops-web-client:${NEOPS_WEBCLIENT_IMAGE_TAG:-0.1}
+    environment:
+      FRONTEND_GRAPHQL_ENDPOINT: ${NEOPS_API_URL}
+      # FRONTEND_DEVMODE: "true"
+    restart: "on-failure"
+
   frontend:
     image: quay.io/zebbra/neops-legacy-frontend:${NEOPS_LEGACY_FRONTEND_TAG:-1}
     depends_on:

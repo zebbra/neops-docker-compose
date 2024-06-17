@@ -1,4 +1,17 @@
 services:
+  web-client:
+    expose:
+      - "80"
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.neops-webclient-http-router.entrypoints: http
+      traefik.http.routers.neops-webclient-http-router.rule: Host(`${PUBLIC_WEBCLIENT_HOSTNAME}`)
+      traefik.http.services.neops-webclient-service.loadbalancer.server.port: "80"
+      traefik.http.services.neops-webclient-service.loadbalancer.server.scheme: http
+
   frontend:
     expose:
       - "80"
