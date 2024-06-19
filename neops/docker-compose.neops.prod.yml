@@ -17,21 +17,12 @@ services:
       - private
     restart: "on-failure"
 
-  # etcd:
-  #  image: quay.io/coreos/etcd
-  #  expose:
-  #    - 2379
-  #  networks:
-  #    - private
-  #  command: sh -c 'etcd -listen-client-urls http://0.0.0.0:2379 -advertise-client-urls http://etcd-srv:2379'
-
   neops_init:
     image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG:-1}
     depends_on:
       - elasticsearch
       - postgres
-      # - etcd
-    entrypoint: ["/app/init.sh"]
+    entrypoint: [ "/app/init.sh" ]
     environment:
       DEBUG: "False"
       DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
@@ -52,18 +43,19 @@ services:
       DJANGO_ALLOW_ASYNC_UNSAFE: "True"
     networks:
       - private
-      
+
+  web-client:
+    image: quay.io/zebbra/neops-web-client:${NEOPS_WEBCLIENT_IMAGE_TAG:-0.1}
+    environment:
+      FRONTEND_GRAPHQL_ENDPOINT: ${NEOPS_API_URL}
+      # FRONTEND_DEVMODE: "true"
+    restart: "on-failure"
+
   frontend:
-    image: quay.io/zebbra/neops-legacy-frontend:${NEOPS_LEGACY_FRONTEND_TAG:-1}
-    depends_on:
-      - redis
-      - postgres
-      - elasticsearch
-      - neops_init
+    image: quay.io/zebbra/neops-legacy-frontend:${NEOPS_LEGACY_FRONTEND_IMAGE_TAG:-1}
     environment:
       FRONTEND_NEOPS_URL: ${NEOPS_API_URL}
-    networks:
-      - private
+    restart: "on-failure"
 
   backend:
     image: quay.io/zebbra/neops-core:${NEOPS_IMAGE_TAG:-1}
@@ -93,7 +85,7 @@ services:
     networks:
       - private
     volumes:
-      - ./data/neops_frontend/tmp:/tmp/
+      - ./data/neops_backend/tmp:/tmp/
     restart: "on-failure"
 
   worker:
@@ -120,7 +112,6 @@ services:
       - postgres
       - elasticsearch
       - neops_init
-      # - etcd
     networks:
       - private
     environment:
@@ -142,8 +133,6 @@ services:
       IMPORT_DEVICE_DEFAULT_PLATFORM: "${IMPORT_DEVICE_DEFAULT_PLATFORM}"
       IMPORT_DEVICE_DEFAULT_USERNAME: "${IMPORT_DEVICE_DEFAULT_USERNAME}"
       IMPORT_DEVICE_DEFAULT_PASSWORD: "${IMPORT_DEVICE_DEFAULT_PASSWORD}"
-      # ETCD_HOST: "etcd"
-      # ETCD_PORT: "2379"
       NEOPS_ELASTIC_CONVERT_FACTS: "${NEOPS_ELASTIC_CONVERT_FACTS}"
       DJANGO_ALLOW_ASYNC_UNSAFE: "True"
     restart: "on-failure"
@@ -160,7 +149,7 @@ services:
         "--scheduler",
         "neops.enterprise.celery.cron.scheduler:NeopsCeleryScheduler",
         "-l",
-        "INFO",
+        "INFO"
       ]
     depends_on:
       - redis
@@ -183,7 +172,7 @@ services:
 
   flower:
     image: mher/flower
-    entrypoint: ["/bin/true"]
+    entrypoint: [ "/bin/true" ]
     depends_on:
       - redis
       - postgres
@@ -191,11 +180,10 @@ services:
       - private
 
   elasticsearch:
-    # image: docker.elastic.co/elasticsearch/elasticsearch:7.4.1
     image: docker.elastic.co/elasticsearch/elasticsearch:8.9.2
     environment:
       - bootstrap.memory_lock=true
-      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      # - ES_JAVA_OPTS=-Xms2g -Xmx2g
       - discovery.type=single-node
       - cluster.routing.allocation.disk.threshold_enabled=false
       - xpack.security.enabled=false
@@ -211,7 +199,7 @@ services:
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.9.2
-    entrypoint: ["/bin/true"]
+    entrypoint: [ "/bin/true" ]
     networks:
       - private
 
