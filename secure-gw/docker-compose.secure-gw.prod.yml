@@ -8,9 +8,9 @@ services:
   secure-gw:
     image: quay.io/zebbra/neops-gql-gtw:${NEOPS_SECURE_GW_IMAGE_TAG:-0.1}
     environment:
-      - PATH_TO_RULES=config/gql_gw_rules.json
+      - PATH_TO_RULES=config/secure_gw_rules.json
       - GRAPHQL_ENDPOINT_NEOPS=${NEOPS_API_URL}
       - STATIC_AUTH_TOKEN=${STATIC_AUTH_TOKEN}
     volumes:
-      - ./config/gql_gw_rules.json/:/usr/src/app/config/gql_gw_rules.json
+      - ./config/secure_gw_rules.json/:/usr/src/app/config/secure_gw_rules.json
     restart: "on-failure"
