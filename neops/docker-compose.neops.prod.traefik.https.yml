@@ -19,7 +19,7 @@ services:
     labels:
       traefik.http.routers.neops-backend-https-router.entrypoints: https
       traefik.http.routers.neops-backend-https-router.tls: "true"
-      traefik.http.routers.neops-backend-https-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`) && (Path(`/graphql`) || PathPrefix(`/graphiql/`) || PathPrefix(`/admin/`) || PathPrefix(`/djstatic`) || PathPrefix(`/webhook/`) || Headers(`Upgrade`, `websocket`) || Headers(`Sec-Websocket-Protocol`, `graphql-ws`))
+      traefik.http.routers.neops-backend-https-router.rule: Host(`${PUBLIC_NEOPS_HOSTNAME}`) && (Path(`/graphql`) || Path(`/graphql/`) || PathPrefix(`/graphiql/`) || PathPrefix(`/admin/`) || PathPrefix(`/djstatic`) || PathPrefix(`/webhook/`) || Headers(`Upgrade`, `websocket`) || Headers(`Sec-Websocket-Protocol`, `graphql-ws`))
       traefik.http.middlewares.neops-backend-redirect.redirectscheme.scheme: https
       traefik.http.routers.neops-backend-http-router.middlewares: neops-backend-redirect
 
