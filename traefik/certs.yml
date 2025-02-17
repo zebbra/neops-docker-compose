@@ -1,4 +1,0 @@
-tls:
-  certificates:
-    - certFile: "/etc/traefik/certs/neops.localtest.me.pem"
-      keyFile: "/etc/traefik/certs/neops.localtest.me-key.pem"

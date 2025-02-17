@@ -1,0 +1,30 @@
+services:
+  web-client-sgw:
+    expose:
+      - "80"
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.neops-webclient-sgw-http-router.entrypoints: http
+      traefik.http.routers.neops-webclient-sgw-http-router.rule: Host(`${PUBLIC_SECURE_GW_HOSTNAME}`)
+      traefik.http.services.neops-webclient-sgw-service.loadbalancer.server.port: "80"
+      traefik.http.services.neops-webclient-sgw-service.loadbalancer.server.scheme: http
+
+  secure-gw:
+    expose:
+      - "3001"
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.neops-secure-gw-http-router.entrypoints: http
+      traefik.http.routers.neops-secure-gw-http-router.rule: Host(`${PUBLIC_SECURE_GW_HOSTNAME}`) && Path(`/graphql`)
+      traefik.http.services.neops-secure-gw-service.loadbalancer.server.port: "3001"
+      traefik.http.services.neops-secure-gw-service.loadbalancer.server.scheme: http
+
+networks:
+  traefik:
+    external: true
