@@ -1,9 +1,7 @@
-version: "3.3"
-
 services:
   keycloak:
     container_name: keycloak
-    image: jboss/keycloak:16.1.1
+    image:  quay.io/keycloak/keycloak:26.1
     #sysctls:
     #  - net.core.rmem_max = 20971520
     #  - net.core.wmem_max = 1048576
@@ -31,6 +29,7 @@ services:
       # - "./standalone.xml:/opt/jboss/keycloak/standalone/configuration/standalone.xml"
       - "./customca.jks:/opt/jboss/keycloak/standalone/configuration/keystores/customca.jks"
       - "./truststore.cli:/opt/jboss/startup-scripts/truststore.cli"
+      # - "./realm-export.json:/opt/keycloak/data/import/realm-export.json"
     restart: "on-failure"
 
   postgres:
