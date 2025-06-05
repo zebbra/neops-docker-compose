@@ -22,7 +22,7 @@ services:
     depends_on:
       - elasticsearch
       - postgres
-    entrypoint: [ "/app/init.sh" ]
+    entrypoint: [ "/app/backend/init.sh" ]
     environment:
       DEBUG: "False"
       DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD}@postgres:5432/neops"
