@@ -1,0 +1,28 @@
+---
+services:
+  pnp:
+    image: quay.io/zebbra/neops-pnp-guestshell:latest
+    restart: "on-failure"
+    environment:
+      - NEOPS_API=${NEOPS_API_URL}
+      - NEOPS_API_KEY=${NEOPS_API_KEY}
+      - NEOPS_TASK_NAME=${NEOPS_TASK_NAME}
+      # - PORT=${PORT}
+      - PNP_EXT_ADDR=${PNP_EXT_ADDR}
+      - PNP_EXT_PORT=${PNP_EXT_PORT}
+      - USERNAME=${DEVICES_DEFAULT_USERNAME}
+      - PASSWORD=${DEVICES_DEFAULT_PW}
+      - PNP_TEMPLATE=${PNP_TEMPLATE}
+      #- LISTEN_INTERFACE=${LISTEN_INTERFACE}
+      #- PNP_DEBUG=${PNP_DEBUG}
+      #- DEBUG_LEVEL=${DEBUG_LEVEL}
+    volumes:
+      - ./data/pnp:/pnp/templates/custom
+    networks:
+      - private
+    ports:
+      - "${PNP_EXT_PORT}:8000"
+
+networks:
+  private:
+    driver: bridge
