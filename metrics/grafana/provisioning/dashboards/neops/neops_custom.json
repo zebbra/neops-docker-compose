@@ -1,0 +1,143 @@
+{
+  "title": "neops / Custom Metrics",
+  "uid": "neops-custom",
+  "tags": ["neops"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Global Metrics",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "bargauge",
+      "title": "Global metrics — latest values",
+      "description": "Metrics written via set_global_metric / inc_global_metric (no task label).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "x": 0, "y": 1, "w": 24, "h": 8 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "noValue": "no global metrics yet"
+        }
+      },
+      "targets": [{
+        "expr": "{__name__=~\"neops_custom_.*\", task=\"\"}",
+        "legendFormat": "{{__name__}}",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" }
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Global metrics — history",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "x": 0, "y": 9, "w": 24, "h": 9 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 8 } } },
+      "targets": [{
+        "expr": "{__name__=~\"neops_custom_.*\", task=\"\"}",
+        "legendFormat": "{{__name__}}",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" }
+      }]
+    },
+    {
+      "type": "row",
+      "title": "Tasks Overview",
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "table",
+      "title": "Tasks with custom metrics",
+      "description": "Click a task name to open the per-task dashboard.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "x": 0, "y": 19, "w": 12, "h": 10 },
+      "options": { "sortBy": [{ "displayName": "metrics", "desc": true }] },
+      "fieldConfig": {
+        "defaults": { "custom": { "filterable": true } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "task" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [{
+                  "title": "Open task dashboard →",
+                  "url": "/d/neops-custom-task?var-task=${__data.fields.task}",
+                  "targetBlank": false
+                }]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [{ "id": "displayName", "value": "metrics" }]
+          },
+          { "matcher": { "id": "byName", "options": "__name__" }, "properties": [{ "id": "custom.hidden", "value": true }] },
+          { "matcher": { "id": "byName", "options": "job" },      "properties": [{ "id": "custom.hidden", "value": true }] }
+        ]
+      },
+      "transformations": [
+        { "id": "labelsToFields", "options": { "mode": "columns" } },
+        { "id": "merge", "options": {} }
+      ],
+      "targets": [{
+        "expr": "count by (task) ({__name__=~\"neops_custom_.*\", task!=\"\"})",
+        "legendFormat": "{{task}}",
+        "instant": true,
+        "datasource": { "type": "prometheus", "uid": "${datasource}" }
+      }]
+    },
+    {
+      "type": "bargauge",
+      "title": "Metric series per task",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "x": 12, "y": 19, "w": 12, "h": 10 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "short",
+          "noValue": "0"
+        }
+      },
+      "targets": [{
+        "expr": "count by (task) ({__name__=~\"neops_custom_.*\", task!=\"\"})",
+        "legendFormat": "{{task}}",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" }
+      }]
+    }
+  ],
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {}
+}
