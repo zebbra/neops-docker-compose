@@ -1,0 +1,59 @@
+groups:
+  - name: neops
+    interval: 1m
+    rules:
+      - alert: NeopsBackendDown
+        expr: up{job="neops"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "neops backend is unreachable"
+          description: "{{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: NeopsHighTaskFailureRate
+        expr: |
+          sum(rate(neops_task_executions_total{state="FAILURE"}[15m])) /
+          sum(rate(neops_task_executions_total[15m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High neops task failure rate ({{ $value | humanizePercentage }})"
+          description: "More than 10% of task executions have failed over the last 15 minutes."
+
+      - alert: NeopsCeleryQueueHigh
+        expr: sum(neops_celery_queue_depth) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery queue depth high ({{ $value }})"
+          description: "Combined Celery queue depth has exceeded 50 for 5 minutes."
+
+      - alert: NeopsCeleryQueueCritical
+        expr: sum(neops_celery_queue_depth) > 200
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery queue depth critical ({{ $value }})"
+          description: "Combined Celery queue depth has exceeded 200 — tasks are stacking up."
+
+      - alert: NeopsESSyncLagHigh
+        expr: sum(neops_elasticsearch_sync_lag_total) > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elasticsearch sync lag high ({{ $value }} objects)"
+          description: "More than 500 neops objects are pending ES sync for over 5 minutes."
+
+      - alert: NeopsESClusterNotGreen
+        expr: neops_elasticsearch_cluster_status > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "neops reports ES cluster not green (status={{ $value }})"
+          description: "neops_elasticsearch_cluster_status is non-zero (1=yellow, 2=red)."

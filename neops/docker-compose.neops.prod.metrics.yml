@@ -1,0 +1,105 @@
+services:
+  celery-exporter:
+    image: danihodovic/celery-exporter:latest
+    command:
+      - "--broker-url=redis://redis:6379/0"
+    networks:
+      - private
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    networks:
+      - private
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      - DATA_SOURCE_NAME=postgresql://neops:${POSTGRES_PASSWORD}@postgres:5432/neops?sslmode=disable
+    networks:
+      - private
+    restart: unless-stopped
+
+  elasticsearch-exporter:
+    image: prometheuscommunity/elasticsearch-exporter:latest
+    command:
+      - "--es.uri=http://elasticsearch:9200"
+      - "--es.all"
+      - "--es.indices"
+    networks:
+      - private
+    restart: unless-stopped
+
+  vmalert:
+    image: victoriametrics/vmalert:latest
+    command:
+      - "--datasource.url=http://victoriametrics:8428"
+      - "--remoteWrite.url=http://victoriametrics:8428"
+      - "--remoteRead.url=http://victoriametrics:8428"
+      - "--rule=/etc/vmalert/rules/*.yml"
+      - "--evaluationInterval=1m"
+      - "--notifier.blackhole=true"
+    volumes:
+      - ../metrics/vmalert/rules:/etc/vmalert/rules:ro
+    networks:
+      - private
+    depends_on:
+      - victoriametrics
+    restart: unless-stopped
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    command:
+      - "--promscrape.config=/etc/victoriametrics/scrape_config.yml"
+      - "--retentionPeriod=30d"
+      - "--storageDataPath=/victoria-metrics-data"
+    volumes:
+      - ../metrics/scrape_config.yml:/etc/victoriametrics/scrape_config.yml:ro
+      - vm_data:/victoria-metrics-data
+    networks:
+      - private
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   command:
+  #     - "--config.file=/etc/prometheus/prometheus.yml"
+  #     - "--storage.tsdb.path=/prometheus"
+  #     - "--storage.tsdb.retention.time=30d"
+  #   volumes:
+  #     - ../metrics/scrape_config.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus_data:/prometheus
+  #   networks:
+  #     - private
+  #   restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+
+    volumes:
+      - ../metrics/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - private
+    restart: unless-stopped
+
+volumes:
+  vm_data:
+    driver: local
+  # prometheus_data:
+  #   driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  private:
+    external: true
+    name: neops_private
