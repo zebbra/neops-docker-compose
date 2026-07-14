@@ -32,7 +32,7 @@ x-backend-environment: &backend-environment
   NEOPS_GIT_SYNC_WEB_URL: "${NEOPS_GIT_SYNC_WEB_URL:-}"
   # Register a periodic pull at migrate time (checked via ls-remote — cheap)
   NEOPS_GIT_SYNC_AUTO_PULL_MIGRATION: "true"
-  NEOPS_GIT_SYNC_PULL_INTERVAL_MINUTES: "${NEOPS_GIT_SYNC_PULL_INTERVAL_MINUTES:-1}"
+  NEOPS_GIT_SYNC_PULL_INTERVAL_MINUTES: "${NEOPS_GIT_SYNC_PULL_INTERVAL_MINUTES:-5}"
 
 services:
   redis:
