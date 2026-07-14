@@ -8,12 +8,20 @@ multiple instances bound to different branches of one task repository.
 compose project name, host ports and the git-sync role — compose project
 isolation gives every instance its own containers, network and volumes:
 
+Two branches: `dev` (working branch) and `prod` (released state) — create both
+on the git host before syncing. Local engineer instances and the customer dev
+instance share `dev`; promotion to `prod` happens via merge on the git host.
+
 | Instance | Backend | Frontend | Branch | Mode |
 |---|---|---|---|---|
-| dev-main | :8001 | :8081 | `main` | bidirectional |
-| dev-prod | :8002 | :8082 | `prod` | bidirectional |
-| cust-dev | :8003 | :8083 | `customer-dev` | bidirectional |
-| cust-prod | :8004 | :8084 | `customer-prod` | **pull-only** (git is SoT) |
+| dev-main (local dev) | :8001 | :8081 | `dev` | bidirectional |
+| dev-prod (local prod) | :8002 | :8082 | `prod` | bidirectional |
+| cust-dev | :8003 | :8083 | `dev` | bidirectional |
+| cust-prod | :8004 | :8084 | `prod` | **pull-only** (git is SoT) |
+
+> Note: dev-main and cust-dev are BOTH auto-push writers on `dev` — that is
+> deliberate for the demo (it exercises the concurrent-edit behaviour), but
+> for a real deployment keep one bidirectional instance per branch.
 
 Ports 8000/8080 stay free for a natively running dev setup.
 
