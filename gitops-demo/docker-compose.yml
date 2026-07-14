@@ -22,7 +22,7 @@ x-backend-environment: &backend-environment
   CORS_ORIGIN_ALLOW_ALL: "True"
   ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
   ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
-  NEOPS_PLUGINS: "${NEOPS_PLUGINS:-neops_auth_static_api_key neops_auth_django neops_permissions_simple neops_cron neops_webhook neops_git_sync}"
+  NEOPS_PLUGINS: "${NEOPS_PLUGINS:-neops_auth_static_api_key neops_auth_django neops_permissions_simple neops_cron neops_webhook neops_netbox neops_git_sync}"
   DJANGO_ALLOW_ASYNC_UNSAFE: "True"
   # ── git sync (the point of this demo) ──────────────────────────────────
   NEOPS_GIT_SYNC_ENABLED: "${NEOPS_GIT_SYNC_ENABLED:-true}"
