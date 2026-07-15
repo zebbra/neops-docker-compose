@@ -38,10 +38,563 @@
   "panels": [
     {
       "type": "row",
-      "title": "Latest Values",
+      "title": "Operational",
       "gridPos": {
         "x": 0,
         "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Last state",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "successful",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "partial_failed",
+                  "color": "orange",
+                  "index": 1
+                },
+                "2": {
+                  "text": "failed",
+                  "color": "red",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "no finished run"
+        }
+      },
+      "targets": [
+        {
+          "expr": "neops_task_last_state{task=\"$task\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "Outcome of the last finished execution. Running executions don't affect it."
+    },
+    {
+      "type": "stat",
+      "title": "Since last finished",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "never ran"
+        }
+      },
+      "targets": [
+        {
+          "expr": "min(neops_task_last_execution_age_seconds{task=\"$task\"})",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "Time since the most recent finished execution of this task."
+    },
+    {
+      "type": "stat",
+      "title": "Last duration",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "no run in window"
+        }
+      },
+      "targets": [
+        {
+          "expr": "neops_task_last_execution_duration_seconds{task=\"$task\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "Dispatch-to-completion duration of the most recent finished execution (within the lookback window)."
+    },
+    {
+      "type": "stat",
+      "title": "Executions stored",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(neops_task_executions{task=\"$task\"})",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "Execution rows currently in the DB for this task (shrinks with retention)."
+    },
+    {
+      "type": "stat",
+      "title": "Success last 24h",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "clamp_min(sum(delta(neops_task_executions{task=\"$task\",state=\"successful\"}[24h])), 0)",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "New successful executions in the last 24h (snapshot delta, retention dips clamped to 0)."
+    },
+    {
+      "type": "stat",
+      "title": "Failures (7d window)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(neops_task_failure_exceptions{task=\"$task\"})",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "Failed/partial-failed executions within the lookback window."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "successful",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "partial_failed",
+                  "color": "orange",
+                  "index": 1
+                },
+                "2": {
+                  "text": "failed",
+                  "color": "red",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 6
+      },
+      "options": {
+        "alignValue": "left",
+        "fillOpacity": 70,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "never",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "expr": "neops_task_last_state{task=\"$task\"}",
+          "legendFormat": "last finished state",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "title": "State history",
+      "type": "state-timeline"
+    },
+    {
+      "type": "timeseries",
+      "title": "Executions per hour by state",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 6
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "clamp_min(sum by (state) (delta(neops_task_executions{task=\"$task\"}[1h])), 0)",
+          "legendFormat": "{{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "New executions per state, hourly (snapshot delta, retention dips clamped to 0)."
+    },
+    {
+      "type": "timeseries",
+      "title": "Execution duration trend",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 12,
+        "h": 6
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          },
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "expr": "neops_task_last_execution_duration_seconds{task=\"$task\"}",
+          "legendFormat": "last execution duration",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "Duration of the most recent finished execution over time (updates whenever a new execution finishes)."
+    },
+    {
+      "type": "timeseries",
+      "title": "Failures by exception (7-day window)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 11,
+        "w": 12,
+        "h": 6
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (exception) (neops_task_failure_exceptions{task=\"$task\"})",
+          "legendFormat": "{{exception}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "description": "Failed executions per neops exception code within the sliding lookback window (5-min server-side cache)."
+    },
+    {
+      "type": "row",
+      "title": "Latest Values",
+      "gridPos": {
+        "x": 0,
+        "y": 17,
         "w": 24,
         "h": 1
       },
@@ -56,7 +609,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 1,
+        "y": 18,
         "w": 24,
         "h": 10
       },
@@ -100,7 +653,7 @@
       "title": "History",
       "gridPos": {
         "x": 0,
-        "y": 11,
+        "y": 28,
         "w": 24,
         "h": 1
       },
@@ -115,7 +668,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 29,
         "w": 24,
         "h": 10
       },
@@ -157,7 +710,7 @@
       "title": "Snapshot",
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 39,
         "w": 24,
         "h": 1
       },
@@ -172,7 +725,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 23,
+        "y": 40,
         "w": 24,
         "h": 8
       },
