@@ -1,7 +1,9 @@
 {
-  "title": "neops / Custom Metrics — by Task",
+  "title": "neops / Custom Metrics \u2014 by Task",
   "uid": "neops-custom-task",
-  "tags": ["neops"],
+  "tags": [
+    "neops"
+  ],
   "timezone": "browser",
   "refresh": "30s",
   "schemaVersion": 38,
@@ -19,8 +21,11 @@
       {
         "name": "task",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(neops_task_executions_total, task)",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(neops_task_executions, task)",
         "refresh": 2,
         "includeAll": false,
         "multi": false,
@@ -34,82 +39,212 @@
     {
       "type": "row",
       "title": "Latest Values",
-      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
     {
       "type": "bargauge",
-      "title": "$task — current values",
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "x": 0, "y": 1, "w": 24, "h": 10 },
+      "title": "$task \u2014 current values",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 10
+      },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "orientation": "horizontal",
         "displayMode": "gradient",
         "showUnfilled": true
       },
       "fieldConfig": {
         "defaults": {
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
-          "noValue": "no data — run the task first"
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "no data \u2014 run the task first"
         }
       },
-      "targets": [{
-        "expr": "{__name__=~\"neops_custom_.*\", task=\"$task\"}",
-        "legendFormat": "{{__name__}}",
-        "datasource": { "type": "prometheus", "uid": "${datasource}" }
-      }]
+      "targets": [
+        {
+          "expr": "{__name__=~\"neops_custom_.*\", task=\"$task\"}",
+          "legendFormat": "{{__name__}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
     },
     {
       "type": "row",
       "title": "History",
-      "gridPos": { "x": 0, "y": 11, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
     {
       "type": "timeseries",
-      "title": "$task — metric history",
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 10 },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max", "mean"] },
-        "tooltip": { "mode": "multi" }
+      "title": "$task \u2014 metric history",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
       },
-      "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 8 } } },
-      "targets": [{
-        "expr": "{__name__=~\"neops_custom_.*\", task=\"$task\"}",
-        "legendFormat": "{{__name__}}",
-        "datasource": { "type": "prometheus", "uid": "${datasource}" }
-      }]
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 24,
+        "h": 10
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "{__name__=~\"neops_custom_.*\", task=\"$task\"}",
+          "legendFormat": "{{__name__}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
     },
     {
       "type": "row",
       "title": "Snapshot",
-      "gridPos": { "x": 0, "y": 22, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
     {
       "type": "table",
-      "title": "$task — latest metric values",
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "x": 0, "y": 23, "w": 24, "h": 8 },
-      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
-      "fieldConfig": { "defaults": { "custom": { "filterable": true } }, "overrides": [
-        { "matcher": { "id": "byName", "options": "__name__" }, "properties": [{ "id": "custom.hidden", "value": true }] },
-        { "matcher": { "id": "byName", "options": "job" },      "properties": [{ "id": "custom.hidden", "value": true }] }
-      ]},
+      "title": "$task \u2014 latest metric values",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 8
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "__name__"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "job"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
       "transformations": [
-        { "id": "labelsToFields", "options": { "mode": "columns" } },
-        { "id": "merge", "options": {} }
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
       ],
-      "targets": [{
-        "expr": "{__name__=~\"neops_custom_.*\", task=\"$task\"}",
-        "legendFormat": "{{__name__}}",
-        "instant": true,
-        "datasource": { "type": "prometheus", "uid": "${datasource}" }
-      }]
+      "targets": [
+        {
+          "expr": "{__name__=~\"neops_custom_.*\", task=\"$task\"}",
+          "legendFormat": "{{__name__}}",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
     }
   ],
-  "time": { "from": "now-3h", "to": "now" },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
   "timepicker": {}
 }

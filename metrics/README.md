@@ -71,7 +71,26 @@ For prod, switch the neops scrape target in `scrape_config.yml` to `backend:8000
 
 ## Pairs well with
 
-The **neops_metrics** enterprise plugin (`neops_modules/enterprise/neops_metrics`) exposes a `/metrics` endpoint on the neops backend with task execution counts, device/scope stats, facts, ES sync lag, Celery queue depth, and a Redis-backed custom metric API for use inside Jinja2 task templates.
+The **neops_metrics** enterprise plugin (`neops_modules/enterprise/neops_metrics`) exposes a `/metrics` endpoint on the neops backend with task execution counts, device/scope stats, facts, retention health, ES sync lag, Celery queue depth, opt-in LogEntry size tracking (`NEOPS_METRICS_LOG_SIZE_TRACKING` — feeds the "Task Logging" dashboard row and the `NeopsOversizedLogWrites` alert), and a Redis-backed custom metric API for use inside Jinja2 task templates.
+
+For compose deployments a single backend container is the scrape target and the default plugin configuration is correct as-is. (Kubernetes deployments with multiple backend replicas use the dedicated `manage.py metrics_exporter` instead — see the plugin README.)
+
+### Metric changes in neops-core >= 1.18.7-beta.6
+
+The provisioned dashboards and alert rules require **neops-core 1.18.7-beta.6 or newer**:
+
+- `neops_task_executions_total`, `neops_task_failure_exceptions_total`, and `neops_task_failure_unknown_exceptions_total` lost their `_total` suffix and are **gauges** (DB snapshots that shrink with retention). Don't use `rate()`/`increase()` on them — the dashboards use clamped `delta()` instead. Update any custom dashboards accordingly.
+- The failure breakdowns cover a sliding lookback window (`NEOPS_METRICS_LOOKBACK_DAYS`, default 7 days), no longer all time.
+- `neops_task_last_state` only reflects **finished** executions (a running task no longer shows as failed).
+
+### Django dashboards need opt-in instrumentation
+
+The fetched community dashboards `django-overview`, `django-requests`, `django-database`, and `django-models` rely on django_prometheus in-process metrics, which are **disabled by default** since 1.18.7-beta.6 (they are only accurate with a single worker process). To use them, run the backend with `--workers 1` and set:
+
+```
+NEOPS_METRICS_INSTRUMENT_HTTP=true
+NEOPS_METRICS_INSTRUMENT_DB=true
+```
 
 ## Grafana 12 upgrade checklist
 

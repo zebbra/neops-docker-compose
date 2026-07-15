@@ -11,16 +11,44 @@ groups:
           summary: "neops backend is unreachable"
           description: "{{ $labels.instance }} has been down for more than 2 minutes."
 
-      - alert: NeopsHighTaskFailureRate
-        expr: |
-          sum(rate(neops_task_executions_total{state="FAILURE"}[15m])) /
-          sum(rate(neops_task_executions_total[15m])) > 0.1
+      # neops_task_last_state: 0=successful, 1=partial_failed, 2=failed.
+      # Only finished executions count — a running execution never trips this.
+      - alert: NeopsTaskFailed
+        expr: neops_task_last_state == 2
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High neops task failure rate ({{ $value | humanizePercentage }})"
-          description: "More than 10% of task executions have failed over the last 15 minutes."
+          summary: "neops task {{ $labels.task }} failed"
+          description: "The last finished execution of task {{ $labels.task }} failed."
+
+      - alert: NeopsTaskPartialFailed
+        expr: neops_task_last_state == 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "neops task {{ $labels.task }} partially failed"
+          description: "The last finished execution of task {{ $labels.task }} partially failed and has not recovered for 30 minutes."
+
+      - alert: NeopsRetentionBacklogHigh
+        expr: neops_execution_retention_backlog_total > 10000
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Execution retention backlog high ({{ $value }} rows)"
+          description: "More than 10k Execution rows are past the retention cutoff — the retention task isn't keeping up (or is disabled while EXECUTION_LOG_RETENTION_DAYS is set)."
+
+      # Only fires when NEOPS_METRICS_LOG_SIZE_TRACKING is enabled (true counter).
+      - alert: NeopsOversizedLogWrites
+        expr: sum by (task) (increase(neops_logentry_oversized_total[1h])) > 100
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "neops task {{ $labels.task }} is writing oversized log messages"
+          description: "Task {{ $labels.task }} wrote {{ $value }} log messages over the oversized threshold in the last hour — likely logging full device output instead of a summary."
 
       - alert: NeopsCeleryQueueHigh
         expr: sum(neops_celery_queue_depth) > 50

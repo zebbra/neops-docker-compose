@@ -524,13 +524,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(neops_task_executions_total{state=\"successful\"}[1h]))",
+          "expr": "clamp_min(sum(delta(neops_task_executions{state=\"successful\"}[1h])), 0)",
           "legendFormat": "",
           "refId": "A"
         }
       ],
       "title": "Success last 1h",
-      "type": "stat"
+      "type": "stat",
+      "description": "New successful executions in the last hour, computed as a delta over the DB snapshot gauge. Dips caused by retention pruning are clamped to 0."
     },
     {
       "datasource": {
@@ -588,13 +589,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(neops_task_executions_total{state=~\"failed|partial_failed\"}[1h]))",
+          "expr": "clamp_min(sum(delta(neops_task_executions{state=~\"failed|partial_failed\"}[1h])), 0)",
           "legendFormat": "",
           "refId": "A"
         }
       ],
       "title": "Failed last 1h",
-      "type": "stat"
+      "type": "stat",
+      "description": "New failed/partial-failed executions in the last hour (snapshot delta, retention dips clamped to 0)."
     },
     {
       "datasource": {
@@ -845,13 +847,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (state) (increase(neops_task_executions_total[5m]))",
+          "expr": "clamp_min(sum by (state) (delta(neops_task_executions[5m])), 0)",
           "legendFormat": "{{state}}",
           "refId": "A"
         }
       ],
       "title": "Execution rate by state (per 5 min)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "New executions per state, as 5-minute deltas over the DB snapshot gauge (retention dips clamped to 0)."
     },
     {
       "datasource": {
@@ -1060,16 +1063,53 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
-          }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
         },
         "overrides": []
       },
@@ -1081,39 +1121,16 @@
       },
       "id": 17,
       "options": {
-        "calculate": false,
-        "cellGap": 1,
-        "color": {
-          "exponent": 0.5,
-          "fill": "dark-orange",
-          "mode": "scheme",
-          "reverse": false,
-          "scale": "exponential",
-          "scheme": "Oranges",
-          "steps": 64
-        },
-        "exemplars": {
-          "color": "rgba(255,0,255,0.7)"
-        },
-        "filterValues": {
-          "le": 1e-9
-        },
         "legend": {
-          "show": true
-        },
-        "rowsFrame": {
-          "layout": "auto"
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "single",
-          "showColorScale": false,
-          "yHistogram": false
-        },
-        "yAxis": {
-          "axisPlacement": "left",
-          "decimals": 0,
-          "reverse": false,
-          "unit": "s"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "pluginVersion": "11.5.2",
@@ -1123,13 +1140,32 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(neops_task_execution_duration_seconds_bucket[$__rate_interval])) by (le)",
-          "legendFormat": "{{le}}",
+          "expr": "histogram_quantile(0.5, sum by (le) (neops_task_execution_duration_seconds_bucket))",
+          "legendFormat": "p50",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le) (neops_task_execution_duration_seconds_bucket))",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (neops_task_execution_duration_seconds_bucket))",
+          "legendFormat": "p99",
+          "refId": "C"
         }
       ],
-      "title": "Execution duration distribution",
-      "type": "heatmap"
+      "title": "Execution duration quantiles (7-day window)",
+      "type": "timeseries",
+      "description": "histogram_quantile over the snapshot histogram of all finished executions in the lookback window \u2014 a smoothed distribution, not a per-interval rate."
     },
     {
       "datasource": {
@@ -1307,7 +1343,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "neops_task_executions_total",
+          "expr": "neops_task_executions",
           "instant": true,
           "legendFormat": "count",
           "refId": "count"
@@ -1435,13 +1471,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(10, sum by (exception) (neops_task_failure_exceptions_total))",
+          "expr": "topk(10, sum by (exception) (neops_task_failure_exceptions))",
           "legendFormat": "{{exception}}",
           "refId": "A"
         }
       ],
-      "title": "Top failure codes (all time)",
-      "type": "bargauge"
+      "title": "Top failure codes (last 7 days)",
+      "type": "bargauge",
+      "description": "Failed/partial-failed executions per neops exception code within the 7-day lookback window (5-min server-side cache)."
     },
     {
       "datasource": {
@@ -1509,7 +1546,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(10, sum by (exception_class) (neops_task_failure_unknown_exceptions_total))",
+          "expr": "topk(10, sum by (exception_class) (neops_task_failure_unknown_exceptions))",
           "legendFormat": "{{exception_class}}",
           "refId": "A"
         }
@@ -1605,13 +1642,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (exception) (increase(neops_task_failure_exceptions_total[1h]))",
+          "expr": "clamp_min(sum by (exception) (delta(neops_task_failure_exceptions[1h])), 0)",
           "legendFormat": "{{exception}}",
           "refId": "A"
         }
       ],
       "title": "New failures per 1h by exception type",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Newly recorded failures per exception code. The underlying gauge covers a sliding 7-day window; failures aging out of the window are clamped to 0."
     },
     {
       "datasource": {
@@ -1702,7 +1740,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "neops_task_failure_exceptions_total",
+          "expr": "neops_task_failure_exceptions",
           "instant": true,
           "legendFormat": "{{task}} / {{exception}}",
           "refId": "A"
@@ -2375,7 +2413,7 @@
           "refId": "A"
         }
       ],
-      "title": "Fact staleness — age since last write",
+      "title": "Fact staleness \u2014 age since last write",
       "type": "timeseries"
     },
     {
@@ -3027,6 +3065,750 @@
       ],
       "title": "Celery queue depth",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 84,
+        "w": 24,
+        "h": 1
+      },
+      "id": 43,
+      "title": "Execution Retention",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Off",
+                  "index": 0
+                },
+                "1": {
+                  "text": "On",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 85,
+        "w": 3,
+        "h": 4
+      },
+      "id": 44,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "neops_execution_log_retention_enabled",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Retention enabled",
+      "type": "stat",
+      "description": "Mirrors EXECUTION_LOG_RETENTION_ENABLED."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "d"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 3,
+        "y": 85,
+        "w": 3,
+        "h": 4
+      },
+      "id": 45,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "neops_execution_log_retention_days",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Retention cutoff",
+      "type": "stat",
+      "description": "Configured EXECUTION_LOG_RETENTION_DAYS."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 85,
+        "w": 4,
+        "h": 4
+      },
+      "id": 46,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "neops_execution_retention_backlog_total",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Backlog past cutoff",
+      "type": "stat",
+      "description": "Execution rows older than the retention cutoff still present. Non-zero and growing means the retention task isn't keeping up."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 85,
+        "w": 4,
+        "h": 4
+      },
+      "id": 47,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "neops_execution_oldest_age_seconds",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Oldest execution age",
+      "type": "stat",
+      "description": "Age of the oldest Execution row currently stored."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 85,
+        "w": 10,
+        "h": 8
+      },
+      "id": 48,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "neops_execution_retention_backlog_total",
+          "legendFormat": "backlog",
+          "refId": "A"
+        }
+      ],
+      "title": "Retention backlog over time",
+      "type": "timeseries",
+      "description": "Rows past the retention cutoff. Should saw-tooth around 0 when the retention task keeps up."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 93,
+        "w": 24,
+        "h": 1
+      },
+      "id": 49,
+      "title": "Task Logging (LogEntry)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 94,
+        "w": 12,
+        "h": 8
+      },
+      "id": 50,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (task) (increase(neops_logentry_bytes_total[1h]))",
+          "legendFormat": "{{task}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Log bytes written per task (1h)",
+      "type": "timeseries",
+      "description": "Bytes written to LogEntry.message per task, hourly. True counter \u2014 increase() is valid. Opt-in via NEOPS_METRICS_LOG_SIZE_TRACKING \u2014 empty unless enabled on the workers."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 94,
+        "w": 12,
+        "h": 8
+      },
+      "id": 51,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (task) (increase(neops_logentry_oversized_total[1h]))",
+          "legendFormat": "{{task}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Oversized log writes per task (1h)",
+      "type": "timeseries",
+      "description": "LogEntry writes exceeding NEOPS_METRICS_LOG_OVERSIZED_THRESHOLD_BYTES \u2014 a task template logging full device output instead of a summary. Opt-in via NEOPS_METRICS_LOG_SIZE_TRACKING \u2014 empty unless enabled on the workers."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 102,
+        "w": 12,
+        "h": 7
+      },
+      "id": 52,
+      "options": {
+        "displayMode": "gradient",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(10, sum by (task) (neops_logentry_bytes_total))",
+          "legendFormat": "{{task}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top log-writing tasks (total bytes)",
+      "type": "bargauge",
+      "description": "Opt-in via NEOPS_METRICS_LOG_SIZE_TRACKING \u2014 empty unless enabled on the workers."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 102,
+        "w": 12,
+        "h": 7
+      },
+      "id": 53,
+      "options": {
+        "displayMode": "gradient",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(10, sum by (task) (neops_logentry_oversized_total))",
+          "legendFormat": "{{task}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top oversized-log tasks (total writes)",
+      "type": "bargauge",
+      "description": "Opt-in via NEOPS_METRICS_LOG_SIZE_TRACKING \u2014 empty unless enabled on the workers."
     }
   ],
   "preload": false,
