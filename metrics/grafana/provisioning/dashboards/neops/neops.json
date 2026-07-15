@@ -1163,9 +1163,9 @@
           "refId": "C"
         }
       ],
-      "title": "Execution duration quantiles (7-day window)",
+      "title": "Execution duration quantiles (lookback window)",
       "type": "timeseries",
-      "description": "histogram_quantile over the snapshot histogram of all finished executions in the lookback window \u2014 a smoothed distribution, not a per-interval rate."
+      "description": "histogram_quantile over the snapshot histogram of finished executions within NEOPS_METRICS_LOOKBACK_DAYS - a smoothed distribution, not a per-interval rate."
     },
     {
       "datasource": {
@@ -1476,9 +1476,9 @@
           "refId": "A"
         }
       ],
-      "title": "Top failure codes (last 7 days)",
+      "title": "Top failure codes (lookback window)",
       "type": "bargauge",
-      "description": "Failed/partial-failed executions per neops exception code within the 7-day lookback window (5-min server-side cache)."
+      "description": "Failed/partial-failed executions per neops exception code within NEOPS_METRICS_LOOKBACK_DAYS (5-min server-side cache)."
     },
     {
       "datasource": {
@@ -1649,7 +1649,7 @@
       ],
       "title": "New failures per 1h by exception type",
       "type": "timeseries",
-      "description": "Newly recorded failures per exception code. The underlying gauge covers a sliding 7-day window; failures aging out of the window are clamped to 0."
+      "description": "Newly recorded failures per exception code. The underlying gauge covers the sliding NEOPS_METRICS_LOOKBACK_DAYS window; failures aging out are clamped to 0."
     },
     {
       "datasource": {

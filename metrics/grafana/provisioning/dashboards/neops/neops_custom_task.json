@@ -115,7 +115,7 @@
           }
         }
       ],
-      "description": "Outcome of the last finished execution. Running executions don't affect it."
+      "description": "Outcome of the last finished execution within NEOPS_METRICS_LOOKBACK_DAYS. Running executions don't affect it; tasks with no recent run drop out."
     },
     {
       "type": "stat",
@@ -215,7 +215,7 @@
           }
         }
       ],
-      "description": "Dispatch-to-completion duration of the most recent finished execution (within the lookback window)."
+      "description": "Dispatch-to-completion duration of the most recent finished execution within NEOPS_METRICS_LOOKBACK_DAYS."
     },
     {
       "type": "stat",
@@ -315,7 +315,7 @@
     },
     {
       "type": "stat",
-      "title": "Failures (7d window)",
+      "title": "Failures (lookback window)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -360,7 +360,7 @@
           }
         }
       ],
-      "description": "Failed/partial-failed executions within the lookback window."
+      "description": "Failed/partial-failed executions within NEOPS_METRICS_LOOKBACK_DAYS."
     },
     {
       "datasource": {
@@ -549,7 +549,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Failures by exception (7-day window)",
+      "title": "Failures by exception (lookback window)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -587,7 +587,7 @@
           }
         }
       ],
-      "description": "Failed executions per neops exception code within the sliding lookback window (5-min server-side cache)."
+      "description": "Failed executions per neops exception code within the sliding NEOPS_METRICS_LOOKBACK_DAYS window (5-min server-side cache)."
     },
     {
       "type": "row",

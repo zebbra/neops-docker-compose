@@ -80,7 +80,7 @@ For compose deployments a single backend container is the scrape target and the 
 The provisioned dashboards and alert rules require **neops-core 1.18.7-beta.6 or newer**:
 
 - `neops_task_executions_total`, `neops_task_failure_exceptions_total`, and `neops_task_failure_unknown_exceptions_total` lost their `_total` suffix and are **gauges** (DB snapshots that shrink with retention). Don't use `rate()`/`increase()` on them — the dashboards use clamped `delta()` instead. Update any custom dashboards accordingly.
-- The failure breakdowns cover a sliding lookback window (`NEOPS_METRICS_LOOKBACK_DAYS`, default 7 days), no longer all time.
+- All task-scoped metrics (`neops_task_last_state`, durations, failure breakdowns) cover a sliding freshness window (`NEOPS_METRICS_LOOKBACK_DAYS`, default **1 day**), no longer all time: tasks with no recent execution drop out of the current export (history stays queryable in the TSDB). Set the window to at least the schedule interval of the least frequent task you alert on.
 - `neops_task_last_state` only reflects **finished** executions (a running task no longer shows as failed).
 
 ### Django dashboards need opt-in instrumentation
