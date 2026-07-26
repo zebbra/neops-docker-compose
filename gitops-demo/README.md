@@ -4,6 +4,12 @@ Minimal neops stacks (backend, worker, beat, legacy frontend, redis,
 postgres, elasticsearch) to exercise the `neops_git_sync` workflow with
 multiple instances bound to different branches of one task repository.
 
+`neops_netbox` is enabled by default (the demo repo's tasks use its
+providers, e.g. `generic-netbox-jinja-facts`) so pulled tasks validate
+and import correctly. Pulling/importing works without it; actually
+*running* a netbox-provider task additionally needs a NetBox connection
+configured for that instance — out of scope for this demo.
+
 **One compose file, four instances.** Each env file in `envs/` sets the
 compose project name, host ports and the git-sync role — compose project
 isolation gives every instance its own containers, network and volumes:
@@ -29,8 +35,9 @@ Ports 8000/8080 stay free for a natively running dev setup.
 
 - Local checkouts of `neops-core` and `neops-legacy-frontend` as siblings
   of this repo (override with `NEOPS_CORE_PATH` / `NEOPS_LEGACY_FRONTEND_PATH`).
-- A git repository for the task definitions with the four branches created
-  (empty branches are fine — each instance can run the initial push).
+- A git repository for the task definitions with the `dev` and `prod`
+  branches created (empty branches are fine — each instance can run the
+  initial push). A read-write PAT/SSH key for instances that auto-push.
 - RAM: each instance runs its own elasticsearch (capped at 512M heap) —
   budget roughly 2–3 GB per instance. Run only the instances you need.
 
@@ -84,12 +91,19 @@ make manage INSTANCE=cust-prod CMD="neops_git_sync pull"
 make manage INSTANCE=cust-prod CMD="neops_git_sync status"
 ```
 
-Promotion flow to demo: edit a task in cust-dev (auto-pushes to
-`customer-dev`) → merge `customer-dev` → `customer-prod` on the git host →
-pull on cust-prod (pull-only, `NEOPS_GIT_SYNC_AUTO_PUSH=false`) → the task
-appears/updates there. The Git Sync panel on the Tools page
-(`/scopes/global/configuration/ide`) shows branch, last sync and the
-commit log per instance.
+Promotion flow to demo: edit a task in cust-dev (auto-pushes to `dev`) →
+merge `dev` → `prod` on the git host → pull on cust-prod (pull-only,
+`NEOPS_GIT_SYNC_AUTO_PUSH=false`) → the task appears/updates there. Every
+instance also has a built-in periodic pull registered via beat (every
+`NEOPS_GIT_SYNC_PULL_INTERVAL_MINUTES`, default 5 — cheap thanks to the
+`ls-remote` fast path), so cust-prod picks up the merge on its own within
+that window even without a manual pull.
+
+The dedicated **Git Sync page** (top-level nav entry, or
+`/scopes/global/git`) shows branch, mode, repository link, last sync,
+snapshot age, working tree state, any sync error, and the full commit
+log per instance. Task list/edit/create pages also raise a snackbar the
+moment a sync starts failing.
 
 For periodic pulls create a NeopsTask with provider `enterprise-git-sync`
 (direction: pull) and schedule it via neops_cron, or trigger it through
