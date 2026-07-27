@@ -18,3 +18,7 @@ Change directory to your `neops-docker-compose` root dir
 ```shell
 docker run -it --rm -v $(pwd)/:/app/ndc quay.io/zebbra/neops-core:dc-custom-values
 ```
+
+## Metrics stack
+
+See [metrics/README.md](metrics/README.md).

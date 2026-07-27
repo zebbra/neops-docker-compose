@@ -1,0 +1,150 @@
+# Minimal neops instance for the git-sync (GitOps) demo.
+#
+# ONE compose file, N isolated instances: each env file in envs/ sets
+# COMPOSE_PROJECT_NAME, host ports and the git-sync branch/role. Compose
+# project isolation gives every instance its own containers, network and
+# volumes automatically.
+#
+#   docker compose --env-file envs/cust-prod.env up -d
+#
+# or use the Makefile: make up INSTANCE=cust-prod
+#
+# Images are built locally from the sibling checkouts (see NEOPS_CORE_PATH /
+# NEOPS_LEGACY_FRONTEND_PATH) and shared between all instances via a fixed
+# tag — build once with `make build`, then start any number of instances.
+
+x-backend-environment: &backend-environment
+  DEBUG: "False"
+  DATABASE_URL: "postgres://neops:${POSTGRES_PASSWORD:-unsafe}@postgres:5432/neops"
+  DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY:-gitops-demo-not-a-secret}"
+  DJANGO_ALLOWED_HOSTS: "*"
+  REDIS_URL: "redis://redis:6379"
+  CORS_ORIGIN_ALLOW_ALL: "True"
+  ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+  ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "100000"
+  NEOPS_PLUGINS: "${NEOPS_PLUGINS:-neops_auth_static_api_key neops_auth_django neops_permissions_simple neops_cron neops_webhook neops_netbox neops_git_sync}"
+  DJANGO_ALLOW_ASYNC_UNSAFE: "True"
+  # ── git sync (the point of this demo) ──────────────────────────────────
+  NEOPS_GIT_SYNC_ENABLED: "${NEOPS_GIT_SYNC_ENABLED:-true}"
+  NEOPS_GIT_SYNC_BRANCH: "${NEOPS_GIT_SYNC_BRANCH:-main}"
+  NEOPS_GIT_SYNC_AUTO_PUSH: "${NEOPS_GIT_SYNC_AUTO_PUSH:-true}"
+  NEOPS_GIT_SYNC_LOCAL_PATH: "/var/neops/git_sync"
+  NEOPS_GIT_SYNC_WEB_URL: "${NEOPS_GIT_SYNC_WEB_URL:-}"
+  # Register a periodic pull at migrate time (checked via ls-remote — cheap)
+  NEOPS_GIT_SYNC_AUTO_PULL_MIGRATION: "true"
+  NEOPS_GIT_SYNC_PULL_INTERVAL_MINUTES: "${NEOPS_GIT_SYNC_PULL_INTERVAL_MINUTES:-5}"
+
+services:
+  redis:
+    image: redis:7
+    restart: on-failure
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: neops
+      POSTGRES_DB: neops
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-unsafe}"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    restart: on-failure
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.2
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      # keep the demo lean — 4 instances = 4 elasticsearches
+      - ES_JAVA_OPTS=-Xms256m -Xmx512m
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data
+    restart: on-failure
+
+  neops_init:
+    image: neops-enterprise:gitops-demo
+    build:
+      context: ${NEOPS_CORE_PATH:-../../neops-core}
+      target: enterprise
+    entrypoint: ["/app/backend/init.sh"]
+    depends_on:
+      - postgres
+      - elasticsearch
+    environment: *backend-environment
+
+  backend:
+    image: neops-enterprise:gitops-demo
+    depends_on:
+      - redis
+      - postgres
+      - elasticsearch
+      - neops_init
+    environment: *backend-environment
+    ports:
+      - "${BACKEND_PORT:?set BACKEND_PORT in the instance env file}:8000"
+    restart: on-failure
+
+  worker:
+    image: neops-enterprise:gitops-demo
+    command:
+      [
+        "/usr/local/bin/celery",
+        "-A",
+        "neopsapp",
+        "worker",
+        "-l",
+        "INFO",
+        "--concurrency=1",
+        "--prefetch-multiplier",
+        "1",
+        "-O",
+        "fair",
+        "--without-heartbeat"
+      ]
+    depends_on:
+      - redis
+      - postgres
+      - elasticsearch
+      - neops_init
+    environment: *backend-environment
+    volumes:
+      - git_sync:/var/neops/git_sync
+    restart: on-failure
+
+  beat:
+    image: neops-enterprise:gitops-demo
+    command:
+      [
+        "/usr/local/bin/celery",
+        "-A",
+        "neopsapp",
+        "beat",
+        "--scheduler",
+        "neops.enterprise.celery.cron.scheduler:NeopsCeleryScheduler",
+        "-l",
+        "INFO"
+      ]
+    depends_on:
+      - redis
+      - postgres
+      - neops_init
+    environment: *backend-environment
+    restart: on-failure
+
+  frontend:
+    image: neops-legacy-frontend:gitops-demo
+    build:
+      context: ${NEOPS_LEGACY_FRONTEND_PATH:-../../neops-legacy-frontend}
+    environment:
+      FRONTEND_NEOPS_URL: "http://localhost:${BACKEND_PORT:-8001}/graphql"
+    ports:
+      - "${FRONTEND_PORT:?set FRONTEND_PORT in the instance env file}:8080"
+    restart: on-failure
+
+volumes:
+  postgres:
+    driver: local
+  elasticsearch:
+    driver: local
+  git_sync:
+    driver: local

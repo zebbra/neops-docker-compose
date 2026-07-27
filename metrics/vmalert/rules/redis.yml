@@ -1,0 +1,51 @@
+groups:
+  - name: redis
+    interval: 1m
+    rules:
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is unreachable"
+          description: "{{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: RedisHighMemoryUsage
+        # only fires when maxmemory is configured (> 0)
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+          and redis_memory_max_bytes > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high ({{ $value | humanizePercentage }})"
+          description: "Redis is using more than 90% of its configured maxmemory."
+
+      - alert: RedisHighEvictionRate
+        expr: rate(redis_evicted_keys_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis evicting keys ({{ $value | humanize }}/s)"
+          description: "Redis is evicting more than 10 keys per second — maxmemory may be too low."
+
+      - alert: RedisManyBlockedClients
+        expr: redis_blocked_clients > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis has {{ $value }} blocked clients"
+          description: "A large number of clients are blocked waiting on Redis commands (BLPOP, BRPOP, etc.)."
+
+      - alert: RedisRDBSaveFailed
+        expr: redis_rdb_last_bgsave_status == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis last RDB save failed"
+          description: "The last Redis background save did not complete successfully."
