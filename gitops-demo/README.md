@@ -70,9 +70,9 @@ docker compose --env-file envs/cust-prod.env exec backend ./manage.py neops_perm
 Then configure the git credentials (public repo: url alone is enough to pull):
 
 ```bash
-make manage INSTANCE=cust-prod CMD="neops_git_sync credentials --url https://github.com/zebbra/neops-git-demo --username bot --token ghp_xxx"
+make manage INSTANCE=cust-prod CMD="save_credentials neops_git_sync --url https://github.com/zebbra/neops-git-demo --username bot --password ghp_xxx"
 # verify (secrets masked)
-make manage INSTANCE=cust-prod CMD="neops_git_sync credentials"
+make manage INSTANCE=cust-prod CMD="save_credentials neops_git_sync"
 ```
 
 Alternatively via the Django admin (`http://localhost:8004/admin` →
