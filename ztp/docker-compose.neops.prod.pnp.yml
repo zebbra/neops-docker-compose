@@ -2,11 +2,12 @@
 services:
   pnp:
     image: quay.io/zebbra/neops-pnp-guestshell:latest
-    restart: "on-failure"
+    restart: "always"
     environment:
       - NEOPS_API=${NEOPS_API_URL}
       - NEOPS_API_KEY=${NEOPS_API_KEY}
       - NEOPS_TASK_NAME=${NEOPS_TASK_NAME}
+      # - NEOPS_TASK_MAPPING=${NEOPS_TASK_MAPPING}
       # - PORT=${PORT}
       - PNP_EXT_ADDR=${PNP_EXT_ADDR}
       - PNP_EXT_PORT=${PNP_EXT_PORT}
@@ -21,7 +22,7 @@ services:
     networks:
       - private
     ports:
-      - "${PNP_EXT_PORT}:8000"
+      - "${PNP_EXT_PORT}:8081"
 
 networks:
   private:
