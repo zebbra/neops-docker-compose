@@ -4,15 +4,15 @@ services:
     image: quay.io/zebbra/neops-pnp-guestshell:latest
     restart: "always"
     environment:
-      - NEOPS_API=${NEOPS_API_URL}
+      - NEOPS_API_URL=${NEOPS_API_URL}
       - NEOPS_API_KEY=${NEOPS_API_KEY}
       - NEOPS_TASK_NAME=${NEOPS_TASK_NAME}
       # - NEOPS_TASK_MAPPING=${NEOPS_TASK_MAPPING}
       # - PORT=${PORT}
       - PNP_EXT_ADDR=${PNP_EXT_ADDR}
       - PNP_EXT_PORT=${PNP_EXT_PORT}
-      - USERNAME=${DEVICES_DEFAULT_USERNAME}
-      - PASSWORD=${DEVICES_DEFAULT_PW}
+      - DEVICES_DEFAULT_USERNAME=${DEVICES_DEFAULT_USERNAME}
+      - DEVICES_DEFAULT_PW=${DEVICES_DEFAULT_PW}
       - PNP_TEMPLATE=${PNP_TEMPLATE}
       #- LISTEN_INTERFACE=${LISTEN_INTERFACE}
       #- PNP_DEBUG=${PNP_DEBUG}
