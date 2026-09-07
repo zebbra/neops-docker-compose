@@ -1,0 +1,41 @@
+groups:
+  - name: celery
+    interval: 1m
+    rules:
+      - alert: CeleryWorkerDown
+        expr: celery_worker_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery worker {{ $labels.hostname }} is down"
+          description: "Worker {{ $labels.hostname }} has not been seen for 2 minutes."
+
+      - alert: CeleryNoActiveWorkers
+        expr: sum(celery_worker_up) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active Celery workers"
+          description: "All Celery workers are offline — task execution is halted."
+
+      - alert: CeleryHighFailureRate
+        expr: |
+          rate(celery_task_failed_total[15m]) /
+          (rate(celery_task_succeeded_total[15m]) + rate(celery_task_failed_total[15m]) + 1e-9) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery task failure rate high ({{ $value | humanizePercentage }})"
+          description: "More than 10% of Celery tasks have failed over the last 15 minutes."
+
+      - alert: CeleryQueueLengthHigh
+        expr: celery_queue_length > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery queue {{ $labels.queue_name }} length high ({{ $value }})"
+          description: "Queue {{ $labels.queue_name }} has more than 100 pending tasks."

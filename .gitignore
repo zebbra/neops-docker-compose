@@ -1,5 +1,8 @@
 # exclude .env files for docker setup
 .env
+docker-compose.override.yml
 /tmp/
 /data/
 /test/data/
+metrics/grafana/provisioning/dashboards/community/
+neops/metrics/grafana/provisioning/dashboards/community/

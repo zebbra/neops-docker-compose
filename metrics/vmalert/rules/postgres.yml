@@ -1,0 +1,39 @@
+groups:
+  - name: postgres
+    interval: 1m
+    rules:
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is unreachable"
+          description: "{{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: PostgresExclusiveLocks
+        expr: sum by (datname) (pg_locks_count{mode="exclusivelock"}) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High exclusive lock count on {{ $labels.datname }} ({{ $value }})"
+          description: "More than 10 exclusive locks held in database {{ $labels.datname }} for 5+ minutes — possible deadlock or long-running transaction."
+
+      - alert: PostgresReplicationLagHigh
+        expr: pg_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL replication lag high ({{ $value | humanizeDuration }})"
+          description: "Replication is lagging behind the primary by more than 30 seconds."
+
+      - alert: PostgresScrapeFailing
+        expr: pg_exporter_last_scrape_error > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "postgres-exporter scrape failing"
+          description: "postgres-exporter cannot collect metrics from {{ $labels.instance }}."

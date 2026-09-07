@@ -1,0 +1,83 @@
+groups:
+  - name: elasticsearch
+    interval: 1m
+    rules:
+      - alert: ElasticsearchDown
+        expr: up{job="elasticsearch"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch exporter is unreachable"
+          description: "{{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: ElasticsearchClusterRed
+        expr: elasticsearch_cluster_health_status{color="red"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch cluster {{ $labels.cluster }} is RED"
+          description: "Primary shards are unavailable — cluster is not serving requests."
+
+      - alert: ElasticsearchClusterYellow
+        expr: elasticsearch_cluster_health_status{color="yellow"} == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elasticsearch cluster {{ $labels.cluster }} is YELLOW"
+          description: "Replica shards are unassigned. Cluster is functional but not fully redundant."
+
+      - alert: ElasticsearchUnassignedShards
+        expr: elasticsearch_cluster_health_unassigned_shards > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} unassigned shards in cluster {{ $labels.cluster }}"
+          description: "Elasticsearch has unassigned shards for more than 10 minutes."
+
+      - alert: ElasticsearchHighHeapUsage
+        expr: |
+          elasticsearch_jvm_memory_used_bytes{area="heap"}
+          / elasticsearch_jvm_memory_max_bytes{area="heap"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elasticsearch JVM heap usage high on {{ $labels.name }} ({{ $value | humanizePercentage }})"
+          description: "JVM heap is above 85% — GC pressure may be building up."
+
+      - alert: ElasticsearchHeapCritical
+        expr: |
+          elasticsearch_jvm_memory_used_bytes{area="heap"}
+          / elasticsearch_jvm_memory_max_bytes{area="heap"} > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch JVM heap critical on {{ $labels.name }} ({{ $value | humanizePercentage }})"
+          description: "JVM heap is above 95% — OutOfMemoryError risk."
+
+      - alert: ElasticsearchLowDiskSpace
+        expr: |
+          elasticsearch_filesystem_data_available_bytes
+          / elasticsearch_filesystem_data_size_bytes < 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elasticsearch low disk space on {{ $labels.name }} ({{ $value | humanizePercentage }} free)"
+          description: "Less than 15% disk space remaining — ES may trigger read-only index protection."
+
+      - alert: ElasticsearchDiskCritical
+        expr: |
+          elasticsearch_filesystem_data_available_bytes
+          / elasticsearch_filesystem_data_size_bytes < 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch disk space critical on {{ $labels.name }}"
+          description: "Less than 5% disk space — indices likely locked read-only."
