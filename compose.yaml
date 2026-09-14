@@ -1,1 +1,278 @@
-services: {}
+# NeOps 2.0 production stack. Scenario overlays are selected with COMPOSE_FILE in .env;
+# see .env.example and examples/. Operate it with ./neops (see README.md).
+#
+# Image pins: the tested set for this release. Override per image from .env only in
+# an emergency (NEOPS_CORE_TAG, ...). NEOPS_*_IMAGE replaces the whole reference.
+x-versions:
+  core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.1.0-beta.5}}
+  engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.43.0-beta.2}}
+  monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.43.0-beta.2}}
+  worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.2.0-beta.5}}
+  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-5.0.0}}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-core-env: &core-env
+  DEBUG: "False"
+  DATABASE_URL: postgres://neops:${NEOPS_CMS_DB_PASSWORD}@postgres-cms:5432/neops
+  REDIS_URL: redis://redis:6379/0
+  ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+  ELASTICSEARCH_DSL_INDEX_SHARDS: "1"
+  ELASTICSEARCH_DSL_INDEX_REPLICAS: "0"
+  ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "10000"
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+  DJANGO_ALLOW_ASYNC_UNSAFE: "True"
+  NEOPS_PLUGINS: neops_cron neops_auth_static_api_key neops_auth_django neops_permissions_simple neops_reports
+  NEOPS_JWT_PRIVATE_KEY_PATH: /etc/neops/jwt/private.pem
+  NEOPS_JWT_PUBLIC_KEY_PATH: /etc/neops/jwt/public.pem
+  NEOPS_PUBLIC_URL: ${NEOPS_CMS_URL}
+  NEOPS_ADMIN_USER: ${NEOPS_ADMIN_USER:-neops}
+  NEOPS_ADMIN_EMAIL: ${NEOPS_ADMIN_EMAIL:-neops@example.com}
+  NEOPS_ADMIN_PASSWORD: ${NEOPS_ADMIN_PASSWORD}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+  EMAIL_URL: ${EMAIL_URL:-}
+  NEOPS_LOGGER_CLASS: ${NEOPS_LOGGER_CLASS:-neops.core.log.loggers.db.DbLogger}
+  EXECUTION_LOG_RETENTION_ENABLED: ${EXECUTION_LOG_RETENTION_ENABLED:-False}
+  EXECUTION_LOG_RETENTION_DAYS: ${EXECUTION_LOG_RETENTION_DAYS:-90}
+  FACT_CLEANUP_ENABLED: ${FACT_CLEANUP_ENABLED:-False}
+  NEOPS_EXECUTION_CLEANUP_ENABLED: ${NEOPS_EXECUTION_CLEANUP_ENABLED:-False}
+  NORNIR_THREADS: ${NORNIR_THREADS:-50}
+  NORNIR_CLOSE_CONNECTION: ${NORNIR_CLOSE_CONNECTION:-True}
+  NORNIR_CONNECTION_DELAY_FACTOR: ${NORNIR_CONNECTION_DELAY_FACTOR:-2}
+
+x-core-service: &core-service
+  image: *core-image
+  env_file:
+    - ./generated/cms.env
+  volumes:
+    - ${NEOPS_DATA_DIR:-./data}/secrets/jwt:/etc/neops/jwt:ro
+    - ./cust-cert:/cust-cert:ro
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  postgres-cms:
+    image: postgres:16-alpine
+    command: postgres -c max_connections=300
+    environment:
+      POSTGRES_USER: neops
+      POSTGRES_DB: neops
+      POSTGRES_PASSWORD: ${NEOPS_CMS_DB_PASSWORD}
+    volumes:
+      - ${NEOPS_DATA_DIR:-./data}/cms/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neops -d neops"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+    restart: unless-stopped
+
+  postgres-engine:
+    # The engine connects as `postgres` to the database `neops-workflow`; both are hardcoded in the engine.
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: neops-workflow
+      POSTGRES_PASSWORD: ${NEOPS_ENGINE_DB_PASSWORD}
+    volumes:
+      - ${NEOPS_DATA_DIR:-./data}/engine/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d neops-workflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.2
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=-Xms${NEOPS_ES_HEAP:-1g} -Xmx${NEOPS_ES_HEAP:-1g}
+      - cluster.routing.allocation.disk.watermark.low=85%
+      - cluster.routing.allocation.disk.watermark.high=90%
+      - cluster.routing.allocation.disk.watermark.flood_stage=95%
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      # Must be owned by uid 1000; ./neops migrate (0001_initial_layout) takes care of it.
+      - ${NEOPS_DATA_DIR:-./data}/elasticsearch:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
+    logging: *logging
+    restart: unless-stopped
+
+  cms-init:
+    # One-shot: Django migrations, Elasticsearch indices, the superuser. Re-runs on every `up` (idempotent).
+    # Does not use the image's init.sh, which exits 1 on a fresh database (neops-core #2269).
+    <<: *core-service
+    environment: *core-env
+    restart: "no"
+    depends_on:
+      postgres-cms:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        python manage.py migrate --noinput
+        if ! out=$$(python manage.py elastic_index --create 2>&1); then
+          echo "$$out" | grep -q resource_already_exists_exception || { echo "$$out"; exit 1; }
+        fi
+        python manage.py shell -c "import os; from django.contrib.auth import get_user_model; U = get_user_model(); u, created = U.objects.get_or_create(username=os.environ['NEOPS_ADMIN_USER'], defaults={'email': os.environ['NEOPS_ADMIN_EMAIL'], 'is_staff': True, 'is_superuser': True}); created and (u.set_password(os.environ['NEOPS_ADMIN_PASSWORD']), u.save()); print('superuser', 'created' if created else 'present')"
+
+  cms:
+    <<: *core-service
+    environment: *core-env
+    volumes:
+      - ${NEOPS_DATA_DIR:-./data}/secrets/jwt:/etc/neops/jwt:ro
+      - ./cust-cert:/cust-cert:ro
+      - ${NEOPS_DATA_DIR:-./data}/cms/media:/app/backend/media
+      - ${NEOPS_DATA_DIR:-./data}/cms/tmp:/tmp
+    depends_on:
+      cms-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # `localhost` is in the generated DJANGO_ALLOWED_HOSTS for exactly this check.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/admin/login/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 150s
+
+  cms-worker:
+    <<: *core-service
+    environment:
+      <<: *core-env
+      ELASTICSEARCH_DSL_SIGNAL_PROCESSOR: neops.core.documents.neops_signal_processor.NeopsCacheSignalProcessor
+    command: ["/usr/local/bin/celery", "-A", "neopsapp", "worker", "--concurrency", "${NEOPS_CMS_WORKER_CONCURRENCY:-2}",
+              "-l", "INFO", "--prefetch-multiplier", "1", "-O", "fair", "--without-heartbeat"]
+    depends_on:
+      cms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A neopsapp inspect ping -d celery@$$HOSTNAME >/dev/null || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+
+  cms-beat:
+    <<: *core-service
+    environment: *core-env
+    command: ["/usr/local/bin/celery", "-A", "neopsapp", "beat",
+              "--scheduler", "neops.enterprise.celery.cron.scheduler:NeopsCeleryScheduler", "-l", "INFO"]
+    depends_on:
+      cms:
+        condition: service_healthy
+
+  engine:
+    image: *engine-image
+    environment:
+      NODE_ENV: production
+      PORT: "3030"
+      LOG_FORMAT: json
+      NEOPS_CMS_URL: http://cms:8000/graphql
+      POSTGRES_HOST: postgres-engine
+      POSTGRES_PORT: "5432"
+      POSTGRES_PASSWORD: ${NEOPS_ENGINE_DB_PASSWORD}
+      NEOPS_AUTHZ_MODE: enforce
+      NEOPS_JWT_PUBLIC_KEY_PATH: /etc/neops/jwt/public.pem
+      NEOPS_CORS_ORIGINS: ${NEOPS_WEB_URL},${NEOPS_WORKFLOWS_URL}
+    env_file:
+      # NEOPS_CMS_TOKEN, minted by ./neops token after the CMS is up. Absent on the very first start.
+      - path: ${NEOPS_DATA_DIR:-./data}/secrets/engine.env
+        required: false
+    volumes:
+      - ${NEOPS_DATA_DIR:-./data}/secrets/jwt/public.pem:/etc/neops/jwt/public.pem:ro
+    depends_on:
+      postgres-engine:
+        condition: service_healthy
+      cms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3030/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    logging: *logging
+    restart: unless-stopped
+
+  monitor:
+    image: *monitor-image
+    environment:
+      ENGINE_BASE_URL: ${NEOPS_ENGINE_URL}
+      WEBCLIENT_ORIGIN: ${NEOPS_WEB_URL}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/config.js >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+    restart: unless-stopped
+
+  worker:
+    image: *worker-image
+    environment:
+      URL_BLACKBOARD: http://engine:3030
+      DIR_FUNCTION_BLOCKS: neops/fb
+      WORKER_NAME: ${NEOPS_WORKER_NAME:-neops-worker}
+    depends_on:
+      engine:
+        condition: service_healthy
+    logging: *logging
+    restart: unless-stopped
+
+  web:
+    image: *web-image
+    environment:
+      FRONTEND_GRAPHQL_ENDPOINT: ${NEOPS_CMS_URL}/graphql
+      FRONTEND_FILEAPI_ENDPOINT: ${NEOPS_CMS_URL}/
+      FRONTEND_WORKFLOW_MANAGER_URL: ${NEOPS_WORKFLOWS_URL}
+      FRONTEND_DEVMODE: "false"
+    depends_on:
+      cms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging: *logging
+    restart: unless-stopped
