@@ -4,25 +4,10 @@ Observability stack for neops: VictoriaMetrics (TSDB), Grafana (dashboards), vma
 
 ## Usage
 
-### Dev
-
-Included in `docker-compose.yaml` under the `metrics` profile:
-
-```shell
-# base services only
-docker compose up
-
-# base + full observability stack
-docker compose --profile metrics up
-```
-
-### Prod
-
-Add to `COMPOSE_FILE` in your `.env`:
-
-```
-COMPOSE_FILE=neops/docker-compose.neops.prod.yml:neops/docker-compose.neops.prod.metrics.yml
-```
+Add `compose.metrics.yaml` to `COMPOSE_FILE` in `.env` (see `examples/metrics.env`) and run `./neops up`.
+Grafana is reachable on the host at `127.0.0.1:${NEOPS_GRAFANA_PORT:-3000}` and, when
+`NEOPS_GRAFANA_URL` is set with the Traefik overlay, at that public URL. The admin password is
+`NEOPS_GRAFANA_ADMIN_PASSWORD`. Metrics data lives in `data/metrics/` (bind mounts, like everything else).
 
 ## Services
 
