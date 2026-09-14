@@ -4,6 +4,7 @@ import base64
 import json
 from collections.abc import Callable
 
+from neops_compose.compose import ComposeError
 from neops_compose.env import Env
 from neops_compose.paths import Paths
 from neops_compose.secrets import write_secret
@@ -12,10 +13,16 @@ from neops_compose.state import State
 API_KEY_APP = "workflow"
 API_KEY_DESCRIPTION = "neops-docker-compose: workflow engine"
 ENV_KEY = "NEOPS_CMS_TOKEN"
-_CHECK_SCRIPT = (
-    "import os; from neops.enterprise.auth.static_api_key.api_key import get_api_key_entry; "
-    "get_api_key_entry(os.environ['NEOPS_CHECK_TOKEN']); print('VALID')"
-)
+_CHECK_SCRIPT = """
+import os
+from neops.enterprise.auth.static_api_key.api_key import get_api_key_entry
+try:
+    get_api_key_entry(os.environ['NEOPS_CHECK_TOKEN'])
+except Exception:
+    print('INVALID')
+else:
+    print('VALID')
+"""
 _PK_SCRIPT = (
     "import os; from django.contrib.auth import get_user_model; "
     "print('PK=%s' % get_user_model().objects.get(username=os.environ['NEOPS_USERNAME']).pk)"
@@ -24,6 +31,10 @@ _DELETE_SCRIPT = (
     "from neops.enterprise.auth.static_api_key.models import StaticAPIKey; "
     "StaticAPIKey.objects.filter(id={key_id}).delete()"
 )
+
+
+class TokenCheckUnavailable(RuntimeError):
+    """The CMS could not answer whether a token is valid, so validity is unknown, not false."""
 
 
 def key_id(token: str) -> int:
@@ -46,18 +57,36 @@ def token_is_valid(compose, token: str) -> bool:
         out = compose.exec(
             "cms", "python", "manage.py", "shell", "-c", _CHECK_SCRIPT, env={"NEOPS_CHECK_TOKEN": token}
         )
-    except Exception:
+    except ComposeError as exc:
+        raise TokenCheckUnavailable(f"could not ask the CMS about the engine token: {exc}") from exc
+    if "INVALID" in out:
         return False
-    return "VALID" in out
+    if "VALID" in out:
+        return True
+    raise TokenCheckUnavailable(
+        f"the CMS token check printed neither VALID nor INVALID: {out.strip()!r}; is the cms service running?"
+    )
+
+
+def _no_such_user(username: str) -> RuntimeError:
+    return RuntimeError(f"could not resolve the CMS user {username!r}: is the CMS up and has cms-init run?")
+
+
+def _user_pk(compose, username: str) -> str:
+    try:
+        out = compose.exec(
+            "cms", "python", "manage.py", "shell", "-c", _PK_SCRIPT, env={"NEOPS_USERNAME": username}
+        )
+    except ComposeError as exc:
+        raise _no_such_user(username) from exc
+    pk = next((line[3:] for line in out.splitlines() if line.startswith("PK=")), "")
+    if not pk:
+        raise _no_such_user(username)
+    return pk
 
 
 def mint(compose, username: str) -> str:
-    out = compose.exec(
-        "cms", "python", "manage.py", "shell", "-c", _PK_SCRIPT, env={"NEOPS_USERNAME": username}
-    )
-    pk = next((line[3:] for line in out.splitlines() if line.startswith("PK=")), "")
-    if not pk:
-        raise RuntimeError(f"could not resolve the CMS user {username!r}")
+    pk = _user_pk(compose, username)
     out = compose.exec(
         "cms",
         "python",
@@ -75,7 +104,9 @@ def mint(compose, username: str) -> str:
 
 
 def revoke(compose, key_id_: int) -> None:
-    compose.exec("cms", "python", "manage.py", "shell", "-c", _DELETE_SCRIPT.format(key_id=key_id_))
+    """int() first: the id is interpolated into a Django shell script, never passed through as text."""
+    script = _DELETE_SCRIPT.format(key_id=int(key_id_))
+    compose.exec("cms", "python", "manage.py", "shell", "-c", script)
 
 
 def _install(compose, paths: Paths, state: State, token: str, log: Callable[[str], None]) -> None:
@@ -87,7 +118,10 @@ def _install(compose, paths: Paths, state: State, token: str, log: Callable[[str
 
 
 def ensure_engine_token(compose, env: Env, paths: Paths, state: State, log: Callable[[str], None]) -> bool:
-    """Mint only when no valid token exists. Returns True when a token was minted."""
+    """Mint only when no valid token exists. Returns True when a token was minted.
+
+    TokenCheckUnavailable propagates: an undetermined check must never mint a second key.
+    """
     existing = read_engine_token(paths)
     if existing and token_is_valid(compose, existing):
         log("engine CMS token present and valid")

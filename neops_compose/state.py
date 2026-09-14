@@ -2,21 +2,54 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 from neops_compose import __version__
+from neops_compose.secrets import write_secret
 
 SCHEMA = 1
+LIST_FIELDS = ("applied", "faked", "api_keys")
+
+
+class StateError(RuntimeError):
+    pass
 
 
 def _now() -> str:
     return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _version_tuple(v: str) -> tuple[int, ...]:
-    return tuple(int(x) for x in v.split(".") if x.isdigit())
+def _version(v: str) -> Version:
+    """PEP 440 ordering, so 2.0.0b1 sorts below 2.0.0. An unreadable version sorts lowest."""
+    try:
+        return Version(v)
+    except InvalidVersion:
+        return Version("0")
+
+
+def _parse(path: Path) -> dict:
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise StateError(f"{path} is not a valid state file: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise StateError(f"{path} is not a valid state file: expected an object, got {type(raw).__name__}")
+    return raw
+
+
+def _validate(path: Path, raw: dict) -> None:
+    schema = raw.get("schema", SCHEMA)
+    if isinstance(schema, int) and schema > SCHEMA:
+        raise StateError(
+            f"{path} was written with state schema {schema}, but this CLI understands {SCHEMA}: "
+            "update the CLI (git pull) before running it against this installation"
+        )
+    for name in LIST_FIELDS:
+        if name in raw and not isinstance(raw[name], list):
+            raise StateError(f"{path} is not a valid state file: {name} must be a list")
 
 
 @dataclass
@@ -34,7 +67,8 @@ class State:
     def load(cls, path: Path) -> State:
         if not path.exists():
             return cls()
-        raw = json.loads(path.read_text())
+        raw = _parse(path)
+        _validate(path, raw)
         return cls(
             schema=raw.get("schema", SCHEMA),
             cli=raw.get("cli", "0.0.0"),
@@ -46,10 +80,9 @@ class State:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.cli = __version__ if _version_tuple(self.cli) <= _version_tuple(__version__) else self.cli
+        self.cli = __version__ if _version(self.cli) <= _version(__version__) else self.cli
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(asdict(self), indent=2) + "\n")
-        os.chmod(tmp, 0o600)
+        write_secret(tmp, (json.dumps(asdict(self), indent=2) + "\n").encode())
         tmp.replace(path)
 
     @property
@@ -73,4 +106,4 @@ class State:
         self.last_up = {"at": _now(), "images": images}
 
     def written_by_newer_cli(self) -> bool:
-        return _version_tuple(self.cli) > _version_tuple(__version__)
+        return _version(self.cli) > _version(__version__)

@@ -2,7 +2,7 @@
 
 Idempotent: directories that exist are left alone. Elasticsearch runs as uid 1000
 and cannot create its data directory itself, so it is chowned through a throwaway
-container (no sudo needed).
+postgres:16-alpine container: no sudo needed, and the stack pulls that image anyway.
 """
 
 from pathlib import Path
@@ -17,9 +17,8 @@ def apply(ctx) -> None:
     paths = Paths.for_repo(ctx.repo, ctx.env)
     for d in paths.data_dirs():
         ctx.mkdir(d)
-    ctx.mkdir(paths.secrets, mode=0o700)
-    ctx.mkdir(paths.jwt_dir, mode=0o700)
-    ctx.mkdir(paths.tls_dir, mode=0o700)
+    for d in paths.private_dirs():
+        ctx.mkdir(d, mode=0o700)
     es: Path = paths.data / "elasticsearch"
     stat = es.stat()
     if (stat.st_uid, stat.st_gid) != (1000, 0):

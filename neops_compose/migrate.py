@@ -13,10 +13,11 @@ from types import ModuleType
 
 from neops_compose.env import Env
 from neops_compose.paths import Paths
+from neops_compose.secrets import write_secret
 from neops_compose.state import State
 
 NAME_RE = re.compile(r"^\d{4}_[a-z0-9_]+$")
-CHOWN_IMAGE = "alpine:3.20"
+CHOWN_IMAGE = "postgres:16-alpine"
 
 
 class MigrationError(RuntimeError):
@@ -106,13 +107,15 @@ def pending(migrations: list[Migration], state: State) -> list[Migration]:
 
 
 def snapshot(paths: Paths) -> Path:
+    """A copy of .env and the state file; both hold secrets, so nothing here is readable by others."""
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     target = paths.backups / f"pre-migrate-{stamp}"
     target.mkdir(parents=True, exist_ok=True)
     os.chmod(paths.backups, 0o700)
+    os.chmod(target, 0o700)
     for src in (paths.env_file, paths.state_file):
         if src.exists():
-            shutil.copy2(src, target / src.name)
+            write_secret(target / src.name, src.read_bytes())
     return target
 
 

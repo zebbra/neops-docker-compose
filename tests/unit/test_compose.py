@@ -1,33 +1,46 @@
-from neops_compose.compose import Compose
+import pytest
+
+from neops_compose.compose import Compose, ComposeError
 
 
-def test_compose_runs_docker_compose_from_the_repo_root(tmp_path, monkeypatch):
-    calls = []
+class FakeRun:
+    """Records every subprocess.run call and replays a canned docker compose ps."""
 
-    def fake_run(args, **kwargs):
-        calls.append((args, kwargs))
+    PS_JSON = (
+        '{"Service":"cms","State":"running","Health":"healthy"}\n'
+        '{"Service":"web","State":"exited","Health":""}\n'
+    )
+
+    def __init__(self, returncode: int = 0, stderr: str = ""):
+        self.calls = []
+        self.returncode = returncode
+        self.stderr = stderr
+
+    def __call__(self, args, **kwargs):
+        self.calls.append((args, kwargs))
+        outer = self
 
         class R:
-            returncode = 0
-            stdout = (
-                '{"Service":"cms","State":"running","Health":"healthy"}\n'
-                '{"Service":"web","State":"exited","Health":""}\n'
-            )
-            stderr = ""
+            returncode = outer.returncode
+            stdout = outer.PS_JSON
+            stderr = outer.stderr
 
         return R()
 
-    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake_run)
+
+def test_compose_runs_docker_compose_from_the_repo_root(tmp_path, monkeypatch):
+    fake = FakeRun()
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
     c = Compose(tmp_path)
     ps = c.ps()
-    assert calls[0][0][:3] == ["docker", "compose", "ps"] and calls[0][1]["cwd"] == tmp_path
+    assert fake.calls[0][0][:3] == ["docker", "compose", "ps"] and fake.calls[0][1]["cwd"] == tmp_path
     assert ps == [
         {"Service": "cms", "State": "running", "Health": "healthy"},
         {"Service": "web", "State": "exited", "Health": ""},
     ]
     assert c.running_services() == {"cms"}
     c.up("cms", "engine", force_recreate=True)
-    assert calls[-1][0] == [
+    assert fake.calls[-1][0] == [
         "docker",
         "compose",
         "up",
@@ -39,5 +52,31 @@ def test_compose_runs_docker_compose_from_the_repo_root(tmp_path, monkeypatch):
         "cms",
         "engine",
     ]
-    c.exec("cms", "python", "manage.py", "check", env={"X": "1"})
-    assert calls[-1][0][:8] == ["docker", "compose", "exec", "-T", "-e", "X=1", "cms", "python"]
+
+
+def test_exec_keeps_env_values_out_of_argv(tmp_path, monkeypatch):
+    fake = FakeRun()
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
+    Compose(tmp_path).exec("cms", "python", "manage.py", "check", env={"X": "s3cret"})
+    args, kwargs = fake.calls[-1]
+    assert args == ["docker", "compose", "exec", "-T", "-e", "X", "cms", "python", "manage.py", "check"]
+    assert "s3cret" not in " ".join(args)
+    assert kwargs["env"]["X"] == "s3cret"
+    assert kwargs["env"]["PATH"], "the caller's environment must be inherited, not replaced"
+
+
+def test_run_without_env_leaves_the_environment_alone(tmp_path, monkeypatch):
+    fake = FakeRun()
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
+    Compose(tmp_path).run("ps")
+    assert fake.calls[-1][1]["env"] is None
+
+
+def test_failure_raises_without_echoing_env_values(tmp_path, monkeypatch):
+    fake = FakeRun(returncode=1, stderr="permission denied")
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
+    with pytest.raises(ComposeError) as excinfo:
+        Compose(tmp_path).exec("cms", "psql", env={"PGPASSWORD": "s3cret"})
+    message = str(excinfo.value)
+    assert "PGPASSWORD" in message and "s3cret" not in message
+    assert "permission denied" in message

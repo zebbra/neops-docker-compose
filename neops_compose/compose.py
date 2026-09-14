@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -17,9 +18,15 @@ class Compose:
     def __init__(self, repo: Path):
         self.repo = repo
 
-    def run(self, *args: str, capture: bool = False, check: bool = True) -> subprocess.CompletedProcess:
+    def run(
+        self, *args: str, capture: bool = False, check: bool = True, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess:
         result = subprocess.run(
-            ["docker", "compose", *args], cwd=self.repo, text=True, capture_output=capture
+            ["docker", "compose", *args],
+            cwd=self.repo,
+            text=True,
+            capture_output=capture,
+            env=(os.environ | env) if env else None,
         )
         if check and result.returncode != 0:
             detail = (result.stderr or "").strip() if capture else ""
@@ -43,10 +50,11 @@ class Compose:
         self.run("down", "--remove-orphans")
 
     def exec(self, service: str, *cmd: str, env: dict[str, str] | None = None) -> str:
+        """`-e KEY` carries no value: compose reads it from our environment, keeping it out of argv."""
         flags: list[str] = []
-        for key, value in (env or {}).items():
-            flags += ["-e", f"{key}={value}"]
-        return self.run("exec", "-T", *flags, service, *cmd, capture=True).stdout
+        for key in env or {}:
+            flags += ["-e", key]
+        return self.run("exec", "-T", *flags, service, *cmd, capture=True, env=env).stdout
 
     def ps(self) -> list[dict]:
         out = self.run("ps", "-a", "--format", "json", capture=True).stdout.strip()

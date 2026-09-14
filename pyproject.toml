@@ -5,6 +5,7 @@ description = "Operator CLI for the NeOps 2.0 docker-compose deployment"
 requires-python = ">=3.12"
 dependencies = [
   "cryptography>=43",
+  "packaging>=24",
   "python-dotenv>=1.0",
 ]
 

@@ -78,3 +78,7 @@ class Paths:
             self.tls_dir,
             self.state_file.parent,
         ]
+
+    def private_dirs(self) -> list[Path]:
+        """The subset of data_dirs() that must never be group- or world-readable."""
+        return [self.secrets, self.jwt_dir, self.tls_dir]

@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import concurrent.futures
 import shutil
 import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from neops_compose.compose import Compose
+from neops_compose.compose import Compose, ComposeError
 from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT
 from neops_compose.rules import problems
 from neops_compose.scenario import Scenario
 
 MIN_COMPOSE = (2, 24)
-MIN_DISK_GIB = 5
+MIN_DISK_GIB = 20
 MIN_MAX_MAP_COUNT = 262144
+REGISTRY_WORKERS = 6
+DATABASES = (
+    ("postgres-cms", "neops", "neops", "NEOPS_CMS_DB_PASSWORD"),
+    ("postgres-engine", "postgres", "neops-workflow", "NEOPS_ENGINE_DB_PASSWORD"),
+    ("postgres-keycloak", "keycloak", "keycloak", "NEOPS_KEYCLOAK_DB_PASSWORD"),
+)
 
 
 @dataclass(frozen=True)
@@ -64,87 +71,127 @@ def _cmd(*args: str) -> tuple[int, str]:
     return r.returncode, (r.stdout or r.stderr).strip()
 
 
+def _docker_checks() -> tuple[list[Check], bool, bool]:
+    daemon_rc, docker_v = _cmd("docker", "version", "--format", "{{.Server.Version}}")
+    compose_rc, compose_v = _cmd("docker", "compose", "version", "--short")
+    checks = [
+        Check(
+            "docker daemon",
+            daemon_rc == 0,
+            docker_v if daemon_rc == 0 else "docker is not running or not reachable",
+        ),
+        Check(
+            "docker compose",
+            compose_rc == 0 and version_ok(compose_v, MIN_COMPOSE),
+            compose_v if compose_rc == 0 else "docker compose v2 is required",
+        ),
+    ]
+    return checks, daemon_rc == 0, compose_rc == 0
+
+
+def _env_checks(env: Env, scenario: Scenario, repo: Path) -> list[Check]:
+    found = [Check(".env", False, p) for p in problems(env, scenario, repo)]
+    if found:
+        return found
+    return [Check(".env", True, f"{len(scenario.files)} compose files, scenario valid")]
+
+
+def _host_checks(repo: Path, data: Path) -> list[Check]:
+    free_gib = shutil.disk_usage(data if data.exists() else repo).free / 2**30
+    out = [Check("disk", free_gib >= MIN_DISK_GIB, f"{free_gib:.1f} GiB free under {data}")]
+    mmc = Path("/proc/sys/vm/max_map_count")
+    if not mmc.exists():
+        return out
+    value = int(mmc.read_text().strip())
+    enough = value >= MIN_MAX_MAP_COUNT
+    detail = (
+        f"{value}"
+        if enough
+        else f"{value} < {MIN_MAX_MAP_COUNT}; run: "
+        f"sudo sysctl -w vm.max_map_count={MIN_MAX_MAP_COUNT} "
+        "and persist it in /etc/sysctl.d/99-neops.conf"
+    )
+    out.append(Check("vm.max_map_count", enough, detail))
+    return out
+
+
+def _port_checks(env: Env, scenario: Scenario, running: set[str]) -> list[Check]:
+    if running:
+        return [Check("ports", True, "skipped: the stack is running")]
+    out = []
+    for address, port in required_ports(env, scenario):
+        free = port_free(address, port)
+        out.append(Check("ports", free, f"{address}:{port}" + ("" if free else " is in use")))
+    return out
+
+
+def _image_check(image: str) -> Check:
+    """A cached image needs no registry round trip, and works offline."""
+    if _cmd("docker", "image", "inspect", image)[0] == 0:
+        return Check("image", True, f"{image} (local)")
+    rc, detail = _cmd("docker", "manifest", "inspect", image)
+    if rc == 0:
+        return Check("image", True, image)
+    reason = detail.splitlines()[-1] if detail else "unknown"
+    return Check("image", False, f"{image}: not pullable ({reason}); run docker login quay.io")
+
+
+def _image_checks(compose: Compose) -> list[Check]:
+    try:
+        images = compose.images()
+    except ComposeError as exc:
+        first_line = str(exc).splitlines()[0]
+        return [
+            Check("image", False, f"docker compose config failed: {first_line}; run ./neops render first")
+        ]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=REGISTRY_WORKERS) as pool:
+        return list(pool.map(_image_check, images))
+
+
+def _db_password_checks(env: Env, compose: Compose, running: set[str]) -> list[Check]:
+    out = []
+    for service, user, db, key in DATABASES:
+        if service not in running or not env.is_set(key):
+            continue
+        try:
+            compose.exec(
+                service, "psql", "-U", user, "-d", db, "-c", "select 1", env={"PGPASSWORD": env.get(key)}
+            )
+            out.append(Check("db password", True, f"{service} accepts {key}"))
+        except Exception:
+            out.append(
+                Check(
+                    "db password",
+                    False,
+                    f"{service} rejects {key}: the value in .env changed without "
+                    "./neops rotate db-password; restore it or rotate properly",
+                )
+            )
+    return out
+
+
 def run_checks(
     env: Env, scenario: Scenario, repo: Path, data: Path, compose: Compose, check_images: bool = True
 ) -> list[Check]:
-    out: list[Check] = []
-    code, docker_v = _cmd("docker", "version", "--format", "{{.Server.Version}}")
-    out.append(
-        Check("docker daemon", code == 0, docker_v if code == 0 else "docker is not running or not reachable")
-    )
-    code, compose_v = _cmd("docker", "compose", "version", "--short")
-    out.append(
-        Check(
-            "docker compose",
-            code == 0 and version_ok(compose_v, MIN_COMPOSE),
-            compose_v if code == 0 else "docker compose v2 is required",
-        )
-    )
+    out, daemon_ok, _ = _docker_checks()
     if not env.exists:
         out.append(Check(".env", False, "no .env file: copy one of examples/*.env to .env"))
         return out
-    for p in problems(env, scenario, repo):
-        out.append(Check(".env", False, p))
-    if not any(c.name == ".env" for c in out):
-        out.append(Check(".env", True, f"{len(scenario.files)} compose files, scenario valid"))
+    env_checks = _env_checks(env, scenario, repo)
+    out += env_checks
+    out += _host_checks(repo, data)
 
-    free_gib = shutil.disk_usage(data if data.exists() else repo).free / 2**30
-    out.append(Check("disk", free_gib >= MIN_DISK_GIB, f"{free_gib:.1f} GiB free under {data}"))
-
-    mmc = Path("/proc/sys/vm/max_map_count")
-    if mmc.exists():
-        value = int(mmc.read_text().strip())
-        enough = value >= MIN_MAX_MAP_COUNT
-        detail = (
-            f"{value}"
-            if enough
-            else f"{value} < {MIN_MAX_MAP_COUNT}; run: "
-            f"sudo sysctl -w vm.max_map_count={MIN_MAX_MAP_COUNT} "
-            "and persist it in /etc/sysctl.d/99-neops.conf"
-        )
-        out.append(Check("vm.max_map_count", enough, detail))
-
-    try:
-        running = compose.running_services() if code == 0 else set()
-    except Exception:
-        running = set()
-    if not running:
-        for address, port in required_ports(env, scenario):
-            free = port_free(address, port)
-            out.append(Check("ports", free, f"{address}:{port}" + ("" if free else " is in use")))
-    if check_images and code == 0 and not any(c.name == ".env" and not c.ok for c in out):
-        for image in compose.images():
-            rc, detail = _cmd("docker", "manifest", "inspect", image)
-            out.append(
-                Check(
-                    "image",
-                    rc == 0,
-                    image
-                    if rc == 0
-                    else f"{image}: not pullable ({detail.splitlines()[-1] if detail else 'unknown'}); "
-                    "run docker login quay.io",
-                )
-            )
-    for service, user, db, key in (
-        ("postgres-cms", "neops", "neops", "NEOPS_CMS_DB_PASSWORD"),
-        ("postgres-engine", "postgres", "neops-workflow", "NEOPS_ENGINE_DB_PASSWORD"),
-        ("postgres-keycloak", "keycloak", "keycloak", "NEOPS_KEYCLOAK_DB_PASSWORD"),
-    ):
-        if service in running and env.is_set(key):
-            try:
-                compose.exec(
-                    service, "psql", "-U", user, "-d", db, "-c", "select 1", env={"PGPASSWORD": env.get(key)}
-                )
-                out.append(Check("db password", True, f"{service} accepts {key}"))
-            except Exception:
-                out.append(
-                    Check(
-                        "db password",
-                        False,
-                        f"{service} rejects {key}: the value in .env changed without "
-                        "./neops rotate db-password; restore it or rotate properly",
-                    )
-                )
+    running: set[str] = set()
+    if daemon_ok:
+        try:
+            running = compose.running_services()
+        except Exception:
+            running = set()
+    out += _port_checks(env, scenario, running)
+    if check_images and daemon_ok and all(c.ok for c in env_checks):
+        out += _image_checks(compose)
+    if daemon_ok:
+        out += _db_password_checks(env, compose, running)
     return out
 
 

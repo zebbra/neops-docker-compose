@@ -1,3 +1,4 @@
+import stat
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,18 @@ def test_apply_all_runs_pending_in_order_records_state_and_snapshots(tmp_path):
     snapshots = list(paths.backups.glob("pre-migrate-*"))
     assert len(snapshots) == 1 and (snapshots[0] / ".env").exists()
     assert migrate.apply_all(env, paths, State.load(paths.state_file), log=logs.append) == []
+
+
+def test_snapshot_is_private_because_env_and_state_hold_secrets(tmp_path):
+    env, paths = make(tmp_path)
+    State().save(paths.state_file)
+    target = migrate.snapshot(paths)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
+    assert stat.S_IMODE(paths.backups.stat().st_mode) == 0o700
+    copied = sorted(p.name for p in target.iterdir())
+    assert copied == [".env", "state.json"]
+    for name in copied:
+        assert stat.S_IMODE((target / name).stat().st_mode) == 0o600, name
 
 
 def test_failed_migration_is_not_recorded_and_non_idempotent_blocks_rerun(tmp_path):

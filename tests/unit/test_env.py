@@ -97,6 +97,12 @@ def test_paths_default_data_dir_is_under_repo(tmp_path):
     assert paths.generated == tmp_path / "generated"
 
 
+def test_paths_private_dirs_are_the_secret_bearing_subset(tmp_path):
+    paths = Paths.for_repo(tmp_path, Env(write(tmp_path / ".env", "")))
+    assert paths.private_dirs() == [paths.secrets, paths.jwt_dir, paths.tls_dir]
+    assert set(paths.private_dirs()) <= set(paths.data_dirs())
+
+
 def test_paths_honour_neops_data_dir_relative_to_repo(tmp_path):
     env = Env(write(tmp_path / ".env", "NEOPS_DATA_DIR=/srv/neops\n"))
     assert Paths.for_repo(tmp_path, env).data == Path("/srv/neops").resolve()
