@@ -66,9 +66,17 @@ class Paths:
     def data_dirs(self) -> list[Path]:
         """Every bind-mounted directory the base stack and the overlays use."""
         return [
-            self.data / "cms" / "postgres", self.data / "cms" / "media", self.data / "cms" / "tmp",
-            self.data / "engine" / "postgres", self.data / "keycloak" / "postgres",
-            self.data / "elasticsearch", self.data / "traefik" / "acme",
-            self.data / "metrics" / "victoria", self.data / "metrics" / "grafana",
-            self.secrets, self.jwt_dir, self.tls_dir, self.state_file.parent,
+            self.data / "cms" / "postgres",
+            self.data / "cms" / "media",
+            self.data / "cms" / "tmp",
+            self.data / "engine" / "postgres",
+            self.data / "keycloak" / "postgres",
+            self.data / "elasticsearch",
+            self.data / "traefik" / "acme",
+            self.data / "metrics" / "victoria",
+            self.data / "metrics" / "grafana",
+            self.secrets,
+            self.jwt_dir,
+            self.tls_dir,
+            self.state_file.parent,
         ]

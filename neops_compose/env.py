@@ -51,7 +51,10 @@ class Env:
             return
         value = self.values[old]
         text = self.path.read_text()
-        self.path.write_text(text.replace(f"\n{old}=", f"\n{new}=", 1) if not text.startswith(f"{old}=")
-                             else text.replace(f"{old}=", f"{new}=", 1))
+        self.path.write_text(
+            text.replace(f"\n{old}=", f"\n{new}=", 1)
+            if not text.startswith(f"{old}=")
+            else text.replace(f"{old}=", f"{new}=", 1)
+        )
         self.values[new] = value
         del self.values[old]

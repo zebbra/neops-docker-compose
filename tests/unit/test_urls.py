@@ -19,16 +19,19 @@ def test_parse_with_port_and_path_normalises_trailing_slash():
     assert not u.is_default_port
 
 
-@pytest.mark.parametrize("raw", [
-    "neops.example.com",                 # no scheme
-    "ftp://neops.example.com",           # bad scheme
-    "https://user:pw@neops.example.com", # userinfo
-    "https://neops.example.com/?x=1",    # query
-    "https://neops.example.com/#f",      # fragment
-    "https://neops example.com",         # space
-    'https://neops.example.com/a"b',     # quote (breaks the web client's injected JS)
-    "https://",                          # no host
-])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "neops.example.com",  # no scheme
+        "ftp://neops.example.com",  # bad scheme
+        "https://user:pw@neops.example.com",  # userinfo
+        "https://neops.example.com/?x=1",  # query
+        "https://neops.example.com/#f",  # fragment
+        "https://neops example.com",  # space
+        'https://neops.example.com/a"b',  # quote (breaks the web client's injected JS)
+        "https://",  # no host
+    ],
+)
 def test_parse_rejects(raw):
     with pytest.raises(BadUrl):
         PublicUrl.parse(raw)
