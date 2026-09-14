@@ -1,6 +1,6 @@
 # neops-docker-compose 2.0 — design
 
-Status: draft for review (2026-09-14, revised after the design-challenge round). Branch `release/2.0`.
+Status: approved 2026-09-14 after the design-challenge round. Branch `release/2.0`.
 
 ## Goal
 
@@ -299,8 +299,8 @@ Resolved during the challenge round: `up --wait` with the one-shot works on Comp
 
 ## Upstream dependencies and follow-ups
 
-Release dependency (blocks tagging this repo): fix the engine's `publish-monitor-image` job to pass the `npm_token` build secret and re-tag the engine so `quay.io/zebbra/neops-monitor-app:<tag>` exists.
+Release dependency, **in scope of this work**: fix the engine's `publish-monitor-image` job (`neops-workflow-engine/.github/workflows/release-on-tag.yml`) to pass the `npm_token` build secret the monitor Dockerfile's `client-gen` stage mounts, as a PR against the engine's `develop`, then a new engine tag so `quay.io/zebbra/neops-monitor-app:<tag>` exists. The compose pins move to that tag once it is published.
 
-Core defects found during the challenge round, to be filed against neops-core (this repo works around them, they do not block the release): corsheaders middleware ordered last instead of above `CommonMiddleware`, and no `CORS_ALLOWED_ORIGINS` setting; `init.sh` re-reads `$?` after a test and exits 1 on a fresh database's success path; `generate_api_key` has no lookup, reuse or revoke path; no health endpoint. Engine: the worker API relies on network privacy; an authenticated worker (token or mTLS) would let the deny-list go.
+Defects found during the challenge round, filed upstream (this repo works around them, they do not block the release): neops-core [#2269](https://github.com/zebbra/neops-core/issues/2269) `init.sh` exits 1 on a fresh database's success path, [#2270](https://github.com/zebbra/neops-core/issues/2270) no CORS allow-list and middleware ordered last, [#2271](https://github.com/zebbra/neops-core/issues/2271) `generate_api_key` has no lookup, reuse or revoke path, [#2272](https://github.com/zebbra/neops-core/issues/2272) no health endpoint; neops-workflow-engine [#290](https://github.com/zebbra/neops-workflow-engine/issues/290) the worker API relies on network privacy (an authenticated worker would let the deny-list go).
 
 Not in this release: pgbouncer overlay; secure-gateway overlay; `restore` command; a `.env` wizard; a Postgres major-version upgrade migration; publishing the docs to docs.neops.io (core's `docs/deployments/docker-compose/` mirrors the 1.0 layout and will need replacing).
