@@ -198,3 +198,28 @@ def test_malformed_base_url_does_not_crash_when_an_overlay_adds_a_url(
     env, sc = make(tmp_repo, text)
     out = problems(env, sc, tmp_repo)
     assert any(bad_key in p for p in out)
+
+
+def test_traefik_with_tls_requires_https_urls(tmp_repo):
+    env, sc = make(
+        tmp_repo, GOOD.replace("https://engine.neops.example.com", "http://engine.neops.example.com")
+    )
+    assert any("NEOPS_ENGINE_URL" in p and "https" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_traefik_without_tls_requires_http_urls(tmp_repo):
+    text = GOOD.replace(":compose.tls-files.yaml", "").replace(
+        "NEOPS_TLS_CERT_FILE=./certs/cert.pem\nNEOPS_TLS_KEY_FILE=./certs/key.pem\n", ""
+    )
+    env, sc = make(tmp_repo, text)
+    assert any("NEOPS_WEB_URL" in p and "http://" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_shared_host_monitor_port_must_match_monitor_port_variable(tmp_repo):
+    text = (
+        GOOD.replace("compose.traefik.yaml:", "compose.traefik.yaml:compose.traefik-shared-host.yaml:")
+        .replace("https://cms.neops.example.com", "https://neops.example.com")
+        .replace("https://workflows.neops.example.com", "https://neops.example.com:9999")
+    )
+    env, sc = make(tmp_repo, text)
+    assert any("NEOPS_MONITOR_PORT" in p for p in problems(env, sc, tmp_repo))

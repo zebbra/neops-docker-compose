@@ -60,7 +60,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             out += p
             urls.update(gf)
     if all(key in urls for key in BASE_URLS):
-        out += _url_rules(urls, scenario)
+        out += _url_rules(urls, scenario, env)
     return out
 
 
@@ -125,8 +125,14 @@ def _parse_urls(env: Env, keys: tuple[str, ...]) -> tuple[dict[str, PublicUrl], 
     return urls, out
 
 
-def _url_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
-    return _cms_rules(urls, scenario) + _monitor_rules(urls) + _path_rules(urls, scenario)
+def _url_rules(urls: dict[str, PublicUrl], scenario: Scenario, env: Env) -> list[str]:
+    monitor_port = int(env.get("NEOPS_MONITOR_PORT", "8443"))
+    return (
+        _cms_rules(urls, scenario)
+        + _monitor_rules(urls)
+        + _path_rules(urls, scenario)
+        + _traefik_rules(urls, scenario, monitor_port)
+    )
 
 
 def _cms_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
@@ -180,4 +186,23 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
                     f"{key} has a path but hostname-per-service routing is selected; "
                     "paths need compose.traefik-shared-host.yaml"
                 )
+    return out
+
+
+def _traefik_rules(urls: dict[str, PublicUrl], scenario: Scenario, monitor_port: int) -> list[str]:
+    out = []
+    if scenario.proxy == "traefik":
+        expected = "https" if scenario.tls else "http"
+        for key, u in urls.items():
+            if u.scheme != expected:
+                out.append(
+                    f"{key} must use {expected}:// with this COMPOSE_FILE "
+                    f"(TLS overlay {'present' if scenario.tls else 'absent'})"
+                )
+        wf = urls["NEOPS_WORKFLOWS_URL"]
+        web = urls["NEOPS_WEB_URL"]
+        if scenario.shared_host and wf.host == web.host and wf.port != monitor_port:
+            out.append(
+                f"NEOPS_WORKFLOWS_URL on the web hostname must use port NEOPS_MONITOR_PORT ({monitor_port})"
+            )
     return out
