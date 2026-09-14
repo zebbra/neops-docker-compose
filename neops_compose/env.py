@@ -48,6 +48,8 @@ class Env:
             del self.values[key]
 
     def rename(self, old: str, new: str) -> None:
+        if not self.exists:
+            raise MissingEnv(old)
         old_re = re.compile(rf"^(?P<prefix>[ \t]*(?:export[ \t]+)?){re.escape(old)}=")
         new_re = re.compile(rf"^[ \t]*(?:export[ \t]+)?{re.escape(new)}=")
         lines = self.path.read_text().splitlines(keepends=True)

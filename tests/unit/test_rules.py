@@ -149,6 +149,19 @@ def test_short_secret_is_flagged(tmp_repo):
     assert any("NEOPS_ADMIN_PASSWORD" in p and "too short" in p for p in out)
 
 
+def test_oidc_client_secret_from_external_idp_has_no_length_minimum(tmp_repo):
+    text = (
+        GOOD.replace("compose.tls-files.yaml", "compose.tls-files.yaml:compose.oidc.yaml")
+        + "NEOPS_OIDC_PROVIDER_ID=entra\n"
+        + "NEOPS_OIDC_NAME=Company SSO\n"
+        + "NEOPS_OIDC_CLIENT_ID=abc\n"
+        + "NEOPS_OIDC_DISCOVERY_URL=https://login.example.com/.well-known/openid-configuration\n"
+        + "NEOPS_OIDC_CLIENT_SECRET=fourteenchars1\n"
+    )
+    env, sc = make(tmp_repo, text)
+    assert problems(env, sc, tmp_repo) == []
+
+
 KEYCLOAK_ENV = (
     GOOD.replace(
         "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml",

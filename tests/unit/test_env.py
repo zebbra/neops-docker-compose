@@ -75,6 +75,12 @@ def test_env_rename_missing_key_raises(tmp_path):
         env.rename("OLD", "NEW")
 
 
+def test_env_rename_missing_file_raises_missing_env(tmp_path):
+    env = Env(tmp_path / ".env")
+    with pytest.raises(MissingEnv, match="OLD"):
+        env.rename("OLD", "NEW")
+
+
 def test_env_rename_existing_target_raises(tmp_path):
     p = write(tmp_path / ".env", "OLD=1\nNEW=2\n")
     env = Env(p)

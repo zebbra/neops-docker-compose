@@ -28,7 +28,7 @@ SECRET_HINT = "generate one with: openssl rand -hex 32"
 def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     out: list[str] = []
     out += _overlay_problems(scenario, repo)
-    out += _required(env, BASE_SECRETS, secret=True)
+    out += _required(env, BASE_SECRETS, secret=True, min_length=16)
     urls, url_problems = _parse_urls(env, BASE_URLS)
     out += url_problems
     if scenario.tls == "files" and not env.flag("NEOPS_TLS_SELF_SIGNED"):
@@ -42,14 +42,19 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             )
     if scenario.oidc and not scenario.keycloak:
         out += _required(env, OIDC_KEYS, secret=False)
-        out += _required(env, ("NEOPS_OIDC_CLIENT_SECRET",), secret=True)
+        out += _required(
+            env,
+            ("NEOPS_OIDC_CLIENT_SECRET",),
+            secret=True,
+            hint="the client secret from your identity provider's client configuration",
+        )
     if scenario.keycloak:
-        out += _required(env, KEYCLOAK_SECRETS, secret=True)
+        out += _required(env, KEYCLOAK_SECRETS, secret=True, min_length=16)
         kc, p = _parse_urls(env, ("NEOPS_KEYCLOAK_URL",))
         out += p
         urls.update(kc)
     if scenario.metrics:
-        out += _required(env, ("NEOPS_GRAFANA_ADMIN_PASSWORD",), secret=True)
+        out += _required(env, ("NEOPS_GRAFANA_ADMIN_PASSWORD",), secret=True, min_length=16)
         if env.is_set("NEOPS_GRAFANA_URL"):
             gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
             out += p
@@ -88,15 +93,21 @@ def _overlay_problems(scenario: Scenario, repo: Path) -> list[str]:
     return out
 
 
-def _required(env: Env, keys: tuple[str, ...], secret: bool = False) -> list[str]:
+def _required(
+    env: Env,
+    keys: tuple[str, ...],
+    secret: bool = False,
+    min_length: int | None = None,
+    hint: str = SECRET_HINT,
+) -> list[str]:
     out = []
     for key in keys:
         if not env.is_set(key):
-            out.append(f"{key} is required" + (f" ({SECRET_HINT})" if secret else ""))
+            out.append(f"{key} is required" + (f" ({hint})" if secret else ""))
         elif secret and env.get(key).strip().lower() in PLACEHOLDERS:
-            out.append(f"{key} is a placeholder value ({SECRET_HINT})")
-        elif secret and len(env.get(key).strip()) < 16:
-            out.append(f"{key} is too short (min 16) ({SECRET_HINT})")
+            out.append(f"{key} is a placeholder value ({hint})")
+        elif secret and min_length is not None and len(env.get(key).strip()) < min_length:
+            out.append(f"{key} is too short (min {min_length}) ({hint})")
     return out
 
 
