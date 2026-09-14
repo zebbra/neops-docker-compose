@@ -7,7 +7,7 @@ import yaml
 
 from neops_compose.env import Env
 from neops_compose.paths import Paths
-from neops_compose.render import MissingSecret, render
+from neops_compose.render import MissingSecret, RenderError, render
 from neops_compose.scenario import Scenario
 
 HOSTS = """
@@ -152,3 +152,14 @@ def test_keycloak_realm_json_is_world_readable_for_the_container_uid(tmp_repo):
     _, paths = run(tmp_repo, KEYCLOAK)
     assert stat.S_IMODE((paths.generated / "keycloak" / "realm.json").stat().st_mode) == 0o644
     assert stat.S_IMODE((paths.generated / "keycloak").stat().st_mode) == 0o700
+
+
+def test_render_error_when_docker_created_a_directory_at_a_generated_path(tmp_repo):
+    (tmp_repo / ".env").write_text(HOSTS)
+    env = Env(tmp_repo / ".env")
+    paths = Paths.for_repo(tmp_repo, env)
+    paths.secrets.mkdir(parents=True, exist_ok=True)
+    (paths.generated / "traefik" / "dynamic.yml").mkdir(parents=True)
+
+    with pytest.raises(RenderError, match="sudo rm -rf"):
+        render(env, Scenario.from_env(env), paths)

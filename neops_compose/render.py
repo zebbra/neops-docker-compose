@@ -19,6 +19,10 @@ class MissingSecret(Exception):
     pass
 
 
+class RenderError(Exception):
+    pass
+
+
 def render(env: Env, scenario: Scenario, paths: Paths) -> list[Path]:
     """Rebuild generated/ from .env, writing files in place.
 
@@ -32,7 +36,13 @@ def render(env: Env, scenario: Scenario, paths: Paths) -> list[Path]:
 
     def emit(rel: str, text: str, mode: int = 0o600) -> None:
         p = out / rel
-        write_secret(p, text.encode(), mode=mode)
+        try:
+            write_secret(p, text.encode(), mode=mode)
+        except IsADirectoryError as exc:
+            raise RenderError(
+                f"{p} is a directory; docker created it because the stack was started "
+                f"before ./neops render. Stop the stack and remove it: sudo rm -rf {p}"
+            ) from exc
         written.add(p)
 
     emit("cms.env", cms_env(env, scenario))
@@ -46,6 +56,8 @@ def render(env: Env, scenario: Scenario, paths: Paths) -> list[Path]:
         # the 0700 generated/keycloak/ still hides it from other host users.
         emit("keycloak/realm.json", json.dumps(keycloak_realm(env, paths), indent=2) + "\n", mode=0o644)
     if scenario.oidc:
+        # 0600 is fine here: neops-core reads it running as root (no USER in its
+        # Dockerfile). A non-root core image would need 0644, like realm.json above.
         emit("providers.json", json.dumps(providers(env, scenario, paths), indent=2) + "\n")
     _remove_stale(out, written)
     return sorted(written)

@@ -250,3 +250,32 @@ def test_non_integer_port_yields_a_problem_not_a_crash(tmp_repo):
         env, sc = make(tmp_repo, text)
         out = problems(env, sc, tmp_repo)
         assert any("must be integers" in p for p in out), (key, out)
+
+
+def test_shared_host_monitor_port_must_differ_from_https_port(tmp_repo):
+    text = (
+        GOOD.replace("compose.traefik.yaml:", "compose.traefik.yaml:compose.traefik-shared-host.yaml:")
+        .replace("https://cms.neops.example.com", "https://neops.example.com")
+        .replace("https://engine.neops.example.com", "https://neops.example.com/engine")
+        + "NEOPS_MONITOR_PORT=443\n"
+    )
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_MONITOR_PORT" in p and "NEOPS_HTTPS_PORT" in p for p in out)
+
+
+def test_shared_host_monitor_port_must_differ_from_http_port_without_tls(tmp_repo):
+    text = (
+        GOOD.replace("compose.traefik.yaml:", "compose.traefik.yaml:compose.traefik-shared-host.yaml:")
+        .replace(":compose.tls-files.yaml", "")
+        .replace("NEOPS_TLS_CERT_FILE=./certs/cert.pem\nNEOPS_TLS_KEY_FILE=./certs/key.pem\n", "")
+    )
+    text = (
+        text.replace("https://", "http://")
+        .replace("http://cms.neops.example.com", "http://neops.example.com")
+        .replace("http://engine.neops.example.com", "http://neops.example.com/engine")
+        + "NEOPS_MONITOR_PORT=80\n"
+    )
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_MONITOR_PORT" in p and "NEOPS_HTTP_PORT" in p for p in out)

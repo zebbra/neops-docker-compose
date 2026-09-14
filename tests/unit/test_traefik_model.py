@@ -122,13 +122,15 @@ def test_shared_host_without_tls_has_no_tls_routers(tmp_path):
     assert r["monitor"].entrypoint == "monitor"
 
 
-def test_https_redirect_has_no_port_at_the_default(tmp_path):
+def test_https_redirect_targets_the_websecure_entrypoint_at_the_default_port(tmp_path):
     c = cfg(tmp_path, HOSTS)
     static = static_config(c)
-    assert "port" not in static["entryPoints"]["web"]["http"]["redirections"]["entryPoint"]
+    entry = static["entryPoints"]["web"]["http"]["redirections"]["entryPoint"]
+    assert entry["to"] == "websecure" and "port" not in entry
 
 
-def test_https_redirect_carries_a_non_default_port(tmp_path):
+def test_https_redirect_targets_a_non_default_port_directly(tmp_path):
     c = cfg(tmp_path, HOSTS + "NEOPS_HTTPS_PORT=8443\n")
     static = static_config(c)
-    assert static["entryPoints"]["web"]["http"]["redirections"]["entryPoint"]["port"] == "8443"
+    entry = static["entryPoints"]["web"]["http"]["redirections"]["entryPoint"]
+    assert entry["to"] == ":8443" and "port" not in entry

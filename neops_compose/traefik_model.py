@@ -27,7 +27,6 @@ class EntryPoint:
     name: str
     address: str
     redirect_to: str | None = None
-    redirect_port: int | None = None
 
 
 @dataclass(frozen=True)
@@ -80,8 +79,10 @@ def build_traefik(env: Env, scenario: Scenario) -> TraefikConfig:
     if scenario.metrics and env.is_set("NEOPS_GRAFANA_URL"):
         urls["NEOPS_GRAFANA_URL"] = PublicUrl.parse(env.get("NEOPS_GRAFANA_URL"))
 
-    redirect_port = https_port if secure and https_port != DEFAULT_HTTPS_PORT else None
-    entrypoints = [EntryPoint("web", ":80", "websecure" if secure else None, redirect_port)]
+    # Traefik's redirection "to" field has no separate "port" sibling: reference the
+    # websecure entrypoint by name at the default port, or target the port directly.
+    redirect_to = "websecure" if https_port == DEFAULT_HTTPS_PORT else f":{https_port}"
+    entrypoints = [EntryPoint("web", ":80", redirect_to if secure else None)]
     if secure:
         entrypoints.append(EntryPoint("websecure", ":443"))
     if scenario.shared_host:
@@ -154,10 +155,7 @@ def static_config(cfg: TraefikConfig) -> dict:
     for ep in cfg.entrypoints:
         entry: dict = {"address": ep.address}
         if ep.redirect_to:
-            redirect_entry: dict = {"to": ep.redirect_to, "scheme": "https"}
-            if ep.redirect_port is not None:
-                redirect_entry["port"] = str(ep.redirect_port)
-            entry["http"] = {"redirections": {"entryPoint": redirect_entry}}
+            entry["http"] = {"redirections": {"entryPoint": {"to": ep.redirect_to, "scheme": "https"}}}
         eps[ep.name] = entry
     out: dict = {
         "entryPoints": eps,

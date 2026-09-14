@@ -26,6 +26,10 @@ KEYCLOAK_SECRETS = ("NEOPS_KEYCLOAK_ADMIN_PASSWORD", "NEOPS_KEYCLOAK_DB_PASSWORD
 SECRET_HINT = "generate one with: openssl rand -hex 32"
 
 
+class BadPorts(Exception):
+    pass
+
+
 def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     out: list[str] = []
     out += _overlay_problems(scenario, repo)
@@ -61,9 +65,10 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             out += p
             urls.update(gf)
     if all(key in urls for key in BASE_URLS):
-        ports = _ports(env)
-        if isinstance(ports, str):
-            out.append(ports)
+        try:
+            ports = _ports(env)
+        except BadPorts as exc:
+            out.append(str(exc))
         else:
             out += _url_rules(urls, scenario, *ports)
     return out
@@ -130,13 +135,13 @@ def _parse_urls(env: Env, keys: tuple[str, ...]) -> tuple[dict[str, PublicUrl], 
     return urls, out
 
 
-def _ports(env: Env) -> tuple[int, int, int] | str:
+def _ports(env: Env) -> tuple[int, int, int]:
     try:
         http_port = int(env.get("NEOPS_HTTP_PORT", str(DEFAULT_HTTP_PORT)))
         https_port = int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)))
         monitor_port = int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT)))
     except ValueError:
-        return "NEOPS_HTTP_PORT, NEOPS_HTTPS_PORT and NEOPS_MONITOR_PORT must be integers"
+        raise BadPorts("NEOPS_HTTP_PORT, NEOPS_HTTPS_PORT and NEOPS_MONITOR_PORT must be integers") from None
     return http_port, https_port, monitor_port
 
 
@@ -220,6 +225,16 @@ def _traefik_rules(
             )
 
     web = urls["NEOPS_WEB_URL"]
+
+    if scenario.shared_host:
+        conflict_port = https_port if scenario.tls else http_port
+        conflict_key = "NEOPS_HTTPS_PORT" if scenario.tls else "NEOPS_HTTP_PORT"
+        if monitor_port == conflict_port:
+            out.append(
+                f"NEOPS_MONITOR_PORT must differ from {conflict_key} in shared-host mode "
+                f"({monitor_port}): otherwise Traefik cannot tell the monitor URL apart "
+                "from the other shared-host routes on the same port"
+            )
 
     def is_monitor_entrypoint(u: PublicUrl) -> bool:
         return scenario.shared_host and u.host == web.host and u.port == monitor_port
