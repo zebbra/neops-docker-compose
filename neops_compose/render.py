@@ -92,6 +92,11 @@ def cms_env(env: Env, scenario: Scenario) -> str:
     ]
     if not web.same_origin(cms):
         lines.append("CORS_ORIGIN_ALLOW_ALL=True")
+    if web.scheme == "http":
+        # Core defaults both to True outside DEBUG, which makes the admin unusable over
+        # plain http (evaluation scenarios only; every TLS overlay leaves these unset).
+        lines.append("SESSION_COOKIE_SECURE=False")
+        lines.append("CSRF_COOKIE_SECURE=False")
     return "\n".join(lines) + "\n"
 
 

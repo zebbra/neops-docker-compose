@@ -38,6 +38,7 @@ NEOPS_CMS_URL=https://neops.example.com
 NEOPS_ENGINE_URL=https://neops.example.com/engine
 NEOPS_WORKFLOWS_URL=https://neops.example.com:8443
 """
+EXPOSE_HTTP = EXPOSE_SHARED.replace("https://", "http://")
 
 
 def run(tmp_repo, text):
@@ -75,6 +76,22 @@ def test_cms_env_shared_origin_has_no_cors_and_no_traefik(tmp_repo):
     assert cms["DJANGO_ALLOWED_HOSTS"] == "neops.example.com,cms,localhost,127.0.0.1"
     assert "CORS_ORIGIN_ALLOW_ALL" not in cms
     assert not (paths.generated / "traefik").exists()
+
+
+def test_cms_env_http_scheme_disables_secure_cookies(tmp_repo):
+    _, paths = run(tmp_repo, EXPOSE_HTTP)
+    cms = envfile(paths.generated / "cms.env")
+    assert cms["ACCOUNT_DEFAULT_HTTP_PROTOCOL"] == "http"
+    assert cms["SESSION_COOKIE_SECURE"] == "False"
+    assert cms["CSRF_COOKIE_SECURE"] == "False"
+
+
+def test_cms_env_https_scheme_leaves_secure_cookies_unset(tmp_repo):
+    _, paths = run(tmp_repo, HOSTS)
+    cms = envfile(paths.generated / "cms.env")
+    assert cms["ACCOUNT_DEFAULT_HTTP_PROTOCOL"] == "https"
+    assert "SESSION_COOKIE_SECURE" not in cms
+    assert "CSRF_COOKIE_SECURE" not in cms
 
 
 def test_external_oidc_providers(tmp_repo):

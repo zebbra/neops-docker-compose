@@ -27,6 +27,9 @@ services:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     environment:
       DATA_SOURCE_NAME: postgresql://neops:${NEOPS_CMS_DB_PASSWORD}@postgres-cms:5432/neops?sslmode=disable
+    depends_on:
+      postgres-cms:
+        condition: service_healthy
     logging: *logging
     restart: unless-stopped
 
@@ -34,12 +37,18 @@ services:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     environment:
       DATA_SOURCE_NAME: postgresql://postgres:${NEOPS_ENGINE_DB_PASSWORD}@postgres-engine:5432/neops-workflow?sslmode=disable
+    depends_on:
+      postgres-engine:
+        condition: service_healthy
     logging: *logging
     restart: unless-stopped
 
   elasticsearch-exporter:
     image: prometheuscommunity/elasticsearch-exporter:v1.9.0
     command: ["--es.uri=http://elasticsearch:9200", "--es.all", "--es.indices"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
     logging: *logging
     restart: unless-stopped
 

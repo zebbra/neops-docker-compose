@@ -30,9 +30,6 @@ x-core-env: &core-env
   NEOPS_JWT_PRIVATE_KEY_PATH: /etc/neops/jwt/private.pem
   NEOPS_JWT_PUBLIC_KEY_PATH: /etc/neops/jwt/public.pem
   NEOPS_PUBLIC_URL: ${NEOPS_CMS_URL}
-  NEOPS_ADMIN_USER: ${NEOPS_ADMIN_USER:-neops}
-  NEOPS_ADMIN_EMAIL: ${NEOPS_ADMIN_EMAIL:-neops@example.com}
-  NEOPS_ADMIN_PASSWORD: ${NEOPS_ADMIN_PASSWORD}
   SENTRY_DSN: ${SENTRY_DSN:-}
   SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
   EMAIL_URL: ${EMAIL_URL:-}
@@ -132,8 +129,14 @@ services:
   cms-init:
     # One-shot: Django migrations, Elasticsearch indices, the superuser. Re-runs on every `up` (idempotent).
     # Does not use the image's init.sh, which exits 1 on a fresh database (neops-core #2269).
+    # The admin credentials live only here, not in x-core-env: the long-lived cms/cms-worker/
+    # cms-beat containers have no reason to carry NEOPS_ADMIN_PASSWORD.
     <<: *core-service
-    environment: *core-env
+    environment:
+      <<: *core-env
+      NEOPS_ADMIN_USER: ${NEOPS_ADMIN_USER:-neops}
+      NEOPS_ADMIN_EMAIL: ${NEOPS_ADMIN_EMAIL:-neops@example.com}
+      NEOPS_ADMIN_PASSWORD: ${NEOPS_ADMIN_PASSWORD}
     restart: "no"
     depends_on:
       postgres-cms:

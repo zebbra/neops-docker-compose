@@ -2,11 +2,6 @@ global:
   scrape_interval: 30s
 
 scrape_configs:
-  - job_name: neops
-    metrics_path: /metrics
-    static_configs:
-      - targets: [cms:8000]
-
   - job_name: celery
     static_configs:
       - targets: [celery-exporter:9808]

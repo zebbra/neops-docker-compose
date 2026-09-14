@@ -71,6 +71,8 @@ def test_no_interpolation_of_generated_only_keys():
         "CORS_ORIGIN_ALLOW_ALL",
         "ACCOUNT_DEFAULT_HTTP_PROTOCOL",
         "KC_HTTP_RELATIVE_PATH",
+        "SESSION_COOKIE_SECURE",
+        "CSRF_COOKIE_SECURE",
     }
     for f in COMPOSE_FILES:
         for key in generated_only:
@@ -83,3 +85,13 @@ def test_no_shipped_compose_file_is_the_placeholder():
     for f in COMPOSE_FILES:
         doc = load(f)
         assert doc.get("services"), f"{f.name} is still the placeholder"
+
+
+def test_admin_credentials_are_confined_to_cms_init():
+    doc = load(REPO / "compose.yaml")
+    services = doc["services"]
+    assert "NEOPS_ADMIN_PASSWORD" in services["cms-init"]["environment"]
+    for name in ("cms", "cms-worker", "cms-beat"):
+        assert "NEOPS_ADMIN_PASSWORD" not in services[name]["environment"], (
+            f"{name} must not carry NEOPS_ADMIN_PASSWORD, only cms-init needs it"
+        )
