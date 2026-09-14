@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from neops_compose.env import Env
+from neops_compose.ports import DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT, MONITOR_CONTAINER_PORT
 from neops_compose.routes import CORE_PREFIXES, ENGINE_PUBLIC_WORKER_ROUTES
 from neops_compose.scenario import Scenario
 from neops_compose.urls import PublicUrl
@@ -26,6 +27,7 @@ class EntryPoint:
     name: str
     address: str
     redirect_to: str | None = None
+    redirect_port: int | None = None
 
 
 @dataclass(frozen=True)
@@ -57,21 +59,18 @@ def _host_rule(url: PublicUrl) -> str:
 
 
 def worker_deny_rule(host: str, prefix: str) -> str:
-    parts = []
-    for kind, value in ENGINE_PUBLIC_WORKER_ROUTES:
-        if kind == "path":
-            parts.append(f"Path(`{prefix}{value}`)")
-        elif kind == "prefix":
-            parts.append(f"PathPrefix(`{prefix}{value}`)")
-        else:
-            parts.append(f"PathRegexp(`^{re.escape(prefix)}{value}$`)")
-    return f"Host(`{host}`) && Method(`POST`) && (" + " || ".join(parts) + ")"
+    # Traefik's Path/PathPrefix are exact and case-sensitive; Express (the engine)
+    # matches case-insensitively and tolerates a trailing slash. One regex covers both.
+    alternation = "|".join(ENGINE_PUBLIC_WORKER_ROUTES)
+    pattern = f"^{re.escape(prefix)}(?i:/({alternation})/?)$"
+    return f"Host(`{host}`) && Method(`POST`) && PathRegexp(`{pattern}`)"
 
 
 def build_traefik(env: Env, scenario: Scenario) -> TraefikConfig:
     tls = scenario.tls
     secure = tls is not None
-    monitor_port = int(env.get("NEOPS_MONITOR_PORT", "8443"))
+    monitor_port = int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT)))
+    https_port = int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)))
     urls = {
         k: PublicUrl.parse(env.require(k))
         for k in ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
@@ -81,11 +80,12 @@ def build_traefik(env: Env, scenario: Scenario) -> TraefikConfig:
     if scenario.metrics and env.is_set("NEOPS_GRAFANA_URL"):
         urls["NEOPS_GRAFANA_URL"] = PublicUrl.parse(env.get("NEOPS_GRAFANA_URL"))
 
-    entrypoints = [EntryPoint("web", ":80", "websecure" if secure else None)]
+    redirect_port = https_port if secure and https_port != DEFAULT_HTTPS_PORT else None
+    entrypoints = [EntryPoint("web", ":80", "websecure" if secure else None, redirect_port)]
     if secure:
         entrypoints.append(EntryPoint("websecure", ":443"))
     if scenario.shared_host:
-        entrypoints.append(EntryPoint("monitor", ":8443"))
+        entrypoints.append(EntryPoint("monitor", f":{MONITOR_CONTAINER_PORT}"))
     default_ep = "websecure" if secure else "web"
 
     def entrypoint_for(url: PublicUrl) -> str:
@@ -98,7 +98,7 @@ def build_traefik(env: Env, scenario: Scenario) -> TraefikConfig:
     services: dict[str, str] = {}
 
     def add(name: str, rule: str, service: str, priority: int, ep: str, mws: tuple[str, ...] = ()) -> None:
-        routers.append(Router(name, rule, ep, service, priority, mws, tls=ep != "web"))
+        routers.append(Router(name, rule, ep, service, priority, mws, tls=secure))
         services[service] = SERVICE_URLS[service]
 
     web = urls["NEOPS_WEB_URL"]
@@ -154,7 +154,10 @@ def static_config(cfg: TraefikConfig) -> dict:
     for ep in cfg.entrypoints:
         entry: dict = {"address": ep.address}
         if ep.redirect_to:
-            entry["http"] = {"redirections": {"entryPoint": {"to": ep.redirect_to, "scheme": "https"}}}
+            redirect_entry: dict = {"to": ep.redirect_to, "scheme": "https"}
+            if ep.redirect_port is not None:
+                redirect_entry["port"] = str(ep.redirect_port)
+            entry["http"] = {"redirections": {"entryPoint": redirect_entry}}
         eps[ep.name] = entry
     out: dict = {
         "entryPoints": eps,

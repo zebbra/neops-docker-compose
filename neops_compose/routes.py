@@ -10,6 +10,11 @@ ENGINE_PUBLIC_WORKER_ROUTES: the engine's @Public() worker routes
 They are unauthenticated by design and must never be reachable from outside the
 compose network. All are POST. A new @Public() route in the engine is a two-repo change.
 
+Express, which the engine runs on, matches these case-insensitively and tolerates
+a trailing slash; Traefik's Path/PathPrefix matchers do neither. traefik_model
+therefore joins these fragments (each relative, no leading slash) into a single
+case-insensitive, slash-tolerant PathRegexp rather than matching each verbatim.
+
 WEB_RESERVED_PATHS: paths the web client SPA owns on its origin.
 """
 
@@ -26,14 +31,11 @@ CORE_PREFIXES: tuple[str, ...] = (
     "/webhook",
 )
 
-# (matcher, value) pairs; traefik_model turns them into a Traefik v3 rule and
-# prepends the engine's public path prefix when it has one. All are POST.
-ENGINE_PUBLIC_WORKER_ROUTES: tuple[tuple[str, str], ...] = (
-    ("path", "/blackboard/job"),
-    ("prefix", "/blackboard/job/"),
-    ("path", "/workers/register"),
-    ("regexp", "/workers/[^/]+/(ping|unregister)"),
-    ("path", "/function-blocks/register"),
+ENGINE_PUBLIC_WORKER_ROUTES: tuple[str, ...] = (
+    "blackboard/job(/.*)?",
+    "workers/register",
+    "workers/[^/]+/(ping|unregister)",
+    "function-blocks/register",
 )
 
 WEB_RESERVED_PATHS: tuple[str, ...] = ("/auth", "/login")

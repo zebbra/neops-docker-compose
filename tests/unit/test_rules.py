@@ -223,3 +223,30 @@ def test_shared_host_monitor_port_must_match_monitor_port_variable(tmp_repo):
     )
     env, sc = make(tmp_repo, text)
     assert any("NEOPS_MONITOR_PORT" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_https_url_port_must_match_neops_https_port(tmp_repo):
+    text = GOOD.replace("https://cms.neops.example.com", "https://cms.neops.example.com:9443")
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_CMS_URL" in p and "NEOPS_HTTPS_PORT" in p for p in out)
+
+
+def test_http_url_port_must_match_neops_http_port(tmp_repo):
+    text = GOOD.replace(":compose.tls-files.yaml", "").replace(
+        "NEOPS_TLS_CERT_FILE=./certs/cert.pem\nNEOPS_TLS_KEY_FILE=./certs/key.pem\n", ""
+    )
+    text = text.replace("https://", "http://").replace(
+        "http://cms.neops.example.com", "http://cms.neops.example.com:9999"
+    )
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_CMS_URL" in p and "NEOPS_HTTP_PORT" in p for p in out)
+
+
+def test_non_integer_port_yields_a_problem_not_a_crash(tmp_repo):
+    for key in ("NEOPS_HTTP_PORT", "NEOPS_HTTPS_PORT", "NEOPS_MONITOR_PORT"):
+        text = GOOD + f"{key}=notaport\n"
+        env, sc = make(tmp_repo, text)
+        out = problems(env, sc, tmp_repo)
+        assert any("must be integers" in p for p in out), (key, out)

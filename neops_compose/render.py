@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 from neops_compose.env import Env
@@ -16,18 +15,25 @@ KEYCLOAK_CLIENT_ID = "neops-auth"
 KEYCLOAK_PROVIDER_ID = "keycloak"
 
 
-def render(env: Env, scenario: Scenario, paths: Paths) -> list[Path]:
-    """Rebuild generated/ from .env. Deterministic; removes what the scenario no longer needs."""
-    out = paths.generated
-    if out.exists():
-        shutil.rmtree(out)
-    private_dir(out)
-    written: list[Path] = []
+class MissingSecret(Exception):
+    pass
 
-    def emit(rel: str, text: str) -> None:
+
+def render(env: Env, scenario: Scenario, paths: Paths) -> list[Path]:
+    """Rebuild generated/ from .env, writing files in place.
+
+    Bind-mounted files inside a running container must see updates on their existing
+    inode, so files are opened and overwritten rather than the directory being wiped
+    and recreated. Deterministic; removes what the scenario no longer needs.
+    """
+    out = paths.generated
+    private_dir(out)
+    written: set[Path] = set()
+
+    def emit(rel: str, text: str, mode: int = 0o600) -> None:
         p = out / rel
-        write_secret(p, text.encode())
-        written.append(p)
+        write_secret(p, text.encode(), mode=mode)
+        written.add(p)
 
     emit("cms.env", cms_env(env, scenario))
     if scenario.proxy == "traefik":
@@ -36,10 +42,23 @@ def render(env: Env, scenario: Scenario, paths: Paths) -> list[Path]:
         emit("traefik/dynamic.yml", _yaml_json(dynamic_config(cfg)))
     if scenario.keycloak:
         emit("keycloak.env", f"KC_HTTP_RELATIVE_PATH={keycloak_relative_path(env)}\n")
-        emit("keycloak/realm.json", json.dumps(keycloak_realm(env, paths), indent=2) + "\n")
+        # The Keycloak container (uid 1000) reads this straight off the bind mount;
+        # the 0700 generated/keycloak/ still hides it from other host users.
+        emit("keycloak/realm.json", json.dumps(keycloak_realm(env, paths), indent=2) + "\n", mode=0o644)
     if scenario.oidc:
         emit("providers.json", json.dumps(providers(env, scenario, paths), indent=2) + "\n")
-    return written
+    _remove_stale(out, written)
+    return sorted(written)
+
+
+def _remove_stale(out: Path, written: set[Path]) -> None:
+    for p in list(out.rglob("*")):
+        if p.is_file() and p not in written:
+            p.unlink()
+    dirs = sorted((p for p in out.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True)
+    for d in dirs:
+        if not any(d.iterdir()):
+            d.rmdir()
 
 
 def _yaml_json(doc: dict) -> str:
@@ -68,6 +87,13 @@ def keycloak_relative_path(env: Env) -> str:
     return PublicUrl.parse(env.require("NEOPS_KEYCLOAK_URL")).path or "/"
 
 
+def _keycloak_client_secret(paths: Paths) -> str:
+    secret = read_keycloak_client_secret(paths.keycloak_client_env)
+    if secret is None:
+        raise MissingSecret("data/secrets/keycloak-client.env is missing; run ./neops keys")
+    return secret
+
+
 def providers(env: Env, scenario: Scenario, paths: Paths) -> dict:
     if scenario.keycloak:
         rel = keycloak_relative_path(env).rstrip("/")
@@ -75,7 +101,7 @@ def providers(env: Env, scenario: Scenario, paths: Paths) -> dict:
             "provider_id": KEYCLOAK_PROVIDER_ID,
             "name": "Keycloak",
             "client_id": KEYCLOAK_CLIENT_ID,
-            "secret": read_keycloak_client_secret(paths.keycloak_client_env) or "",
+            "secret": _keycloak_client_secret(paths),
             "settings": {
                 "server_url": f"http://keycloak:8080{rel}/realms/{KEYCLOAK_REALM}/.well-known/openid-configuration"
             },
@@ -94,7 +120,7 @@ def providers(env: Env, scenario: Scenario, paths: Paths) -> dict:
 def keycloak_realm(env: Env, paths: Paths) -> dict:
     web = PublicUrl.parse(env.require("NEOPS_WEB_URL"))
     cms = PublicUrl.parse(env.require("NEOPS_CMS_URL"))
-    secret = read_keycloak_client_secret(paths.keycloak_client_env) or ""
+    secret = _keycloak_client_secret(paths)
     return {
         "realm": KEYCLOAK_REALM,
         "enabled": True,

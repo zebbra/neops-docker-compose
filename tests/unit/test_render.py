@@ -2,11 +2,12 @@
 import json
 import stat
 
+import pytest
 import yaml
 
 from neops_compose.env import Env
 from neops_compose.paths import Paths
-from neops_compose.render import render
+from neops_compose.render import MissingSecret, render
 from neops_compose.scenario import Scenario
 
 HOSTS = """
@@ -120,3 +121,34 @@ def test_render_is_deterministic_and_cleans_stale_files(tmp_repo):
     run(tmp_repo, KEYCLOAK)
     second = {p: p.read_bytes() for p in paths.generated.rglob("*") if p.is_file()}
     assert first == second
+
+
+def test_render_writes_in_place_preserving_inode(tmp_repo):
+    (tmp_repo / ".env").write_text(HOSTS)
+    env = Env(tmp_repo / ".env")
+    paths = Paths.for_repo(tmp_repo, env)
+    paths.secrets.mkdir(parents=True, exist_ok=True)
+    (paths.generated / "traefik").mkdir(parents=True)
+    stale = paths.generated / "traefik" / "dynamic.yml"
+    stale.write_text("stale content that render must overwrite, not replace")
+    before_ino = stale.stat().st_ino
+
+    render(env, Scenario.from_env(env), paths)
+
+    after = paths.generated / "traefik" / "dynamic.yml"
+    assert after.stat().st_ino == before_ino
+    assert after.read_text() != "stale content that render must overwrite, not replace"
+
+
+def test_keycloak_without_client_secret_raises_missing_secret(tmp_repo):
+    (tmp_repo / ".env").write_text(KEYCLOAK)
+    env = Env(tmp_repo / ".env")
+    paths = Paths.for_repo(tmp_repo, env)
+    with pytest.raises(MissingSecret, match="neops keys"):
+        render(env, Scenario.from_env(env), paths)
+
+
+def test_keycloak_realm_json_is_world_readable_for_the_container_uid(tmp_repo):
+    _, paths = run(tmp_repo, KEYCLOAK)
+    assert stat.S_IMODE((paths.generated / "keycloak" / "realm.json").stat().st_mode) == 0o644
+    assert stat.S_IMODE((paths.generated / "keycloak").stat().st_mode) == 0o700

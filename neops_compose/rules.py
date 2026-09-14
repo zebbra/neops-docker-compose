@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from neops_compose.env import Env
+from neops_compose.ports import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT
 from neops_compose.routes import CORE_PREFIXES, WEB_RESERVED_PATHS
 from neops_compose.scenario import BASE_FILE, OVERLAYS, Scenario
 from neops_compose.urls import BadUrl, PublicUrl
@@ -60,7 +61,11 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             out += p
             urls.update(gf)
     if all(key in urls for key in BASE_URLS):
-        out += _url_rules(urls, scenario, env)
+        ports = _ports(env)
+        if isinstance(ports, str):
+            out.append(ports)
+        else:
+            out += _url_rules(urls, scenario, *ports)
     return out
 
 
@@ -125,13 +130,24 @@ def _parse_urls(env: Env, keys: tuple[str, ...]) -> tuple[dict[str, PublicUrl], 
     return urls, out
 
 
-def _url_rules(urls: dict[str, PublicUrl], scenario: Scenario, env: Env) -> list[str]:
-    monitor_port = int(env.get("NEOPS_MONITOR_PORT", "8443"))
+def _ports(env: Env) -> tuple[int, int, int] | str:
+    try:
+        http_port = int(env.get("NEOPS_HTTP_PORT", str(DEFAULT_HTTP_PORT)))
+        https_port = int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)))
+        monitor_port = int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT)))
+    except ValueError:
+        return "NEOPS_HTTP_PORT, NEOPS_HTTPS_PORT and NEOPS_MONITOR_PORT must be integers"
+    return http_port, https_port, monitor_port
+
+
+def _url_rules(
+    urls: dict[str, PublicUrl], scenario: Scenario, http_port: int, https_port: int, monitor_port: int
+) -> list[str]:
     return (
         _cms_rules(urls, scenario)
         + _monitor_rules(urls)
         + _path_rules(urls, scenario)
-        + _traefik_rules(urls, scenario, monitor_port)
+        + _traefik_rules(urls, scenario, http_port, https_port, monitor_port)
     )
 
 
@@ -189,20 +205,36 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
     return out
 
 
-def _traefik_rules(urls: dict[str, PublicUrl], scenario: Scenario, monitor_port: int) -> list[str]:
-    out = []
-    if scenario.proxy == "traefik":
-        expected = "https" if scenario.tls else "http"
-        for key, u in urls.items():
-            if u.scheme != expected:
-                out.append(
-                    f"{key} must use {expected}:// with this COMPOSE_FILE "
-                    f"(TLS overlay {'present' if scenario.tls else 'absent'})"
-                )
-        wf = urls["NEOPS_WORKFLOWS_URL"]
-        web = urls["NEOPS_WEB_URL"]
-        if scenario.shared_host and wf.host == web.host and wf.port != monitor_port:
+def _traefik_rules(
+    urls: dict[str, PublicUrl], scenario: Scenario, http_port: int, https_port: int, monitor_port: int
+) -> list[str]:
+    out: list[str] = []
+    if scenario.proxy != "traefik":
+        return out
+    expected_scheme = "https" if scenario.tls else "http"
+    for key, u in urls.items():
+        if u.scheme != expected_scheme:
             out.append(
-                f"NEOPS_WORKFLOWS_URL on the web hostname must use port NEOPS_MONITOR_PORT ({monitor_port})"
+                f"{key} must use {expected_scheme}:// with this COMPOSE_FILE "
+                f"(TLS overlay {'present' if scenario.tls else 'absent'})"
             )
+
+    web = urls["NEOPS_WEB_URL"]
+
+    def is_monitor_entrypoint(u: PublicUrl) -> bool:
+        return scenario.shared_host and u.host == web.host and u.port == monitor_port
+
+    expected_port = https_port if scenario.tls else http_port
+    port_key = "NEOPS_HTTPS_PORT" if scenario.tls else "NEOPS_HTTP_PORT"
+    for key, u in urls.items():
+        if is_monitor_entrypoint(u):
+            continue
+        if u.port != expected_port:
+            out.append(f"{key} must use port {port_key} ({expected_port})")
+
+    wf = urls["NEOPS_WORKFLOWS_URL"]
+    if scenario.shared_host and wf.host == web.host and wf.port != monitor_port:
+        out.append(
+            f"NEOPS_WORKFLOWS_URL on the web hostname must use port NEOPS_MONITOR_PORT ({monitor_port})"
+        )
     return out
