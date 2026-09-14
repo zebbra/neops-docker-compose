@@ -1,1 +1,26 @@
-services: {}
+# Overlay: OIDC login through core's allauth plugin. Providers are seeded from
+# generated/providers.json (rendered from NEOPS_OIDC_* or from the Keycloak overlay).
+# Local username/password login is disabled while this overlay is active; the static
+# API key the engine uses keeps working.
+x-oidc-env: &oidc-env
+  NEOPS_PLUGINS: neops_cron neops_auth_static_api_key neops_auth_allauth neops_permissions_simple neops_reports
+  AUTH_PROVIDERS_CONFIG_PATH: /etc/neops/providers.json
+  NEOPS_FRONTEND_CALLBACK_URL: ${NEOPS_WEB_URL}/auth/callback
+  NEOPS_FRONTEND_LOGIN_URL: ${NEOPS_WEB_URL}/login
+
+x-oidc-volumes: &oidc-volumes
+  - ./generated/providers.json:/etc/neops/providers.json:ro
+
+services:
+  cms-init:
+    environment: *oidc-env
+    volumes: *oidc-volumes
+  cms:
+    environment: *oidc-env
+    volumes: *oidc-volumes
+  cms-worker:
+    environment: *oidc-env
+    volumes: *oidc-volumes
+  cms-beat:
+    environment: *oidc-env
+    volumes: *oidc-volumes
