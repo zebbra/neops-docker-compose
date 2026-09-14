@@ -22,13 +22,14 @@ PostgreSQL and Elasticsearch until it does.
 | vmalert | http://localhost:8880/vmalert | Alert rules & state |
 | celery-exporter | http://localhost:9808/metrics | Raw Celery metrics |
 | redis-exporter | http://localhost:9121/metrics | Raw Redis metrics |
-| postgres-exporter | http://localhost:9187/metrics | Raw PostgreSQL metrics |
+| postgres-exporter-cms | http://postgres-exporter-cms:9187/metrics | Raw PostgreSQL metrics for the CMS database |
+| postgres-exporter-engine | http://postgres-exporter-engine:9187/metrics | Raw PostgreSQL metrics for the engine database |
 | elasticsearch-exporter | http://localhost:9114/metrics | Raw Elasticsearch metrics |
 
 **Exporters:**
 - `celery-exporter` — Celery task/worker metrics ([danihodovic/celery-exporter](https://github.com/danihodovic/celery-exporter))
 - `redis-exporter` — Redis metrics ([oliver006/redis_exporter](https://github.com/oliver006/redis_exporter))
-- `postgres-exporter` — PostgreSQL metrics ([prometheuscommunity/postgres_exporter](https://github.com/prometheus-community/postgres_exporter))
+- `postgres-exporter-cms`, `postgres-exporter-engine` — PostgreSQL metrics, one exporter per database ([prometheuscommunity/postgres_exporter](https://github.com/prometheus-community/postgres_exporter))
 - `elasticsearch-exporter` — Elasticsearch cluster/index metrics ([prometheuscommunity/elasticsearch_exporter](https://github.com/prometheus-community/elasticsearch_exporter))
 - `victoriametrics` — Prometheus-compatible TSDB, scrapes all exporters; also self-scraped for storage/ingestion metrics
 - `vmalert` — Alert rule evaluation; rules live in `vmalert/rules/`; scraped for rule evaluation health and firing alert counts
