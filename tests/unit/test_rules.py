@@ -117,3 +117,71 @@ def test_oidc_external_requires_provider_keys_but_keycloak_does_not(tmp_repo):
     )
     env, sc = make(tmp_repo, kc)
     assert problems(env, sc, tmp_repo) == []
+
+
+def test_oidc_missing_client_secret_reports_once(tmp_repo):
+    text = GOOD.replace("compose.tls-files.yaml", "compose.tls-files.yaml:compose.oidc.yaml")
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert sum("NEOPS_OIDC_CLIENT_SECRET" in p for p in out) == 1
+
+
+def test_cms_url_with_path_yields_exactly_one_message(tmp_repo):
+    text = GOOD.replace("https://cms.neops.example.com", "https://neops.example.com/cms")
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert sum("NEOPS_CMS_URL" in p for p in out) == 1
+
+
+def test_expose_overlay_allows_shared_cms_origin(tmp_repo):
+    text = GOOD.replace(
+        "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml",
+        "COMPOSE_FILE=compose.yaml:compose.expose.yaml",
+    ).replace("https://cms.neops.example.com", "https://neops.example.com")
+    env, sc = make(tmp_repo, text)
+    assert problems(env, sc, tmp_repo) == []
+
+
+def test_short_secret_is_flagged(tmp_repo):
+    text = GOOD.replace("NEOPS_ADMIN_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f8", "NEOPS_ADMIN_PASSWORD=short1")
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_ADMIN_PASSWORD" in p and "too short" in p for p in out)
+
+
+KEYCLOAK_ENV = (
+    GOOD.replace(
+        "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml",
+        "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml:"
+        "compose.oidc.yaml:compose.keycloak.yaml",
+    )
+    + "NEOPS_KEYCLOAK_URL=https://auth.neops.example.com\n"
+    + "NEOPS_KEYCLOAK_ADMIN_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f9\n"
+    + "NEOPS_KEYCLOAK_DB_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5fa\n"
+)
+
+METRICS_ENV = (
+    GOOD.replace(
+        "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml",
+        "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml:compose.metrics.yaml",
+    )
+    + "NEOPS_GRAFANA_ADMIN_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5fb\n"
+    + "NEOPS_GRAFANA_URL=https://grafana.neops.example.com\n"
+)
+
+
+@pytest.mark.parametrize("base_env", [KEYCLOAK_ENV, METRICS_ENV], ids=["keycloak", "metrics"])
+@pytest.mark.parametrize(
+    "bad_key,original,bad_value",
+    [
+        ("NEOPS_WEB_URL", "https://neops.example.com", "neops.example.com"),
+        ("NEOPS_CMS_URL", "https://cms.neops.example.com", "https://cms.neops.example.com/?x=1"),
+    ],
+)
+def test_malformed_base_url_does_not_crash_when_an_overlay_adds_a_url(
+    tmp_repo, base_env, bad_key, original, bad_value
+):
+    text = base_env.replace(f"{bad_key}={original}", f"{bad_key}={bad_value}")
+    env, sc = make(tmp_repo, text)
+    out = problems(env, sc, tmp_repo)
+    assert any(bad_key in p for p in out)

@@ -24,6 +24,8 @@ class PublicUrl:
 
     @classmethod
     def parse(cls, raw: str) -> PublicUrl:
+        if any(c in raw for c in "\t\r\n"):
+            raise BadUrl(f"{raw!r}: control characters are not allowed")
         parts = urlsplit(raw.strip())
         if parts.scheme not in _DEFAULT_PORTS:
             raise BadUrl(f"{raw!r}: scheme must be http or https")
@@ -38,9 +40,12 @@ class PublicUrl:
         if path and not _PATH_RE.match(path):
             raise BadUrl(f"{raw!r}: path contains disallowed characters")
         try:
-            port = parts.port or _DEFAULT_PORTS[parts.scheme]
+            parsed_port = parts.port
         except ValueError as exc:
             raise BadUrl(f"{raw!r}: invalid port") from exc
+        port = _DEFAULT_PORTS[parts.scheme] if parsed_port is None else parsed_port
+        if port == 0:
+            raise BadUrl(f"{raw!r}: invalid port")
         return cls(parts.scheme, host, port, path)
 
     @property

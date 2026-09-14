@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from dotenv import dotenv_values, set_key, unset_key
@@ -37,7 +38,7 @@ class Env:
 
     def set(self, key: str, value: str) -> None:
         self.path.touch(exist_ok=True)
-        set_key(str(self.path), key, value, quote_mode="never")
+        set_key(str(self.path), key, value, quote_mode="auto")
         self.values[key] = value
         self.exists = True
 
@@ -47,14 +48,22 @@ class Env:
             del self.values[key]
 
     def rename(self, old: str, new: str) -> None:
-        if old not in self.values:
-            return
-        value = self.values[old]
-        text = self.path.read_text()
-        self.path.write_text(
-            text.replace(f"\n{old}=", f"\n{new}=", 1)
-            if not text.startswith(f"{old}=")
-            else text.replace(f"{old}=", f"{new}=", 1)
-        )
-        self.values[new] = value
-        del self.values[old]
+        old_re = re.compile(rf"^(?P<prefix>[ \t]*(?:export[ \t]+)?){re.escape(old)}=")
+        new_re = re.compile(rf"^[ \t]*(?:export[ \t]+)?{re.escape(new)}=")
+        lines = self.path.read_text().splitlines(keepends=True)
+        if any(new_re.match(line) for line in lines):
+            raise ValueError(f"cannot rename {old} to {new}: {new} already exists")
+        matched = False
+        result = []
+        for line in lines:
+            match = None if matched else old_re.match(line)
+            if match:
+                matched = True
+                result.append(f"{match.group('prefix')}{new}={line[match.end() :]}")
+            else:
+                result.append(line)
+        if not matched:
+            raise MissingEnv(old)
+        self.path.write_text("".join(result))
+        self.values[new] = self.values.get(old, "")
+        self.values.pop(old, None)

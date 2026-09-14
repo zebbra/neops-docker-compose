@@ -42,3 +42,21 @@ def test_same_origin():
     b = PublicUrl.parse("https://neops.example.com/engine")
     c = PublicUrl.parse("https://neops.example.com:8443")
     assert a.same_origin(b) and not a.same_origin(c)
+
+
+def test_parse_rejects_port_zero():
+    with pytest.raises(BadUrl):
+        PublicUrl.parse("https://x.example.com:0")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://neops.example.com\t/a",
+        "https://neops.example.com\r",
+        "https://neops.example.com\n",
+    ],
+)
+def test_parse_rejects_control_characters(raw):
+    with pytest.raises(BadUrl):
+        PublicUrl.parse(raw)

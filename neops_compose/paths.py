@@ -14,9 +14,7 @@ class Paths:
     @classmethod
     def for_repo(cls, repo: Path, env: Env) -> Paths:
         raw = env.get("NEOPS_DATA_DIR", "./data")
-        data = Path(raw)
-        if not data.is_absolute():
-            data = (repo / data).resolve()
+        data = (repo / Path(raw)).resolve()
         return cls(repo=repo.resolve(), data=data)
 
     @property

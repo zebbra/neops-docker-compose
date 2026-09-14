@@ -19,7 +19,6 @@ OIDC_KEYS = (
     "NEOPS_OIDC_PROVIDER_ID",
     "NEOPS_OIDC_NAME",
     "NEOPS_OIDC_CLIENT_ID",
-    "NEOPS_OIDC_CLIENT_SECRET",
     "NEOPS_OIDC_DISCOVERY_URL",
 )
 KEYCLOAK_SECRETS = ("NEOPS_KEYCLOAK_ADMIN_PASSWORD", "NEOPS_KEYCLOAK_DB_PASSWORD")
@@ -55,7 +54,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
             out += p
             urls.update(gf)
-    if len(urls) >= len(BASE_URLS):
+    if all(key in urls for key in BASE_URLS):
         out += _url_rules(urls, scenario)
     return out
 
@@ -96,6 +95,8 @@ def _required(env: Env, keys: tuple[str, ...], secret: bool = False) -> list[str
             out.append(f"{key} is required" + (f" ({SECRET_HINT})" if secret else ""))
         elif secret and env.get(key).strip().lower() in PLACEHOLDERS:
             out.append(f"{key} is a placeholder value ({SECRET_HINT})")
+        elif secret and len(env.get(key).strip()) < 16:
+            out.append(f"{key} is too short (min 16) ({SECRET_HINT})")
     return out
 
 
@@ -114,14 +115,18 @@ def _parse_urls(env: Env, keys: tuple[str, ...]) -> tuple[dict[str, PublicUrl], 
 
 
 def _url_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
-    out = []
+    return _cms_rules(urls, scenario) + _monitor_rules(urls) + _path_rules(urls, scenario)
+
+
+def _cms_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
     web, cms = urls["NEOPS_WEB_URL"], urls["NEOPS_CMS_URL"]
     if cms.path:
-        out.append(
+        return [
             "NEOPS_CMS_URL must not have a path: core cannot be served under a prefix "
             "(use the shared-host overlay with the web origin instead)"
-        )
-    if cms.same_origin(web) and not scenario.shared_host:
+        ]
+    out = []
+    if cms.same_origin(web) and not scenario.shared_host and scenario.proxy == "traefik":
         out.append(
             "NEOPS_CMS_URL shares the web client's origin, which needs "
             "compose.traefik-shared-host.yaml in COMPOSE_FILE"
@@ -131,11 +136,23 @@ def _url_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
             "compose.traefik-shared-host.yaml is in COMPOSE_FILE but "
             "NEOPS_CMS_URL is not the web client's origin"
         )
+    return out
+
+
+def _monitor_rules(urls: dict[str, PublicUrl]) -> list[str]:
+    web = urls["NEOPS_WEB_URL"]
+    out = []
     if urls["NEOPS_WORKFLOWS_URL"].same_origin(web):
         out.append(
             "NEOPS_WORKFLOWS_URL must be a different origin (host or port) than NEOPS_WEB_URL: "
             "the web client disables the workflow manager on the same origin"
         )
+    return out
+
+
+def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
+    web = urls["NEOPS_WEB_URL"]
+    out = []
     reserved = CORE_PREFIXES + WEB_RESERVED_PATHS
     for key in ("NEOPS_ENGINE_URL", "NEOPS_KEYCLOAK_URL", "NEOPS_GRAFANA_URL"):
         u = urls.get(key)
@@ -145,6 +162,8 @@ def _url_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
             out.append(f"{key} shares the web client's origin and needs a path prefix")
     if scenario.proxy == "traefik" and not scenario.shared_host:
         for key, u in urls.items():
+            if key == "NEOPS_CMS_URL":
+                continue
             if u.path:
                 out.append(
                     f"{key} has a path but hostname-per-service routing is selected; "

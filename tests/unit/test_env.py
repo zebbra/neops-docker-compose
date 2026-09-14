@@ -43,6 +43,45 @@ def test_env_missing_file_is_empty(tmp_path):
     assert env.values == {} and not env.exists
 
 
+def test_env_set_quotes_values_that_need_it(tmp_path):
+    p = tmp_path / ".env"
+    env = Env(p)
+    env.set("NEOPS_OIDC_NAME", "My Company # 1")
+    assert Env(p).get("NEOPS_OIDC_NAME") == "My Company # 1"
+
+
+def test_env_rename_preserves_export_prefix(tmp_path):
+    p = write(tmp_path / ".env", "export OLD=1\n")
+    env = Env(p)
+    env.rename("OLD", "NEW")
+    text = p.read_text()
+    assert "export NEW=1" in text
+    assert "OLD" not in text
+
+
+def test_env_rename_preserves_indentation(tmp_path):
+    p = write(tmp_path / ".env", "  OLD=1\n")
+    env = Env(p)
+    env.rename("OLD", "NEW")
+    text = p.read_text()
+    assert "  NEW=1" in text
+    assert "OLD" not in text
+
+
+def test_env_rename_missing_key_raises(tmp_path):
+    p = write(tmp_path / ".env", "A=1\n")
+    env = Env(p)
+    with pytest.raises(MissingEnv, match="OLD"):
+        env.rename("OLD", "NEW")
+
+
+def test_env_rename_existing_target_raises(tmp_path):
+    p = write(tmp_path / ".env", "OLD=1\nNEW=2\n")
+    env = Env(p)
+    with pytest.raises(ValueError, match="already exists"):
+        env.rename("OLD", "NEW")
+
+
 def test_paths_default_data_dir_is_under_repo(tmp_path):
     env = Env(write(tmp_path / ".env", ""))
     paths = Paths.for_repo(tmp_path, env)
@@ -54,6 +93,6 @@ def test_paths_default_data_dir_is_under_repo(tmp_path):
 
 def test_paths_honour_neops_data_dir_relative_to_repo(tmp_path):
     env = Env(write(tmp_path / ".env", "NEOPS_DATA_DIR=/srv/neops\n"))
-    assert Paths.for_repo(tmp_path, env).data == Path("/srv/neops")
+    assert Paths.for_repo(tmp_path, env).data == Path("/srv/neops").resolve()
     env = Env(write(tmp_path / ".env", "NEOPS_DATA_DIR=./elsewhere\n"))
     assert Paths.for_repo(tmp_path, env).data == tmp_path / "elsewhere"
