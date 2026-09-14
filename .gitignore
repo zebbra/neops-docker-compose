@@ -1,8 +1,15 @@
-# exclude .env files for docker setup
 .env
-docker-compose.override.yml
-/tmp/
+compose.override.yaml
+/generated/
 /data/
-/test/data/
-metrics/grafana/provisioning/dashboards/community/
-neops/metrics/grafana/provisioning/dashboards/community/
+/backups/
+/certs/*
+!/certs/.keep
+/cust-cert/*
+!/cust-cert/.keep
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+site/
