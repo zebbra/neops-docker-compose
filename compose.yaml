@@ -258,8 +258,11 @@ services:
       ENGINE_BASE_URL: ${NEOPS_ENGINE_URL}
       WEBCLIENT_ORIGIN: ${NEOPS_WEB_URL}
     env_file:
-      # MONITOR_BASE_PATH, the path of NEOPS_WORKFLOWS_URL, derived by ./neops render.
-      - ./generated/monitor.env
+      # MONITOR_BASE_PATH, the path of NEOPS_WORKFLOWS_URL, derived by ./neops render. Optional so
+      # that an existing deployment's `up` can load this config before render has produced the
+      # file (the downgrade guard runs first); every start renders before it starts the monitor.
+      - path: ./generated/monitor.env
+        required: false
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/config.js >/dev/null || exit 1"]
       interval: 15s

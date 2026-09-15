@@ -206,3 +206,17 @@ def test_the_shared_host_overlay_extends_the_fragment_render_writes():
 
     traefik = load(REPO / "compose.traefik-shared-host.yaml")["services"]["traefik"]
     assert traefik == {"extends": {"file": f"./generated/{TRAEFIK_PORTS_FRAGMENT}", "service": "traefik"}}
+
+
+def test_generated_env_files_added_after_the_first_release_are_optional():
+    """`./neops up` on an existing deployment loads the compose config (downgrade guard) before
+    `render` writes generated/. A required env file that the previous release never rendered
+    makes that load fail, so only the files rendered since the first release may be required."""
+    rendered_since_first_release = {"./generated/cms.env", "./generated/keycloak.env"}
+    for f in COMPOSE_FILES:
+        for name, svc in (load(f).get("services") or {}).items():
+            for entry in svc.get("env_file") or []:
+                path = entry["path"] if isinstance(entry, dict) else entry
+                if not str(path).startswith("./generated/") or path in rendered_since_first_release:
+                    continue
+                assert isinstance(entry, dict) and entry.get("required") is False, f"{f.name}: {name} {path}"
