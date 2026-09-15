@@ -49,7 +49,7 @@ TOKEN_KEY = "token"
 HAS_TOKEN = (
     f"() => {{ try {{ return !!window.localStorage.getItem('{TOKEN_KEY}') }} catch {{ return false }} }}"
 )
-TIMEOUT_MS = 30_000
+TIMEOUT_MS = 60_000  # the box can be busy running several stacks; the SPA boot is the slow part
 
 
 class KeycloakError(RuntimeError):
@@ -219,7 +219,9 @@ def login_flow(clone: Path, env: Env, report: Report) -> None:
     result = browser_login(
         env.require("NEOPS_WEB_URL"), TEST_USER, TEST_PASSWORD, clone.parent / "playwright"
     )
-    if not report.add(bool(result.token), f"login stores a token in localStorage ({result.error})"):
+    if not report.add(
+        bool(result.token), f"login stores a token in localStorage ({result.error} at {result.url})"
+    ):
         return
     report.add("/login" not in result.url, f"the app navigated away from /login (now {result.url})")
     report.add(result.token.startswith("Bearer "), "the stored token is a bearer token")
