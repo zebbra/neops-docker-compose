@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import shutil
+from collections.abc import Callable
+from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
@@ -10,6 +13,7 @@ from neops_compose.context import Ctx
 from neops_compose.doctor import all_ok as doctor_ok
 from neops_compose.doctor import format_report as doctor_report
 from neops_compose.doctor import run as run_doctor
+from neops_compose.ownership import chown_via_container
 from neops_compose.render import render
 from neops_compose.rotate import public_hosts
 
@@ -159,10 +163,20 @@ def purge(ctx: Ctx, confirmed: str) -> None:
     if confirmed != expected:
         raise Blocked(f"purge removes every container and {expected}; re-run with --confirm {expected}")
     ctx.compose.down()
+    _take_ownership(ctx.paths.data, ctx.log)
     for p in (ctx.paths.data, ctx.paths.generated):
         if p.exists():
             shutil.rmtree(p)
     ctx.log(f"removed {ctx.paths.data} and {ctx.paths.generated}; .env, certs/ and backups/ were kept")
+
+
+def _take_ownership(data: Path, log: Callable[[str], None]) -> None:
+    """Postgres writes as uid 70 at mode 0700, Grafana as 472, Elasticsearch as 1000, so
+    the operator cannot delete what the containers left without claiming it back first."""
+    if not data.exists():
+        return
+    log(f"claiming {data} back from the containers that wrote it")
+    chown_via_container(data, os.getuid(), os.getgid())
 
 
 def _verdict(last_up: dict) -> str:

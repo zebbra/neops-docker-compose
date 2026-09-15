@@ -9,6 +9,7 @@ from neops_compose import __version__, backup, migrate, rotate, state, token, wo
 from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import MissingEnv
+from neops_compose.ownership import OwnershipError
 from neops_compose.render import MissingSecret, RenderError, render
 
 REPO = Path(__file__).resolve().parent.parent
@@ -20,6 +21,7 @@ ERRORS = (
     RenderError,
     ComposeError,
     migrate.MigrationError,
+    OwnershipError,
     rotate.RotateError,
     state.StateError,
     token.TokenCheckUnavailable,

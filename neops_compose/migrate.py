@@ -12,12 +12,12 @@ from pathlib import Path
 from types import ModuleType
 
 from neops_compose.env import Env
+from neops_compose.ownership import chown_via_container
 from neops_compose.paths import Paths
 from neops_compose.secrets import write_secret
 from neops_compose.state import State
 
 NAME_RE = re.compile(r"^\d{4}_[a-z0-9_]+$")
-CHOWN_IMAGE = "postgres:16-alpine"
 
 
 class MigrationError(RuntimeError):
@@ -58,22 +58,7 @@ class Ctx:
         self.log(f"moved {src} -> {dst}")
 
     def chown_via_container(self, path: Path, uid: int, gid: int) -> None:
-        """chown without sudo: docker runs as root, so a throwaway container can do it."""
-        subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "-v",
-                f"{path.resolve()}:/target",
-                CHOWN_IMAGE,
-                "chown",
-                "-R",
-                f"{uid}:{gid}",
-                "/target",
-            ],
-            check=True,
-        )
+        chown_via_container(path, uid, gid)
         self.log(f"chowned {path} to {uid}:{gid}")
 
     def ensure_owner(self, path: Path, uid: int, gid: int) -> None:

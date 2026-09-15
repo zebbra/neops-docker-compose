@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from neops_compose import workflow
@@ -127,3 +129,39 @@ def test_install_checks_images_only_after_render(tmp_path, monkeypatch):
 
     assert order[0] == "check(images=False)"
     assert order.index("render") < order.index("check_images")
+
+
+def _purge_ctx(tmp_path, log):
+    class FakeCompose:
+        def __init__(self):
+            self.downed = False
+
+        def down(self):
+            self.downed = True
+
+    (tmp_path / ".env").write_text("COMPOSE_FILE=compose.yaml\n")
+    env = Env(tmp_path / ".env")
+    paths = Paths.for_repo(tmp_path, env)
+    paths.data.mkdir(parents=True, exist_ok=True)
+    paths.generated.mkdir(parents=True, exist_ok=True)
+    return Ctx(tmp_path, env, paths, Scenario.from_env(env), FakeCompose(), State(), log)
+
+
+def test_purge_claims_the_data_tree_back_before_deleting_it(tmp_path, monkeypatch):
+    """Postgres writes data/ as uid 70 mode 0700, so rmtree as the operator cannot remove it."""
+    claimed = []
+    monkeypatch.setattr(workflow, "chown_via_container", lambda p, uid, gid: claimed.append((p, uid, gid)))
+    ctx = _purge_ctx(tmp_path, lambda m: None)
+    workflow.purge(ctx, str(ctx.paths.data))
+    assert claimed == [(ctx.paths.data, os.getuid(), os.getgid())]
+    assert ctx.compose.downed
+    assert not ctx.paths.data.exists() and not ctx.paths.generated.exists()
+
+
+def test_purge_without_the_exact_data_dir_removes_nothing(tmp_path, monkeypatch):
+    claimed = []
+    monkeypatch.setattr(workflow, "chown_via_container", lambda p, uid, gid: claimed.append((p, uid, gid)))
+    ctx = _purge_ctx(tmp_path, lambda m: None)
+    with pytest.raises(workflow.Blocked, match="re-run with --confirm"):
+        workflow.purge(ctx, "/not/the/data/dir")
+    assert claimed == [] and not ctx.compose.downed and ctx.paths.data.exists()
