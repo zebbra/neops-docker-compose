@@ -185,7 +185,17 @@ def scenario_of(values: dict[str, str]) -> Scenario:
     return Scenario(tuple(f.strip() for f in values["COMPOSE_FILE"].split(":") if f.strip()))
 
 
-def build_env(example: Path, name: str, ports: Ports) -> dict[str, str]:
+def parse_extra_env(assignments: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for assignment in assignments:
+        if "=" not in assignment:
+            raise SystemExit(f"--extra-env takes KEY=VALUE, got {assignment!r}")
+        key, value = assignment.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def build_env(example: Path, name: str, ports: Ports, extra: dict[str, str]) -> dict[str, str]:
     values = read_example(example)
     scenario = scenario_of(values)
     fill_secrets(values)
@@ -197,6 +207,7 @@ def build_env(example: Path, name: str, ports: Ports) -> dict[str, str]:
     values["COMPOSE_FILE"] = values["COMPOSE_FILE"] + ":" + OVERRIDE_FILE
     values["COMPOSE_PROJECT_NAME"] = f"neops-e2e-{name}-{ports.base}"
     values["NEOPS_MONITOR_IMAGE"] = "neops-monitor-app:local"
+    values.update(extra)
     return values
 
 
@@ -337,6 +348,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port-base", type=int, default=18000)
     ap.add_argument("--keep", action="store_true", help="leave the stack running and the clone in place")
     ap.add_argument("--workdir", type=Path)
+    ap.add_argument(
+        "--extra-env",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="override one .env entry, after everything the harness derives (repeatable)",
+    )
     args = ap.parse_args(argv)
 
     example = REPO / "examples" / f"{args.scenario}.env"
@@ -348,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     ports = Ports(args.port_base)
-    values = build_env(example, args.scenario, ports)
+    values = build_env(example, args.scenario, ports, parse_extra_env(args.extra_env))
     scenario = scenario_of(values)
     work = args.workdir or Path(f"/tmp/neops-e2e/{args.scenario}-{ports.base}")
     clone = prepare_clone(work, values)
