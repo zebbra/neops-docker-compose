@@ -134,9 +134,18 @@ long as the command runs. Omit the flag and type the password at the prompt on a
 `migrations/NNNN_<slug>.py`, applied once each, in numeric order, recorded in
 `data/.neops/state.json`. These are deployment-*layout* migrations (moving a data directory,
 renaming an `.env` key, a Postgres major-version upgrade), not the CMS's or the engine's own
-application migrations, which each container still runs on its own boot. `0001_initial_layout` is
-the only one today: it creates the `data/` tree and the state file, on both a fresh install and an
-upgrade.
+application migrations, which each container still runs on its own boot. There are two today, and
+both run on a fresh install as well as on an upgrade:
+
+- `0001_initial_layout` creates the `data/` tree every bind mount points at, the state directory
+  and `secrets/` at mode 0700, and hands `data/elasticsearch` to uid 1000, which the Elasticsearch
+  image runs as and cannot create for itself.
+- `0002_grafana_data_owner` hands `data/metrics/grafana` to uid 472, which the Grafana image runs
+  as and refuses to start without. It runs whether or not you use the metrics overlay, so turning
+  that overlay on later needs nothing further.
+
+Both are idempotent, and both change ownership through a throwaway container rather than asking
+you for `sudo`.
 
 `./neops migrate` applies every pending migration; `--dry-run` prints what would run without
 changing anything; `--fake NAME` records one migration as applied without running it. You are

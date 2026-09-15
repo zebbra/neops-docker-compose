@@ -30,6 +30,14 @@ cp /path/to/cert.pem certs/cert.pem && cp /path/to/key.pem certs/key.pem   # tls
 starts the CMS, mints the engine's API key, starts everything else and runs `./neops doctor`.
 Log in at `NEOPS_WEB_URL` as `NEOPS_ADMIN_USER`.
 
+> **Known issue — the monitor image is not published yet.** `quay.io/zebbra/neops-monitor-app:<tag>`
+> does not exist until the workflow engine's next tag after
+> [neops-workflow-engine#291](https://github.com/zebbra/neops-workflow-engine/pull/291), which is what
+> starts publishing it. Until that tag ships, `install` stops at the image check with
+> `not pullable`. Build the image yourself from a checkout of the engine
+> (`docker build -f rest/monitor-app/Dockerfile -t neops-monitor-app:local .`) and point `.env` at it
+> with `NEOPS_MONITOR_IMAGE=neops-monitor-app:local`.
+
 ## Scenarios
 
 | Example | What you get |
@@ -67,8 +75,9 @@ loses nothing.
 **Upgrades.** `git pull` (or check out the next release tag), then `./neops up`. Downgrading the CMS is
 refused (`Django migrations are not reversible`); restore a backup instead.
 
-**Secrets.** Never edit a password in `.env` by hand once installed; use `./neops rotate`. `check` notices a
-mismatch and names it.
+**Secrets.** Never edit a password in `.env` by hand once installed; use `./neops rotate`. For the three
+database passwords `check` notices a mismatch and names it, by connecting with the value in `.env` while
+that Postgres is running; it cannot do that for a stopped service, and no other secret is checked that way.
 
 **Local changes.** Put them in `compose.override.yaml` (gitignored) and append it to `COMPOSE_FILE`;
 edited tracked files break the next `git pull`.

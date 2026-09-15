@@ -22,11 +22,11 @@ below are keyed to those probe names and the messages `check` prints.
 | `monitor config` | `<NEOPS_WORKFLOWS_URL>/config.js` did not embed the engine URL: see *monitor blank* below |
 | `keycloak realm` | the `neops` realm's OIDC discovery document did not come back (Keycloak overlay only) |
 | `grafana` | `/api/health` did not return 200 (metrics overlay only, and only when `NEOPS_GRAFANA_URL` is set) |
-| `engine worker API denied` | a `POST /blackboard/job` from outside reached the engine instead of being refused: see [External proxy](40-external-proxy.md); this fails `doctor` in every scenario, including external-proxy mode, because the route must never be reachable regardless of which proxy sits in front of it |
+| `engine worker API denied` | a `POST /blackboard/job` from outside reached the engine instead of being refused: see [External proxy](40-external-proxy.md). Behind the bundled Traefik this fails `doctor`, because the deny rule is one the CLI rendered and it is not working. In external-proxy mode it is a `WARN` that does not fail `doctor`, because the deny belongs to a proxy the CLI knows nothing about and which may not be routing yet. The route must never be reachable either way, so a warning still standing once your proxy is up is a real problem |
 | `cms login path` | a deliberately bad login answered 5xx instead of 4xx, or answered `internal error`, which is what core says while its database is unreachable: see *500 on login* below, and check `postgres-cms` |
 | `worker registered` | logging in as the admin user and asking the engine for `/workers` did not find an `ONLINE` worker: check the `worker` container's logs; a 403 from the engine still passes the probe, since the request itself was accepted; `the CMS cannot reach its database` means the login never got far enough to ask, so start with `postgres-cms` |
 | `X-Real-IP trusted from client` (`--probe-ratelimit` only) | six forged `X-Real-IP` values were all accepted as distinct clients: your proxy is not overwriting the header, see [External proxy](40-external-proxy.md) |
-| `tls certificate` (TLS scenarios only) | fewer than 14 days remain before expiry |
+| `tls certificate` (TLS scenarios only) | 14 days or fewer remain before expiry, or the certificate could not be read at all |
 
 ## `./neops check` failures
 

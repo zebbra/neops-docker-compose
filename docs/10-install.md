@@ -39,6 +39,23 @@ it.
 
 ## Install
 
+!!! warning "Known issue: the monitor image is not published yet"
+
+    `quay.io/zebbra/neops-monitor-app:<tag>` does not exist in the registry yet. The workflow
+    engine starts publishing it with its next tag after
+    [neops-workflow-engine#291](https://github.com/zebbra/neops-workflow-engine/pull/291); until
+    that tag ships, `install` stops at the image check with `not pullable`.
+
+    Build it yourself from a checkout of the engine repository and point `.env` at the result:
+
+    ```bash
+    docker build -f rest/monitor-app/Dockerfile -t neops-monitor-app:local .   # in neops-workflow-engine
+    echo 'NEOPS_MONITOR_IMAGE=neops-monitor-app:local' >> .env                 # in this repository
+    ```
+
+    A locally built image needs no registry: the image check accepts anything already on the host.
+    Remove the override once the published tag exists.
+
 ```bash
 ./neops install
 ```
@@ -46,9 +63,8 @@ it.
 `install` does the following, in order, and stops at the first failure with an actionable
 message:
 
-1. **`check`**: the same preflight `./neops check` runs on its own: Docker and Compose versions,
-   `.env` and scenario validity, disk space, `vm.max_map_count`, every pinned image resolvable on
-   Quay, free host ports.
+1. **`check`**: the same preflight `./neops check` runs on its own, minus the images: Docker and
+   Compose versions, `.env` and scenario validity, disk space, `vm.max_map_count`, free host ports.
 2. **`migrate`**: applies any pending deployment migration. On a first install this creates the
    `data/` tree (including `secrets/` at mode 0700 and `elasticsearch/` owned by uid 1000) and the
    state file.
@@ -57,18 +73,37 @@ message:
    Existing key material is never overwritten; rotation only happens through `./neops rotate`.
 4. **`render`**: writes `generated/`: the Traefik configuration, the per-service env files, the
    OIDC provider seed and the Keycloak realm import, all derived from `.env`.
-5. **Pull every image**, then **start the CMS first** (`postgres-cms`, `redis`, `elasticsearch`,
+5. **Check every pinned image**: each one is either already on this host or resolvable in the
+   registry. This comes after `render` rather than with the rest of the preflight because
+   `docker compose` cannot resolve the image list until `generated/` exists, which is also why
+   `./neops check --no-images` is what you run before a first install.
+6. **Pull every image**, then **start the CMS first** (`postgres-cms`, `redis`, `elasticsearch`,
    `cms-init`, `cms`) and wait for it to become healthy. `cms-init` runs the CMS's own Django
    migrations, creates the Elasticsearch indices, creates the first superuser from
    `NEOPS_ADMIN_USER` / `NEOPS_ADMIN_EMAIL` / `NEOPS_ADMIN_PASSWORD`, and grants that superuser
    the role described under [The first user's permissions](#the-first-users-permissions).
-6. **Mint the engine's API key** against the now-running CMS (`manage.py generate_api_key`), and
+7. **Mint the engine's API key** against the now-running CMS (`manage.py generate_api_key`), and
    write it to `data/secrets/engine.env`. This is why the CMS has to be up first: the engine
    refuses to boot without a valid token.
-7. **Start everything else**: the engine, the monitor, the worker, the web client, and any
+8. **Start everything else**: the engine, the monitor, the worker, the web client, and any
    overlay services (Traefik, Keycloak, the metrics stack).
-8. **`doctor`**: a health report through the public URLs. `install` exits non-zero if anything
+9. **`doctor`**: a health report through the public URLs. `install` exits non-zero if anything
    fails here, even though every container may already be running.
+
+`./neops up` repeats every step except the image check: resolving images is `check`'s job, and
+repeating it on each start would make every restart depend on the registry. Run `./neops check`
+after a `git pull` that moves an image tag.
+
+!!! note "external-proxy mode ends on a `WARN`"
+
+    With `compose.expose.yaml` the last step reports
+    `WARN engine worker API denied`. That probe asks the engine's public URL to answer a worker
+    route and expects your reverse proxy to refuse it — which it cannot do before you have
+    configured and started it. The install finishes and exits 0. Once the proxy is routing, run
+    `./neops doctor` again and the probe should turn `OK`; if it stays a warning, your proxy is
+    not denying those routes. [External proxy](40-external-proxy.md) has the snippets. Behind the
+    bundled Traefik the same probe is a hard failure, because there the deny rule is one the CLI
+    rendered itself.
 
 Running `install` again on an already-installed deployment changes nothing: every step is
 idempotent, and the second run reports the existing state rather than erroring. Use `./neops up`
