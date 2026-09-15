@@ -123,6 +123,17 @@ def test_external_oidc_providers(tmp_repo):
     }
 
 
+def test_external_oidc_provider_can_trust_an_unverified_email(tmp_repo):
+    """Entra never emits email_verified, and core refuses such a login unless the provider
+    record carries the opt-out; the flag is absent from the seed unless asked for."""
+    _, paths = run(tmp_repo, EXTERNAL + "NEOPS_OIDC_TRUST_EMAIL_WITHOUT_VERIFICATION=true\n")
+    settings = json.loads((paths.generated / "providers.json").read_text())["providers"][0]["settings"]
+    assert settings == {
+        "server_url": "https://login.example.com/.well-known/openid-configuration",
+        "trust_email_without_verification": True,
+    }
+
+
 def test_keycloak_realm_and_providers(tmp_repo):
     _, paths = run(tmp_repo, KEYCLOAK)
     assert envfile(paths.generated / "keycloak.env") == {"KC_HTTP_RELATIVE_PATH": "/sso"}

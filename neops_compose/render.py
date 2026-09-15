@@ -130,12 +130,15 @@ def providers(env: Env, scenario: Scenario, paths: Paths) -> dict:
             },
         }
     else:
+        settings: dict[str, object] = {"server_url": env.require("NEOPS_OIDC_DISCOVERY_URL")}
+        if env.flag("NEOPS_OIDC_TRUST_EMAIL_WITHOUT_VERIFICATION"):
+            settings["trust_email_without_verification"] = True
         entry = {
             "provider_id": env.require("NEOPS_OIDC_PROVIDER_ID"),
             "name": env.require("NEOPS_OIDC_NAME"),
             "client_id": env.require("NEOPS_OIDC_CLIENT_ID"),
             "secret": env.require("NEOPS_OIDC_CLIENT_SECRET"),
-            "settings": {"server_url": env.require("NEOPS_OIDC_DISCOVERY_URL")},
+            "settings": settings,
         }
     return {"providers": [entry]}
 

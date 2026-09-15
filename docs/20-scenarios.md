@@ -146,10 +146,38 @@ Register this redirect URI at the provider:
 <NEOPS_CMS_URL>/accounts/oidc/<NEOPS_OIDC_PROVIDER_ID>/login/callback/
 ```
 
-The web client reads roles out of the token's `resource_access.<client_id>.roles` claim, so the
+Core reads roles out of the token's `resource_access.<client_id>.roles` claim, so the
 provider's client needs to put that claim on the ID token or userinfo response, exactly what the
 bundled Keycloak overlay configures automatically (see below). Without it, users can log in but
 land with no permissions until one is assigned by hand.
+
+Core also refuses any login whose token does not say `email_verified: true`, because a matching
+email links the OIDC identity to an existing local user. A provider that never emits that claim
+needs the opt-out, which means trusting the provider's email as it is:
+
+```
+NEOPS_OIDC_TRUST_EMAIL_WITHOUT_VERIFICATION=true
+```
+
+#### Microsoft Entra ID (Azure AD)
+
+Register a web app under *Microsoft Entra ID, App registrations* with:
+
+- Platform *Web*, redirect URIs `<NEOPS_CMS_URL>/accounts/oidc/<NEOPS_OIDC_PROVIDER_ID>/login/callback/`
+  (trailing slash included) and `<NEOPS_WEB_URL>/login`. The second one is where core sends the
+  browser after an Entra sign-out, and Entra only accepts a post-logout URL that is also a
+  registered redirect URI.
+- A client secret under *Certificates and secrets*; `NEOPS_OIDC_CLIENT_SECRET` is its value, not
+  its ID, and it expires.
+- The optional claim `email` on the ID token under *Token configuration*; core derives the
+  username from it and links accounts by it.
+
+Then in `.env`: `NEOPS_OIDC_CLIENT_ID` is the *Application (client) ID*, the discovery URL is
+`https://login.microsoftonline.com/<Directory (tenant) ID>/v2.0/.well-known/openid-configuration`
+(the tenant ID rather than `common`, so only your tenant signs in), and
+`NEOPS_OIDC_TRUST_EMAIL_WITHOUT_VERIFICATION=true`, because Entra does not emit `email_verified`.
+Entra puts app roles in a top-level `roles` claim that core does not read yet, so roles are
+assigned in Neops by hand until core learns that claim shape.
 
 ### Bundled Keycloak
 
