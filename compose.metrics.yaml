@@ -89,6 +89,7 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     volumes:
       - ./metrics/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Must be owned by uid 472; ./neops migrate (0002_grafana_data_owner) takes care of it.
       - ${NEOPS_DATA_DIR:-./data}/metrics/grafana:/var/lib/grafana
     ports:
       - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_GRAFANA_PORT:-3000}:3000"

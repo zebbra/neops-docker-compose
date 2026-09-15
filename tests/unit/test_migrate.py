@@ -99,3 +99,34 @@ def test_initial_layout_creates_the_tree(tmp_path, monkeypatch):
         assert d.is_dir(), d
     assert oct(paths.secrets.stat().st_mode & 0o777) == "0o700"
     assert chowns == [(paths.data / "elasticsearch", 1000, 0)]
+
+
+def test_ensure_owner_chowns_only_when_the_owner_is_wrong(tmp_path, monkeypatch):
+    chowns = []
+    monkeypatch.setattr(
+        migrate.Ctx, "chown_via_container", lambda self, p, uid, gid: chowns.append((p, uid, gid))
+    )
+    env, paths = make(tmp_path)
+    ctx = migrate.Ctx(tmp_path, paths.data, env, log=lambda m: None)
+    target = tmp_path / "mount"
+    target.mkdir()
+    info = target.stat()
+    ctx.ensure_owner(target, info.st_uid, info.st_gid)
+    assert chowns == []
+    ctx.ensure_owner(tmp_path / "absent", 472, 0)
+    assert chowns == []
+    ctx.ensure_owner(target, info.st_uid + 1, 0)
+    assert chowns == [(target, info.st_uid + 1, 0)]
+
+
+def test_grafana_data_owner_hands_the_mount_to_the_grafana_uid(tmp_path, monkeypatch):
+    env, paths = make(tmp_path)
+    real = Path(__file__).resolve().parents[2] / "migrations"
+    for name in ("0001_initial_layout.py", "0002_grafana_data_owner.py"):
+        (paths.migrations / name).write_text((real / name).read_text())
+    chowns = []
+    monkeypatch.setattr(
+        migrate.Ctx, "chown_via_container", lambda self, p, uid, gid: chowns.append((p, uid, gid))
+    )
+    migrate.apply_all(env, paths, State(), log=lambda m: None)
+    assert chowns == [(paths.data / "elasticsearch", 1000, 0), (paths.data / "metrics" / "grafana", 472, 0)]

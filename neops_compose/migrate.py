@@ -76,6 +76,16 @@ class Ctx:
         )
         self.log(f"chowned {path} to {uid}:{gid}")
 
+    def ensure_owner(self, path: Path, uid: int, gid: int) -> None:
+        """A bind mount whose image runs as a fixed uid has to belong to that uid."""
+        if not path.exists():
+            self.log(f"skip chown, {path} does not exist")
+            return
+        info = path.stat()
+        if (info.st_uid, info.st_gid) == (uid, gid):
+            return
+        self.chown_via_container(path, uid, gid)
+
     def compose(self, *args: str) -> None:
         subprocess.run(["docker", "compose", *args], cwd=self.repo, check=True)
 

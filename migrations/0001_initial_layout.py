@@ -5,10 +5,9 @@ and cannot create its data directory itself, so it is chowned through a throwawa
 postgres:16-alpine container: no sudo needed, and the stack pulls that image anyway.
 """
 
-from pathlib import Path
-
 DESCRIPTION = "create the data/ tree and the state directory"
 IDEMPOTENT = True
+ELASTICSEARCH_UID = 1000
 
 
 def apply(ctx) -> None:
@@ -19,7 +18,4 @@ def apply(ctx) -> None:
         ctx.mkdir(d)
     for d in paths.private_dirs():
         ctx.mkdir(d, mode=0o700)
-    es: Path = paths.data / "elasticsearch"
-    stat = es.stat()
-    if (stat.st_uid, stat.st_gid) != (1000, 0):
-        ctx.chown_via_container(es, 1000, 0)
+    ctx.ensure_owner(paths.data / "elasticsearch", ELASTICSEARCH_UID, 0)
