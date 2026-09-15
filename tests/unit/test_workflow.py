@@ -1,6 +1,11 @@
 import pytest
 
 from neops_compose import workflow
+from neops_compose.context import Ctx
+from neops_compose.env import Env
+from neops_compose.paths import Paths
+from neops_compose.scenario import Scenario
+from neops_compose.state import State
 
 
 def test_tag_of():
@@ -34,3 +39,63 @@ def test_guard_downgrade_raises_only_for_core(tmp_path):
         workflow.guard_downgrade(last, now, allow=False)
     workflow.guard_downgrade(last, now, allow=True)
     workflow.guard_downgrade(None, now, allow=False)
+
+
+class FakeCompose:
+    def __init__(self, image="quay.io/zebbra/neops-core:2.1.0"):
+        self.image = image
+
+    def ps(self):
+        return [{"Service": "cms", "Image": self.image, "State": "running"}]
+
+    def images(self):
+        return [self.image]
+
+
+def make_ctx(tmp_path) -> Ctx:
+    (tmp_path / ".env").write_text("COMPOSE_FILE=compose.yaml\n")
+    env = Env(tmp_path / ".env")
+    return Ctx(
+        repo=tmp_path,
+        env=env,
+        paths=Paths.for_repo(tmp_path, env),
+        scenario=Scenario.from_env(env),
+        compose=FakeCompose(),
+        state=State(),
+        log=lambda m: None,
+    )
+
+
+def test_finish_records_the_running_images_before_doctor_runs(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+
+    def exploding_doctor(*args, **kwargs):
+        raise RuntimeError("doctor could not reach the deployment")
+
+    monkeypatch.setattr(workflow, "doctor", exploding_doctor)
+    with pytest.raises(RuntimeError, match="could not reach"):
+        workflow._finish(ctx, None, False)
+    assert ctx.state.last_up["images"] == {"cms": "quay.io/zebbra/neops-core:2.1.0"}
+    assert ctx.state.last_up["doctor_ok"] is False
+    assert State.load(ctx.paths.state_file).last_up["images"]["cms"].endswith("2.1.0")
+
+
+def test_finish_records_a_failed_doctor_and_still_blocks(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    monkeypatch.setattr(workflow, "doctor", lambda *a, **k: False)
+    with pytest.raises(workflow.Blocked):
+        workflow._finish(ctx, None, False)
+    assert State.load(ctx.paths.state_file).last_up["doctor_ok"] is False
+
+
+def test_finish_marks_a_passing_doctor(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    monkeypatch.setattr(workflow, "doctor", lambda *a, **k: True)
+    workflow._finish(ctx, None, False)
+    assert State.load(ctx.paths.state_file).last_up["doctor_ok"] is True
+
+
+def test_status_separates_a_missing_verdict_from_a_failed_one():
+    assert workflow._verdict({"at": "x", "images": {}}) == "doctor: not recorded"
+    assert workflow._verdict({"at": "x", "doctor_ok": False}) == "doctor FAILED"
+    assert workflow._verdict({"at": "x", "doctor_ok": True}) == "doctor ok"

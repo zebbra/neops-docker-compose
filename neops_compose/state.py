@@ -107,5 +107,9 @@ class State:
     def record_up(self, images: dict[str, str], doctor_ok: bool) -> None:
         self.last_up = {"at": _now(), "images": images, "doctor_ok": doctor_ok}
 
+    def record_doctor(self, ok: bool) -> None:
+        if self.last_up is not None:
+            self.last_up["doctor_ok"] = ok
+
     def written_by_newer_cli(self) -> bool:
         return _version(self.cli) > _version(__version__)

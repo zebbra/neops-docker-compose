@@ -68,7 +68,10 @@ def db_password(ctx: Ctx, which: str) -> None:
             env={"PGPASSWORD": ctx.env.get(key), "NEOPS_NEW_PASSWORD": new},
         )
     except ComposeError:
-        raise RotateError(f"ALTER ROLE failed on {service}; see docker compose logs {service}") from None
+        raise RotateError(
+            f"ALTER ROLE failed on {service}: the role password was not changed and .env is "
+            "unchanged; retry with ./neops rotate db-password"
+        ) from None
     ctx.env.set(key, new)
     ctx.log(f"{key} updated in .env; recreating {', '.join(dependants)}")
     _recreate(ctx, dependants)

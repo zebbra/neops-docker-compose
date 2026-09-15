@@ -99,9 +99,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return dispatch(args, Ctx.build(REPO, log))
-    except FileNotFoundError:
-        print("error: docker is not installed or not on PATH", file=sys.stderr)
-        return 1
     except ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

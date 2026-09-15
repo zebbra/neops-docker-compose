@@ -108,3 +108,13 @@ def test_prune_keeps_newest_n(tmp_path):
     removed = backup.prune(b, keep=2)
     assert removed == [b / "20260101T000000Z"]
     assert (b / "pre-migrate-20260104T000000Z").exists()
+
+
+def test_prune_never_touches_a_directory_it_did_not_create(tmp_path):
+    shared = tmp_path / "archive"
+    strangers = ("2026-project-data", "2026", "20260101T000000Z.old", "notes")
+    for name in ("20260101T000000Z", "20260102T000000Z", *strangers):
+        (shared / name).mkdir(parents=True)
+    removed = backup.prune(shared, keep=1)
+    assert removed == [shared / "20260101T000000Z"]
+    assert all((shared / name).exists() for name in strangers)

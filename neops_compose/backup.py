@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 from neops_compose import __version__
 from neops_compose.context import Ctx
 
+ARCHIVE_NAME = re.compile(r"\d{8}T\d{6}Z")
 DATABASES = (  # service, user, db, archive name
     ("postgres-cms", "neops", "neops", "cms.dump"),
     ("postgres-engine", "postgres", "neops-workflow", "engine.dump"),
@@ -86,7 +88,8 @@ def create(ctx: Ctx, target_root: Path | None = None) -> Path:
 
 
 def prune(backups_dir: Path, keep: int) -> list[Path]:
-    archives = sorted(p for p in backups_dir.iterdir() if p.is_dir() and p.name[:1].isdigit())
+    """Only directories this command created are pruned: --dir may point at a shared archive."""
+    archives = sorted(p for p in backups_dir.iterdir() if p.is_dir() and ARCHIVE_NAME.fullmatch(p.name))
     removed = archives[:-keep] if keep > 0 else []
     for p in removed:
         shutil.rmtree(p)

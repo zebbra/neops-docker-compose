@@ -179,3 +179,14 @@ def test_missing_env_short_circuits_before_any_docker_work(tmp_path, monkeypatch
     compose = FakeCompose()
     checks = preflight.run_checks(env, Scenario.from_env(env), tmp_path, tmp_path / "data", compose)
     assert (detail_for(checks, ".env") == ["no .env file: copy one of examples/*.env to .env"]) is missing_env
+
+
+def test_a_missing_docker_binary_fails_the_check_instead_of_raising(monkeypatch, tmp_path):
+    def missing(args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+
+    monkeypatch.setattr("neops_compose.preflight.subprocess.run", missing)
+    checks, daemon_ok, compose_ok = preflight._docker_checks()
+    assert not daemon_ok and not compose_ok
+    assert all(not c.ok for c in checks)
+    assert all("not installed or not on PATH" in c.detail for c in checks)

@@ -97,3 +97,14 @@ def test_failure_raises_without_echoing_env_values(tmp_path, monkeypatch):
     message = str(excinfo.value)
     assert "PGPASSWORD" in message and "s3cret" not in message
     assert "permission denied" in message
+
+
+def test_a_missing_docker_binary_is_a_compose_error(tmp_path, monkeypatch):
+    def missing(args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", missing)
+    with pytest.raises(ComposeError, match="docker is not installed or not on PATH"):
+        Compose(tmp_path).ps()
+    with pytest.raises(ComposeError, match="docker is not installed or not on PATH"):
+        Compose(tmp_path).exec_bytes("postgres-cms", "pg_dump")

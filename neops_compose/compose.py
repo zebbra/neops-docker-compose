@@ -6,10 +6,18 @@ import subprocess
 from pathlib import Path
 
 WAIT_TIMEOUT = 900
+DOCKER_MISSING = "docker is not installed or not on PATH"
 
 
 class ComposeError(RuntimeError):
     pass
+
+
+def _docker(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(args, **kwargs)
+    except FileNotFoundError as exc:
+        raise ComposeError(DOCKER_MISSING) from exc
 
 
 class Compose:
@@ -21,7 +29,7 @@ class Compose:
     def run(
         self, *args: str, capture: bool = False, check: bool = True, env: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess:
-        result = subprocess.run(
+        result = _docker(
             ["docker", "compose", *args],
             cwd=self.repo,
             text=True,
@@ -64,7 +72,7 @@ class Compose:
         flags: list[str] = []
         for key in env or {}:
             flags += ["-e", key]
-        result = subprocess.run(
+        result = _docker(
             ["docker", "compose", "exec", "-T", *flags, service, *cmd],
             cwd=self.repo,
             capture_output=True,

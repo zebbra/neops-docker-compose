@@ -103,8 +103,10 @@ def test_db_password_reports_a_failure_without_echoing_psql(tmp_path):
     ctx.compose.exec = boom
     with pytest.raises(rotate.RotateError) as exc:
         rotate.db_password(ctx, "cms")
-    assert "leaked-secret" not in str(exc.value)
-    assert "docker compose logs postgres-cms" in str(exc.value)
+    message = str(exc.value)
+    assert "leaked-secret" not in message
+    assert "logs" not in message, "the postgres log echoes the failed statement and its password"
+    assert "postgres-cms" in message and "retry with ./neops rotate db-password" in message
     assert ctx.env.values["NEOPS_CMS_DB_PASSWORD"] == "old-pw"
 
 

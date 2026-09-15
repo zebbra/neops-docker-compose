@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from neops_compose.compose import Compose, ComposeError
+from neops_compose.compose import DOCKER_MISSING, Compose, ComposeError
 from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT
 from neops_compose.rules import problems
@@ -67,8 +67,18 @@ def required_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
 
 
 def _cmd(*args: str) -> tuple[int, str]:
-    r = subprocess.run(args, text=True, capture_output=True)
+    try:
+        r = subprocess.run(args, text=True, capture_output=True)
+    except FileNotFoundError:
+        return 127, DOCKER_MISSING
     return r.returncode, (r.stdout or r.stderr).strip()
+
+
+def _detail(rc: int, out: str, failure: str) -> str:
+    """A missing binary explains itself; any other failure gets the actionable sentence."""
+    if rc == 0 or out == DOCKER_MISSING:
+        return out
+    return failure
 
 
 def _docker_checks() -> tuple[list[Check], bool, bool]:
@@ -78,12 +88,12 @@ def _docker_checks() -> tuple[list[Check], bool, bool]:
         Check(
             "docker daemon",
             daemon_rc == 0,
-            docker_v if daemon_rc == 0 else "docker is not running or not reachable",
+            _detail(daemon_rc, docker_v, "docker is not running or not reachable"),
         ),
         Check(
             "docker compose",
             compose_rc == 0 and version_ok(compose_v, MIN_COMPOSE),
-            compose_v if compose_rc == 0 else "docker compose v2 is required",
+            _detail(compose_rc, compose_v, "docker compose v2 is required"),
         ),
     ]
     return checks, daemon_rc == 0, compose_rc == 0

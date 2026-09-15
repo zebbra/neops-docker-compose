@@ -102,11 +102,14 @@ def doctor(
 
 
 def _finish(ctx: Ctx, connect: str | None, insecure: bool) -> None:
-    healthy = doctor(ctx, connect, insecure)
-    ctx.state.record_up(images_by_service(ctx.compose), healthy)
+    """The images are recorded before doctor runs: whatever doctor does, the next up must
+    compare against what is deployed now, not against the release before it."""
+    ctx.state.record_up(images_by_service(ctx.compose), doctor_ok=False)
     ctx.save_state()
-    if not healthy:
+    if not doctor(ctx, connect, insecure):
         raise Blocked("the stack is up but doctor reports failures")
+    ctx.state.record_doctor(True)
+    ctx.save_state()
 
 
 def install(ctx: Ctx, connect: str | None = None, insecure: bool = False) -> None:
@@ -153,6 +156,13 @@ def purge(ctx: Ctx, confirmed: str) -> None:
     ctx.log(f"removed {ctx.paths.data} and {ctx.paths.generated}; .env, certs/ and backups/ were kept")
 
 
+def _verdict(last_up: dict) -> str:
+    recorded = last_up.get("doctor_ok")
+    if recorded is None:
+        return "doctor: not recorded"
+    return "doctor ok" if recorded else "doctor FAILED"
+
+
 def status(ctx: Ctx) -> str:
     lines = [f"scenario: {' : '.join(ctx.scenario.files)}", f"data: {ctx.paths.data}"]
     running = images_by_service(ctx.compose)
@@ -164,6 +174,5 @@ def status(ctx: Ctx) -> str:
     faked = f", {len(ctx.state.faked)} FAKED ({', '.join(ctx.state.faked_names)})" if ctx.state.faked else ""
     lines.append(f"migrations: {len(ctx.state.applied)} applied, {len(pend)} pending" + faked)
     if ctx.state.last_up:
-        verdict = "doctor ok" if ctx.state.last_up.get("doctor_ok") else "doctor FAILED"
-        lines.append(f"last started: {ctx.state.last_up['at']} ({verdict})")
+        lines.append(f"last started: {ctx.state.last_up['at']} ({_verdict(ctx.state.last_up)})")
     return "\n".join(lines)
