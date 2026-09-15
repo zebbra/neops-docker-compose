@@ -86,7 +86,8 @@ after a `git pull` that moves an image tag.
     `./neops doctor` again and the probe should turn `OK`; if it stays a warning, your proxy is
     not denying those routes. [External proxy](40-external-proxy.md) has the snippets. Behind the
     bundled Traefik the same probe is a hard failure, because there the deny rule is one the CLI
-    rendered itself.
+    rendered itself. With `examples/local.env` there is no proxy at all, so the warning is
+    permanent: it is the reminder that the deployment must stay on `127.0.0.1`.
 
 Running `install` again on an already-installed deployment changes nothing: every step is
 idempotent, and the second run reports the existing state rather than erroring. Use `./neops up`
