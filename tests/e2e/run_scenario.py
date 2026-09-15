@@ -61,6 +61,10 @@ METRICS_SERVICES = (
     "grafana",
 )
 SCRAPE_JOBS = frozenset({"celery", "elasticsearch", "postgres", "redis", "victoriametrics", "vmalert"})
+GROUP_NAME = "e2e-admin-writes"
+GROUP_UPSERT = "mutation($n:String!){deviceGroupUpsert(name:$n,title:$n){deviceGroup{id name}}}"
+GROUP_READ = "query($n:String!){groups(name:$n){results{id name}}}"
+GROUP_DELETE = "mutation($id:ID!){deviceGroupDelete(id:$id){deviceGroup{id}}}"
 VM_TARGETS_URL = "http://127.0.0.1:8428/api/v1/targets"
 OVERRIDE_YAML = """# Written by tests/e2e/run_scenario.py: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
@@ -260,10 +264,54 @@ def install(report: Report, clone: Path, expose: bool, label: str) -> bool:
     )
 
 
-def assert_admin_login(report: Report, values: dict[str, str], http: Http) -> None:
+def assert_admin_login(report: Report, values: dict[str, str], http: Http) -> str | None:
     cms = PublicUrl.parse(values["NEOPS_CMS_URL"])
     result = login(cms, http, values.get("NEOPS_ADMIN_USER", "neops"), values["NEOPS_ADMIN_PASSWORD"])
     report.add(bool(result.token), f"admin login returns an access token ({result.error})")
+    return result.token
+
+
+def gql(http: Http, cms: PublicUrl, token: str, query: str, variables: dict) -> dict:
+    """The `data` block of one authenticated GraphQL call, or a RuntimeError naming the errors.
+
+    Core answers a refused write with HTTP 200 and an `errors` list, so the status alone says
+    nothing about whether the call did what it was asked to.
+    """
+    status, text = http.request(
+        cms,
+        "/graphql",
+        method="POST",
+        body=json.dumps({"query": query, "variables": variables}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        raise RuntimeError(f"{status}: {text[:200]}") from None
+    if status != 200 or payload.get("errors"):
+        raise RuntimeError(f"{status}: {json.dumps(payload.get('errors') or payload)[:200]}")
+    return payload["data"]
+
+
+def assert_admin_manages_entities(report: Report, values: dict[str, str], http: Http, token: str) -> None:
+    """Create, read back and delete a device group as the admin.
+
+    This is what the seeded admin role buys: core gates every entity write on a role, and a
+    Django superuser without one answers "User is not allowed to create a group." Logging in
+    successfully does not prove the account can use the product; this does.
+    """
+    cms = PublicUrl.parse(values["NEOPS_CMS_URL"])
+    try:
+        upserted = gql(http, cms, token, GROUP_UPSERT, {"n": GROUP_NAME})
+        group = upserted["deviceGroupUpsert"]["deviceGroup"]
+        report.add(bool(group["id"]), f"the admin creates a device group (id {group['id']})")
+        found = gql(http, cms, token, GROUP_READ, {"n": GROUP_NAME})["groups"]["results"]
+        report.add([g["id"] for g in found] == [group["id"]], f"the admin reads it back ({found})")
+        gql(http, cms, token, GROUP_DELETE, {"id": group["id"]})
+        left = gql(http, cms, token, GROUP_READ, {"n": GROUP_NAME})["groups"]["results"]
+        report.add(left == [], f"the admin deletes it again ({left})")
+    except Exception as exc:
+        report.add(False, f"the admin creates, reads and deletes a device group ({exc})")
 
 
 def assert_oidc_seeded(report: Report, values: dict[str, str], http: Http) -> None:
@@ -387,7 +435,9 @@ def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario
     if scenario.oidc:
         assert_oidc_seeded(report, values, http)
     else:
-        assert_admin_login(report, values, http)
+        token = assert_admin_login(report, values, http)
+        if token:
+            assert_admin_manages_entities(report, values, http, token)
     if scenario.shared_host:
         assert_shared_host_routing(report, values, http)
     if scenario.metrics:

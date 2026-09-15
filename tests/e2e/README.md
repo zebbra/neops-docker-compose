@@ -23,6 +23,7 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 | `install` completes and doctor is green | all except expose mode |
 | the worker API deny probe is doctor's **only** failure | expose mode (`compose.expose.yaml`) |
 | the admin user can log in and gets an access token | password-login scenarios |
+| the admin creates a device group over GraphQL, reads it back and deletes it, which is what the seeded admin role buys | password-login scenarios |
 | the OIDC providers are seeded and visible in `appSettings` | OIDC scenarios |
 | core's admin, `/djstatic/` and the engine's `/engine/health` answer on the one hostname | shared-host |
 | the worker container runs and its log shows function blocks registering | all |
@@ -141,11 +142,11 @@ Three things the run accommodates, each a property of the product rather than a 
 - **Core rate-limits login to five a minute per address** and every doctor run spends two, so
   a doctor that fails *only* on the worker probe with a rate-limit message is retried after a
   minute instead of being believed.
-- **The seeded admin holds no NeOps role.** core's GraphQL writes are role-gated and `install`
-  creates a Django superuser without one, so `deviceUpsert` answers "User is not allowed to
-  create a group." until an operator grants a role from the CMS admin site (see
-  [Install](../../docs/10-install.md)). The restart step therefore shows persistence through
-  the admin account, the minted API key and `state.json` rather than through a device.
+- **The restart step proves persistence without writing an entity.** It checks the admin
+  account, the minted API key and `state.json` rather than a device, because a device write
+  would need the worker and a platform row that no scenario seeds. The role that makes such a
+  write legal at all is seeded by `cms-init` and is covered by `run_scenario.py`'s own
+  device-group assertion.
 - **An engine restart costs no re-registration.** The engine keeps worker registrations in its
   own Postgres, so the worker logs nothing across the restart and simply keeps polling.
 
