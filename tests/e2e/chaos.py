@@ -257,8 +257,15 @@ def bring_up(report: Report, stack: Stack, what: str) -> None:
     report.add(True, f"`up` brought the stack back {what} [{time.monotonic() - started:.0f}s]")
 
 
+def remove_leftover_group(stack: Stack, token: str) -> None:
+    """An earlier run that aborted between the write and the delete leaves the row behind."""
+    for group in gql(stack.http, stack.cms, token, GROUP_READ, {"n": CHAOS_GROUP})["groups"]["results"]:
+        gql(stack.http, stack.cms, token, GROUP_DELETE, {"id": group["id"]})
+
+
 def write_group(report: Report, stack: Stack, token: str) -> str | None:
     try:
+        remove_leftover_group(stack, token)
         upserted = gql(stack.http, stack.cms, token, GROUP_UPSERT, {"n": CHAOS_GROUP})
         group_id = upserted["deviceGroupUpsert"]["deviceGroup"]["id"]
     except Exception as exc:
