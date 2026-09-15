@@ -6,7 +6,7 @@ import socket
 import ssl
 from dataclasses import dataclass
 
-from neops_compose.context import Ctx
+from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
 from neops_compose.env import Env
 from neops_compose.scenario import Scenario
 from neops_compose.urls import PublicUrl
@@ -16,6 +16,7 @@ NAME_WIDTH = 28
 LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
 WORKER_PROBE = "worker registered"
 DB_UNREACHABLE = "the CMS cannot reach its database (login answered: internal error)"
+EXTERNAL_PROXY_DENY_HINT = "verify that your reverse proxy denies these routes (docs/40-external-proxy.md)"
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class Probe:
     name: str
     ok: bool
     detail: str = ""
+    severity: str = "fail"  # "warn" means doctor reports it and still passes
 
 
 @dataclass(frozen=True)
@@ -149,21 +151,26 @@ def _probe_get(http: Http, spec: ProbeSpec) -> Probe:
     return Probe(spec.name, ok, detail)
 
 
-def _deny_probe(engine: PublicUrl, http: Http) -> Probe:
-    """The worker API must never answer a request that arrived over the public URL."""
+def _deny_probe(engine: PublicUrl, http: Http, severity: str = "fail") -> Probe:
+    """The worker API must never answer a request that arrived over the public URL.
+
+    In expose mode the deny belongs to a proxy the operator has not necessarily put in front
+    yet, so this is a warning there: a first install must be able to finish and say so.
+    """
     name = "engine worker API denied"
+    hint = (
+        EXTERNAL_PROXY_DENY_HINT
+        if severity == "warn"
+        else "the worker API is reachable from outside; your reverse proxy must deny it "
+        "(see examples/external-proxy.env)"
+    )
     try:
         status, _ = http.request(engine, "/blackboard/job", method="POST", body="{}")
     except Exception as exc:
-        return Probe(name, False, f"{engine}/blackboard/job: {exc}")
+        return Probe(name, False, f"{engine}/blackboard/job: {exc}", severity)
     if status == 403:
         return Probe(name, True, f"{engine}/blackboard/job -> 403")
-    return Probe(
-        name,
-        False,
-        f"{engine}/blackboard/job -> {status}: the worker API is reachable from outside; "
-        "your reverse proxy must deny it (see examples/external-proxy.env)",
-    )
+    return Probe(name, False, f"{engine}/blackboard/job -> {status}: {hint}", severity)
 
 
 def _specs(urls: dict[str, PublicUrl]) -> list[ProbeSpec]:
@@ -198,9 +205,9 @@ def _specs(urls: dict[str, PublicUrl]) -> list[ProbeSpec]:
     return specs
 
 
-def http_probes(urls: dict[str, PublicUrl], http: Http) -> list[Probe]:
+def http_probes(urls: dict[str, PublicUrl], http: Http, deny_severity: str = "fail") -> list[Probe]:
     probes = [_probe_get(http, spec) for spec in _specs(urls)]
-    probes.append(_deny_probe(urls["NEOPS_ENGINE_URL"], http))
+    probes.append(_deny_probe(urls["NEOPS_ENGINE_URL"], http, deny_severity))
     return probes
 
 
@@ -303,7 +310,8 @@ def _login_probes(ctx: Ctx, cms: PublicUrl, engine: PublicUrl, http: Http) -> li
     if ctx.scenario.oidc:
         skipped = Probe(WORKER_PROBE, True, "skipped: OIDC deployments cannot mint an admin token")
         return [bad_login_probe(cms, http), skipped]
-    admin = login(cms, http, ctx.env.get("NEOPS_ADMIN_USER", "neops"), ctx.env.get("NEOPS_ADMIN_PASSWORD"))
+    user = ctx.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
+    admin = login(cms, http, user, ctx.env.get("NEOPS_ADMIN_PASSWORD"))
     return [bad_login_probe(cms, http), worker_probe(engine, http, admin)]
 
 
@@ -321,7 +329,7 @@ def run(
     probes = container_probes(ctx.compose.ps())
     urls = _public_urls(ctx.env, ctx.scenario)
     http = Http(connect=connect, insecure=insecure)
-    probes += http_probes(urls, http)
+    probes += http_probes(urls, http, "warn" if ctx.scenario.proxy == "expose" else "fail")
     probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http)
     if probe_ratelimit:
         probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http))
@@ -330,11 +338,16 @@ def run(
     return probes
 
 
+def _status(probe: Probe) -> str:
+    if probe.ok:
+        return "OK  "
+    return "WARN" if probe.severity == "warn" else "FAIL"
+
+
 def format_report(probes: list[Probe]) -> str:
-    return "\n".join(
-        f"{'OK  ' if p.ok else 'FAIL'} {p.name:<{NAME_WIDTH}} {p.detail}".rstrip() for p in probes
-    )
+    return "\n".join(f"{_status(p)} {p.name:<{NAME_WIDTH}} {p.detail}".rstrip() for p in probes)
 
 
 def all_ok(probes: list[Probe]) -> bool:
-    return all(p.ok for p in probes)
+    """Warnings are reported and do not fail the run: nothing else here is advisory."""
+    return all(p.ok or p.severity == "warn" for p in probes)

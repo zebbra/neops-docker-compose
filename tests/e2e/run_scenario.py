@@ -240,29 +240,34 @@ def prepare_clone(work: Path, values: dict[str, str]) -> Path:
     return clone
 
 
-def failing_probe_names(clone: Path, *extra: str) -> list[str]:
-    """doctor prints `FAIL <name padded to NAME_WIDTH> <detail>`."""
+def probe_names(clone: Path, status: str, *extra: str) -> list[str]:
+    """doctor prints `FAIL` or `WARN`, then the name padded to NAME_WIDTH, then the detail."""
     out = neops(clone, "doctor", "--connect", CONNECT, "--insecure", *extra, check=False, capture=True)
     print(out.stdout + out.stderr, flush=True)
-    start = len("FAIL ")
+    start = len(status) + 1
     return [
         line[start : start + NAME_WIDTH].strip()
         for line in out.stdout.splitlines()
-        if line.startswith("FAIL")
+        if line.startswith(status)
     ]
 
 
+def failing_probe_names(clone: Path, *extra: str) -> list[str]:
+    return probe_names(clone, "FAIL", *extra)
+
+
 def install(report: Report, clone: Path, expose: bool, label: str) -> bool:
-    """In expose mode there is no proxy to deny the worker routes, so doctor fails by design."""
+    """In expose mode nothing denies the worker routes until the operator's own proxy is in
+    front, so doctor warns there instead of failing and the install finishes either way."""
     code = neops(clone, "install", "--connect", CONNECT, "--insecure", check=False).returncode
+    if not report.add(code == 0, f"{label} succeeded"):
+        return False
     if not expose:
-        return report.add(code == 0, f"{label} succeeded")
-    if code == 0:
-        return report.add(False, f"{label}: doctor passed but the worker API deny probe should fail here")
-    names = failing_probe_names(clone)
+        return True
+    warned = probe_names(clone, "WARN")
     return report.add(
-        names == [DENY_PROBE],
-        f"{label}: the worker API deny probe is the only failure (got {names})",
+        warned == [DENY_PROBE],
+        f"{label}: the worker API deny probe is the only warning (got {warned})",
     )
 
 

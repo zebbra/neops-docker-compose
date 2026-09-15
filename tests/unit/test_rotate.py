@@ -1,7 +1,7 @@
 import pytest
 import yaml
 
-from neops_compose import rotate
+from neops_compose import databases, rotate
 from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import Env
@@ -67,10 +67,16 @@ def test_every_service_rotate_recreates_exists_in_some_compose_file(repo):
         doc = yaml.safe_load(path.read_text()) or {}
         declared.update((doc.get("services") or {}).keys())
     wanted = set(rotate.CORE_SERVICES)
-    for service, _role, _db, _key, dependants in rotate.DB.values():
-        wanted.add(service)
+    wanted.update(database.service for database in databases.DATABASES)
+    for dependants in rotate.DEPENDANTS.values():
         wanted.update(dependants)
     assert wanted <= declared, sorted(wanted - declared)
+
+
+def test_every_database_the_cli_knows_can_be_rotated():
+    """One table, three consumers: a database preflight probes and backup dumps but rotate
+    cannot reach would desync silently."""
+    assert set(rotate.DEPENDANTS) == set(databases.BY_KEY)
 
 
 def test_db_password_keeps_the_new_password_out_of_argv(tmp_path):
@@ -87,11 +93,11 @@ def test_db_password_keeps_the_new_password_out_of_argv(tmp_path):
 
 
 def test_db_password_recreates_exactly_the_dependants_present_in_the_scenario(tmp_path):
+    """Spelled out rather than re-derived from DEPENDANTS: this is the list an operator's
+    deployment restarts, and a table edit that changes it should fail here."""
     ctx = make_ctx(tmp_path)
     rotate.db_password(ctx, "cms")
-    expected = [s for s in rotate.DB["cms"][4] if s in ctx.compose.service_names()]
-    assert ctx.compose.ups == [expected]
-    assert "postgres-exporter-cms" not in expected
+    assert ctx.compose.ups == [["cms-init", "cms", "cms-worker", "cms-beat"]]
 
 
 def test_db_password_reports_a_failure_without_echoing_psql(tmp_path):

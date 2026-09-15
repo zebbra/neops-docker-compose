@@ -10,6 +10,9 @@ from neops_compose.paths import Paths
 from neops_compose.scenario import Scenario
 from neops_compose.state import State
 
+# compose.yaml's ${NEOPS_ADMIN_USER:-neops} and .env.example document the same value.
+DEFAULT_ADMIN_USER = "neops"
+
 
 @dataclass
 class Ctx:

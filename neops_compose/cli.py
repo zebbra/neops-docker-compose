@@ -5,7 +5,7 @@ import getpass
 import sys
 from pathlib import Path
 
-from neops_compose import __version__, backup, migrate, rotate, state, token, workflow
+from neops_compose import __version__, backup, databases, migrate, rotate, state, token, workflow
 from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import MissingEnv
@@ -86,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--keep", type=int, help="prune to the newest N archives")
     sp = add("rotate", "rotate a secret: " + ", ".join(rotate.WHAT))
     sp.add_argument("what", choices=rotate.WHAT)
-    sp.add_argument("--which", choices=("cms", "engine", "keycloak"), help="for db-password")
+    sp.add_argument("--which", choices=tuple(databases.BY_KEY), help="for db-password")
     sp.add_argument("--password", help="for admin-password (prompted when omitted)")
     sp = add("purge", "stop everything and delete the data directory")
     sp.add_argument("--confirm", default="", metavar="DATA_DIR")
@@ -131,7 +131,7 @@ def dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
         case "keys":
             workflow.keys(ctx)
         case "token":
-            token.ensure_engine_token(c, ctx.env, ctx.paths, ctx.state, log)
+            token.ensure_engine_token(ctx)
         case "render":
             _render(args, ctx)
         case "doctor":
@@ -215,7 +215,7 @@ def _rotate(args: argparse.Namespace, ctx: Ctx) -> None:
     match args.what:
         case "db-password":
             if not args.which:
-                raise workflow.Blocked("rotate db-password needs --which cms|engine|keycloak")
+                raise workflow.Blocked("rotate db-password needs --which " + "|".join(databases.BY_KEY))
             rotate.db_password(ctx, args.which)
         case "admin-password":
             rotate.admin_password(ctx, args.password or getpass.getpass("new admin password: "))
@@ -226,7 +226,7 @@ def _rotate(args: argparse.Namespace, ctx: Ctx) -> None:
         case "tls":
             rotate.tls(ctx)
         case "token":
-            token.rotate_engine_token(ctx.compose, ctx.env, ctx.paths, ctx.state, log)
+            token.rotate_engine_token(ctx)
         case "keycloak-client":
             rotate.keycloak_client(ctx)
 

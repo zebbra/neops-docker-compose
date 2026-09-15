@@ -134,7 +134,7 @@ def install(ctx: Ctx, connect: str | None = None, insecure: bool = False) -> Non
     ctx.compose.pull()
     ctx.log("starting the CMS")
     ctx.compose.up(*CMS_FIRST)
-    token.ensure_engine_token(ctx.compose, ctx.env, ctx.paths, ctx.state, ctx.log)
+    token.ensure_engine_token(ctx)
     ctx.log("starting everything")
     ctx.compose.up()
     _finish(ctx, connect, insecure)
@@ -153,7 +153,7 @@ def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, inse
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()
     ctx.compose.up()
-    if token.ensure_engine_token(ctx.compose, ctx.env, ctx.paths, ctx.state, ctx.log):
+    if token.ensure_engine_token(ctx):
         ctx.compose.up()
     _finish(ctx, connect, insecure)
 

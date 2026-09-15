@@ -33,6 +33,16 @@ def test_keycloak_client_secret_is_stable(tmp_path):
     assert secrets.read_keycloak_client_secret(p) == first and mode(p) == 0o600
 
 
+def test_read_env_value_handles_a_missing_file_key_and_blank_value(tmp_path):
+    p = tmp_path / "engine.env"
+    assert secrets.read_env_value(p, "NEOPS_CMS_TOKEN") is None
+    p.write_text("# a comment\nNEOPS_CMS_TOKEN=abc123\nOTHER=x\n")
+    assert secrets.read_env_value(p, "NEOPS_CMS_TOKEN") == "abc123"
+    assert secrets.read_env_value(p, "ABSENT") is None
+    p.write_text("NEOPS_CMS_TOKEN=\n")
+    assert secrets.read_env_value(p, "NEOPS_CMS_TOKEN") is None
+
+
 def test_selfsigned_cert_covers_hosts_and_detects_staleness(tmp_path):
     d = tmp_path / "tls"
     assert secrets.ensure_selfsigned(d, ["neops.example.com", "cms.neops.example.com"]) is True

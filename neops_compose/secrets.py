@@ -55,13 +55,21 @@ def ensure_jwt(jwt_dir: Path) -> bool:
     return True
 
 
-def read_keycloak_client_secret(path: Path) -> str | None:
+def read_env_value(path: Path, key: str) -> str | None:
+    """One KEY=VALUE line out of a generated env file; None when the file or the key is absent.
+
+    These files are written by write_secret, one key each, so a plain line scan is enough.
+    """
     if not path.exists():
         return None
     for line in path.read_text().splitlines():
-        if line.startswith(CLIENT_SECRET_KEY + "="):
-            return line.split("=", 1)[1].strip()
+        if line.startswith(key + "="):
+            return line.split("=", 1)[1].strip() or None
     return None
+
+
+def read_keycloak_client_secret(path: Path) -> str | None:
+    return read_env_value(path, CLIENT_SECRET_KEY)
 
 
 def ensure_keycloak_client_secret(path: Path, rotate: bool = False) -> str:

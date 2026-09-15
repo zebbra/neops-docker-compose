@@ -114,6 +114,16 @@ def test_cms_init_seeds_the_admin_role():
     assert "NEOPS_ADMIN_ROLE" in init["environment"]
 
 
+def test_compose_documents_the_same_admin_user_the_cli_falls_back_to():
+    """cms-init creates that account and the CLI logs in as it: two defaults drifting apart
+    means doctor and `rotate admin-password` address a user the install never made."""
+    from neops_compose.context import DEFAULT_ADMIN_USER
+
+    init = load(REPO / "compose.yaml")["services"]["cms-init"]
+    assert init["environment"]["NEOPS_ADMIN_USER"] == f"${{NEOPS_ADMIN_USER:-{DEFAULT_ADMIN_USER}}}"
+    assert f"NEOPS_ADMIN_USER={DEFAULT_ADMIN_USER}\n" in (REPO / ".env.example").read_text()
+
+
 def test_no_healthcheck_addresses_localhost():
     """localhost resolves to ::1 first in these images and the servers bind IPv4 only, so a
     healthcheck against it never passes (the monitor app's nginx is the one that bit us)."""
@@ -140,21 +150,28 @@ def test_every_publicly_routed_service_has_a_healthcheck():
 VAR_RE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}")
 
 
-def _host_port(mapping: str, env) -> int:
-    resolved = VAR_RE.sub(lambda m: env.get(m["name"], m["default"] or ""), mapping)
-    return int(resolved.split(":")[0])
+def _resolve(text: str, env) -> str:
+    return VAR_RE.sub(lambda m: env.get(m["name"], m["default"] or ""), text)
 
 
-def _published_traefik_ports(files: tuple[str, ...], env) -> list[int]:
+def _binding(mapping: str, env) -> tuple[str, int]:
+    """A published port is `[ADDRESS:]HOST:CONTAINER`; an address-less mapping binds 0.0.0.0."""
+    fields = _resolve(mapping, env).split(":")
+    address = fields[0] if len(fields) == 3 else "0.0.0.0"
+    return address, int(fields[-2])
+
+
+def _published_ports(files: tuple[str, ...], env) -> list[tuple[str, int]]:
     return sorted(
-        _host_port(mapping, env)
+        _binding(mapping, env)
         for name in files
-        for mapping in ((load(REPO / name).get("services") or {}).get("traefik") or {}).get("ports") or []
+        for service in (load(REPO / name).get("services") or {}).values()
+        for mapping in service.get("ports") or []
     )
 
 
-def test_traefik_publishes_exactly_the_ports_preflight_reserves():
-    """`./neops check` reserves the ports a scenario needs; anything else traefik binds is a
+def test_the_merged_config_publishes_exactly_the_ports_preflight_reserves():
+    """`./neops check` reserves the ports a scenario needs; anything else the stack binds is a
     collision nobody was warned about. Plain http has no websecure entrypoint, so no 443."""
     from neops_compose.env import Env
     from neops_compose.preflight import required_ports
@@ -163,7 +180,4 @@ def test_traefik_publishes_exactly_the_ports_preflight_reserves():
     for example in sorted(REPO.glob("examples/*.env")):
         env = Env(example)
         scenario = Scenario.from_env(env)
-        if scenario.proxy != "traefik":
-            continue
-        reserved = sorted(port for _, port in required_ports(env, scenario))
-        assert _published_traefik_ports(scenario.files, env) == reserved, example.name
+        assert _published_ports(scenario.files, env) == sorted(required_ports(env, scenario)), example.name

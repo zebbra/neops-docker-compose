@@ -8,8 +8,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from neops_compose.compose import DOCKER_MISSING, Compose, ComposeError
+from neops_compose.databases import DATABASES
 from neops_compose.env import Env
-from neops_compose.ports import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT
+from neops_compose.ports import (
+    DEFAULT_GRAFANA_PORT,
+    DEFAULT_HTTP_PORT,
+    DEFAULT_HTTPS_PORT,
+    DEFAULT_KEYCLOAK_PORT,
+    DEFAULT_MONITOR_PORT,
+)
 from neops_compose.rules import problems
 from neops_compose.scenario import Scenario
 
@@ -17,11 +24,6 @@ MIN_COMPOSE = (2, 24)
 MIN_DISK_GIB = 20
 MIN_MAX_MAP_COUNT = 262144
 REGISTRY_WORKERS = 6
-DATABASES = (
-    ("postgres-cms", "neops", "neops", "NEOPS_CMS_DB_PASSWORD"),
-    ("postgres-engine", "postgres", "neops-workflow", "NEOPS_ENGINE_DB_PASSWORD"),
-    ("postgres-keycloak", "keycloak", "keycloak", "NEOPS_KEYCLOAK_DB_PASSWORD"),
-)
 
 
 @dataclass(frozen=True)
@@ -46,7 +48,7 @@ def port_free(address: str, port: int) -> bool:
             return False
 
 
-def required_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
+def _proxy_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
     if scenario.proxy == "traefik":
         ports = [("0.0.0.0", int(env.get("NEOPS_HTTP_PORT", str(DEFAULT_HTTP_PORT))))]
         if scenario.tls:
@@ -64,6 +66,18 @@ def required_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
             ("NEOPS_MONITOR_PORT", "3031"),
         )
     ]
+
+
+def required_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
+    """Keycloak and Grafana publish on NEOPS_BIND_ADDRESS in both proxy modes: their overlays
+    map the port unconditionally, so Traefik in front of them reserves nothing."""
+    ports = _proxy_ports(env, scenario)
+    bind = env.get("NEOPS_BIND_ADDRESS", "127.0.0.1")
+    if scenario.keycloak:
+        ports.append((bind, int(env.get("NEOPS_KEYCLOAK_PORT", str(DEFAULT_KEYCLOAK_PORT)))))
+    if scenario.metrics:
+        ports.append((bind, int(env.get("NEOPS_GRAFANA_PORT", str(DEFAULT_GRAFANA_PORT)))))
+    return ports
 
 
 def _cmd(*args: str) -> tuple[int, str]:
@@ -165,21 +179,29 @@ def image_checks(compose: Compose) -> list[Check]:
 
 def _db_password_checks(env: Env, compose: Compose, running: set[str]) -> list[Check]:
     out = []
-    for service, user, db, key in DATABASES:
-        if service not in running or not env.is_set(key):
+    for database in DATABASES:
+        if database.service not in running or not env.is_set(database.env_key):
             continue
         try:
             compose.exec(
-                service, "psql", "-U", user, "-d", db, "-c", "select 1", env={"PGPASSWORD": env.get(key)}
+                database.service,
+                "psql",
+                "-U",
+                database.role,
+                "-d",
+                database.name,
+                "-c",
+                "select 1",
+                env={"PGPASSWORD": env.get(database.env_key)},
             )
-            out.append(Check("db password", True, f"{service} accepts {key}"))
+            out.append(Check("db password", True, f"{database.service} accepts {database.env_key}"))
         except Exception:
             out.append(
                 Check(
                     "db password",
                     False,
-                    f"{service} rejects {key}: the value in .env changed without "
-                    "./neops rotate db-password; restore it or rotate properly",
+                    f"{database.service} rejects {database.env_key}: the value in .env changed "
+                    "without ./neops rotate db-password; restore it or rotate properly",
                 )
             )
     return out

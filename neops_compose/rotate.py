@@ -3,31 +3,19 @@ from __future__ import annotations
 import json
 import secrets as pysecrets
 
-from neops_compose import secrets, token
+from neops_compose import databases, secrets, token
 from neops_compose.compose import ComposeError
-from neops_compose.context import Ctx
+from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
 from neops_compose.env import Env
 from neops_compose.render import KEYCLOAK_CLIENT_ID, KEYCLOAK_REALM, keycloak_relative_path, render
 from neops_compose.scenario import Scenario
 from neops_compose.urls import PublicUrl
 
 CORE_SERVICES = ("cms-init", "cms", "cms-worker", "cms-beat")
-DB = {  # which -> (service, role, database, env key, dependants to recreate)
-    "cms": (
-        "postgres-cms",
-        "neops",
-        "neops",
-        "NEOPS_CMS_DB_PASSWORD",
-        CORE_SERVICES + ("postgres-exporter-cms",),
-    ),
-    "engine": (
-        "postgres-engine",
-        "postgres",
-        "neops-workflow",
-        "NEOPS_ENGINE_DB_PASSWORD",
-        ("engine", "postgres-exporter-engine"),
-    ),
-    "keycloak": ("postgres-keycloak", "keycloak", "keycloak", "NEOPS_KEYCLOAK_DB_PASSWORD", ("keycloak",)),
+DEPENDANTS = {  # which database, from databases.BY_KEY -> what has to be recreated after it
+    "cms": CORE_SERVICES + ("postgres-exporter-cms",),
+    "engine": ("engine", "postgres-exporter-engine"),
+    "keycloak": ("keycloak",),
 }
 WHAT = ("db-password", "admin-password", "secret-key", "jwt", "tls", "token", "keycloak-client")
 KCADM = "/opt/keycloak/bin/kcadm.sh"
@@ -55,30 +43,31 @@ def _recreate(ctx: Ctx, services: tuple[str, ...]) -> None:
 def db_password(ctx: Ctx, which: str) -> None:
     """The old password comes from .env but the socket path authenticates by trust, so a
     stale value in .env is exactly the case this command has to be able to repair."""
-    service, role, db, key, dependants = DB[which]
+    database = databases.BY_KEY[which]
+    dependants = DEPENDANTS[which]
     new = pysecrets.token_hex(32)
-    ctx.log(f"ALTER ROLE {role} on {service}")
+    ctx.log(f"ALTER ROLE {database.role} on {database.service}")
     try:
         ctx.compose.exec(
-            service,
+            database.service,
             "sh",
             "-c",
-            f"psql -v ON_ERROR_STOP=1 -U {role} -d {db} "
-            f"-c \"ALTER ROLE {role} WITH PASSWORD '$NEOPS_NEW_PASSWORD'\"",
-            env={"PGPASSWORD": ctx.env.get(key), "NEOPS_NEW_PASSWORD": new},
+            f"psql -v ON_ERROR_STOP=1 -U {database.role} -d {database.name} "
+            f"-c \"ALTER ROLE {database.role} WITH PASSWORD '$NEOPS_NEW_PASSWORD'\"",
+            env={"PGPASSWORD": ctx.env.get(database.env_key), "NEOPS_NEW_PASSWORD": new},
         )
     except ComposeError:
         raise RotateError(
-            f"ALTER ROLE failed on {service}: the role password was not changed and .env is "
+            f"ALTER ROLE failed on {database.service}: the role password was not changed and .env is "
             "unchanged; retry with ./neops rotate db-password"
         ) from None
-    ctx.env.set(key, new)
-    ctx.log(f"{key} updated in .env; recreating {', '.join(dependants)}")
+    ctx.env.set(database.env_key, new)
+    ctx.log(f"{database.env_key} updated in .env; recreating {', '.join(dependants)}")
     _recreate(ctx, dependants)
 
 
 def admin_password(ctx: Ctx, new: str) -> None:
-    user = ctx.env.get("NEOPS_ADMIN_USER", "neops")
+    user = ctx.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
     ctx.compose.exec(
         "cms", "python", "manage.py", "shell", "-c", _SET_PASSWORD_SCRIPT, env={"U": user, "P": new}
     )
@@ -90,7 +79,7 @@ def secret_key(ctx: Ctx) -> None:
     ctx.env.set("DJANGO_SECRET_KEY", pysecrets.token_hex(32))
     ctx.log("DJANGO_SECRET_KEY rotated; every session and every static API key is now invalid")
     _recreate(ctx, CORE_SERVICES)
-    token.rotate_engine_token(ctx.compose, ctx.env, ctx.paths, ctx.state, ctx.log)
+    token.rotate_engine_token(ctx)
 
 
 def jwt(ctx: Ctx) -> None:

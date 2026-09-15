@@ -10,13 +10,9 @@ from pathlib import Path
 
 from neops_compose import __version__
 from neops_compose.context import Ctx
+from neops_compose.databases import DATABASES
 
 ARCHIVE_NAME = re.compile(r"\d{8}T\d{6}Z")
-DATABASES = (  # service, user, db, archive name
-    ("postgres-cms", "neops", "neops", "cms.dump"),
-    ("postgres-engine", "postgres", "neops-workflow", "engine.dump"),
-    ("postgres-keycloak", "keycloak", "keycloak", "keycloak.dump"),
-)
 RESTORE_NOTE = (
     "Elasticsearch is not backed up: after a restore run manage.py elastic_index --create and --populate"
 )
@@ -43,12 +39,13 @@ def _lock_down(root: Path) -> None:
 def _dump_databases(compose, target: Path, log: Callable[[str], None]) -> list[str]:
     running = compose.running_services()
     dumped = []
-    for service, user, db, name in DATABASES:
-        if service not in running:
+    for database in DATABASES:
+        if database.service not in running:
             continue
-        log(f"pg_dump {db} from {service}")
-        (target / name).write_bytes(compose.exec_bytes(service, "pg_dump", "-U", user, "-Fc", db))
-        dumped.append(name)
+        log(f"pg_dump {database.name} from {database.service}")
+        dump = compose.exec_bytes(database.service, "pg_dump", "-U", database.role, "-Fc", database.name)
+        (target / database.dump_name).write_bytes(dump)
+        dumped.append(database.dump_name)
     return dumped
 
 

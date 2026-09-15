@@ -27,25 +27,43 @@ def test_port_free_detects_a_bound_port():
     assert preflight.port_free("127.0.0.1", port) is True
 
 
+def ports_for(tmp_path, text: str) -> list[tuple[str, int]]:
+    (tmp_path / ".env").write_text(text)
+    env = Env(tmp_path / ".env")
+    return preflight.required_ports(env, Scenario.from_env(env))
+
+
 def test_required_ports_by_scenario(tmp_path):
-    (tmp_path / ".env").write_text(
+    traefik = ports_for(
+        tmp_path,
         "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.traefik-shared-host.yaml:"
-        "compose.tls-files.yaml\nNEOPS_HTTP_PORT=8880\n"
+        "compose.tls-files.yaml\nNEOPS_HTTP_PORT=8880\n",
     )
-    env = Env(tmp_path / ".env")
-    assert preflight.required_ports(env, Scenario.from_env(env)) == [
-        ("0.0.0.0", 8880),
-        ("0.0.0.0", 443),
-        ("0.0.0.0", 8443),
-    ]
-    (tmp_path / ".env").write_text("COMPOSE_FILE=compose.yaml:compose.expose.yaml\nNEOPS_CMS_PORT=9000\n")
-    env = Env(tmp_path / ".env")
-    assert preflight.required_ports(env, Scenario.from_env(env)) == [
+    assert traefik == [("0.0.0.0", 8880), ("0.0.0.0", 443), ("0.0.0.0", 8443)]
+
+    expose = ports_for(tmp_path, "COMPOSE_FILE=compose.yaml:compose.expose.yaml\nNEOPS_CMS_PORT=9000\n")
+    assert expose == [
         ("127.0.0.1", 8080),
         ("127.0.0.1", 9000),
         ("127.0.0.1", 3030),
         ("127.0.0.1", 3031),
     ]
+
+
+def test_the_keycloak_and_grafana_loopback_ports_are_reserved_in_both_proxy_modes(tmp_path):
+    """Both overlays publish their port unconditionally, so Traefik in front of them changes
+    nothing: an unreserved port is a collision the operator was never warned about."""
+    overlays = "compose.keycloak.yaml:compose.oidc.yaml:compose.metrics.yaml"
+    behind_traefik = ports_for(tmp_path, f"COMPOSE_FILE=compose.yaml:compose.traefik.yaml:{overlays}\n")
+    assert behind_traefik == [("0.0.0.0", 80), ("127.0.0.1", 8180), ("127.0.0.1", 3000)]
+
+    expose = ports_for(
+        tmp_path,
+        f"COMPOSE_FILE=compose.yaml:compose.expose.yaml:{overlays}\n"
+        "NEOPS_BIND_ADDRESS=10.0.0.5\nNEOPS_KEYCLOAK_PORT=18180\nNEOPS_GRAFANA_PORT=13000\n",
+    )
+    assert expose[-2:] == [("10.0.0.5", 18180), ("10.0.0.5", 13000)]
+    assert all(address == "10.0.0.5" for address, _ in expose)
 
 
 def test_report_format():

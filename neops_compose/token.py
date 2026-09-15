@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable
 
 from neops_compose.compose import ComposeError
-from neops_compose.env import Env
+from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
 from neops_compose.paths import Paths
-from neops_compose.secrets import write_secret
-from neops_compose.state import State
+from neops_compose.secrets import read_env_value, write_secret
 
 API_KEY_APP = "workflow"
 API_KEY_DESCRIPTION = "neops-docker-compose: workflow engine"
@@ -44,12 +42,7 @@ def key_id(token: str) -> int:
 
 
 def read_engine_token(paths: Paths) -> str | None:
-    if not paths.engine_env.exists():
-        return None
-    for line in paths.engine_env.read_text().splitlines():
-        if line.startswith(ENV_KEY + "="):
-            return line.split("=", 1)[1].strip() or None
-    return None
+    return read_env_value(paths.engine_env, ENV_KEY)
 
 
 def token_is_valid(compose, token: str) -> bool:
@@ -109,35 +102,38 @@ def revoke(compose, key_id_: int) -> None:
     compose.exec("cms", "python", "manage.py", "shell", "-c", script)
 
 
-def _install(compose, paths: Paths, state: State, token: str, log: Callable[[str], None]) -> None:
-    write_secret(paths.engine_env, f"{ENV_KEY}={token}\n".encode())
-    state.record_api_key(key_id(token), API_KEY_APP)
-    state.save(paths.state_file)
-    log("recreating the engine with the new CMS token")
-    compose.up("engine", force_recreate=True)
+def _install(ctx: Ctx, token: str) -> None:
+    write_secret(ctx.paths.engine_env, f"{ENV_KEY}={token}\n".encode())
+    ctx.state.record_api_key(key_id(token), API_KEY_APP)
+    ctx.save_state()
+    ctx.log("recreating the engine with the new CMS token")
+    ctx.compose.up("engine", force_recreate=True)
 
 
-def ensure_engine_token(compose, env: Env, paths: Paths, state: State, log: Callable[[str], None]) -> bool:
+def _admin_user(ctx: Ctx) -> str:
+    return ctx.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
+
+
+def ensure_engine_token(ctx: Ctx) -> bool:
     """Mint only when no valid token exists. Returns True when a token was minted.
 
     TokenCheckUnavailable propagates: an undetermined check must never mint a second key.
     """
-    existing = read_engine_token(paths)
-    if existing and token_is_valid(compose, existing):
-        log("engine CMS token present and valid")
+    existing = read_engine_token(ctx.paths)
+    if existing and token_is_valid(ctx.compose, existing):
+        ctx.log("engine CMS token present and valid")
         return False
-    log("minting a CMS API key for the engine")
-    _install(compose, paths, state, mint(compose, env.get("NEOPS_ADMIN_USER", "neops")), log)
+    ctx.log("minting a CMS API key for the engine")
+    _install(ctx, mint(ctx.compose, _admin_user(ctx)))
     return True
 
 
-def rotate_engine_token(compose, env: Env, paths: Paths, state: State, log: Callable[[str], None]) -> None:
-    old = read_engine_token(paths)
-    new = mint(compose, env.get("NEOPS_ADMIN_USER", "neops"))
-    _install(compose, paths, state, new, log)
+def rotate_engine_token(ctx: Ctx) -> None:
+    old = read_engine_token(ctx.paths)
+    _install(ctx, mint(ctx.compose, _admin_user(ctx)))
     if old:
         try:
-            revoke(compose, key_id(old))
-            log(f"revoked API key {key_id(old)}")
+            revoke(ctx.compose, key_id(old))
+            ctx.log(f"revoked API key {key_id(old)}")
         except Exception as exc:  # the new key is live; an unrevoked old one is reported, not fatal
-            log(f"warning: could not revoke the previous API key: {exc}")
+            ctx.log(f"warning: could not revoke the previous API key: {exc}")
