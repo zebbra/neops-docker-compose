@@ -6,16 +6,19 @@
     uv run python tests/e2e/external_proxy_check.py /tmp/neops-e2e/proxy/repo --caddy-port 22443
 
 It runs `caddy:2` from tests/e2e/caddy/Caddyfile, which is docs/40-external-proxy.md's snippet
-with the harness's hostnames and ports, repoints the clone's public URLs at it, and checks the
-four promises the docs make: doctor is fully green including the worker-API deny probe, the
+with the harness's hostnames and ports, repoints the clone's public URLs at it, and checks every
+promise the docs make: doctor is fully green including the worker-API deny probe, the
 engine's worker routes answer 403 while everything else still reaches the engine, the proxy
-overwrites X-Real-IP, and a body far above the usual proxy default reaches the CMS.
+overwrites X-Real-IP, a body far above the usual proxy default reaches the CMS, and a WebSocket
+upgrade on /graphql gets through.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -40,6 +43,8 @@ RATELIMIT_VALUE = "HTTP_X_REAL_IP"
 # them; the probe needs a fresh window or its own attempts cannot be what trips the limit.
 RATELIMIT_WINDOW = 65.0
 LOGIN = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
+# channels_graphql_ws rejects every other subprotocol outright, so the handshake must name it.
+WS_SUBPROTOCOL = "graphql-ws"
 
 UPSTREAM_PORTS = {
     "NEOPS_WEB_PORT": "8080",
@@ -173,6 +178,39 @@ def assert_body_limit(report: Report, cms: PublicUrl, http: Http, name: str) -> 
     )
 
 
+def websocket_status(url: PublicUrl, path: str, connect: str) -> int:
+    """The status line of a WebSocket handshake; Http cannot do upgrades."""
+    request = (
+        f"GET {url.path}{path} HTTP/1.1\r\n"
+        f"Host: {url.host}:{url.port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        f"Sec-WebSocket-Protocol: {WS_SUBPROTOCOL}\r\n\r\n"
+    )
+    raw = socket.create_connection((connect, url.port), 15)
+    if url.scheme == "https":
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        raw = ctx.wrap_socket(raw, server_hostname=url.host)
+    with raw as sock:
+        sock.sendall(request.encode())
+        sock.settimeout(15)
+        return int(sock.recv(256).split(b"\r\n", 1)[0].split()[1])
+
+
+def assert_websocket(report: Report, cms: PublicUrl) -> None:
+    """Core serves GraphQL subscriptions on /graphql; a proxy that drops the hop-by-hop
+    upgrade headers turns the handshake into a plain GET and core answers 400."""
+    try:
+        status = websocket_status(cms, "/graphql", CONNECT)
+    except Exception as exc:
+        status = f"<{exc}>"
+    report.add(status == 101, f"a {WS_SUBPROTOCOL} upgrade on /graphql reaches core ({status})")
+
+
 def assert_key_reaches_core(report: Report, clone: Path) -> bool:
     """A key core never receives makes --probe-ratelimit pass without testing anything."""
     try:
@@ -212,6 +250,7 @@ def run(clone: Path, port: int, name: str) -> int:
     assert_doctor_green(report, clone, "behind caddy")
     assert_deny(report, urls["NEOPS_ENGINE_URL"], http)
     assert_body_limit(report, urls["NEOPS_CMS_URL"], http, name)
+    assert_websocket(report, urls["NEOPS_CMS_URL"])
     assert_ratelimit(report, clone, urls["NEOPS_CMS_URL"], http)
 
     passed = len(report.results) - len(report.failed)

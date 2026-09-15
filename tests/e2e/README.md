@@ -114,6 +114,37 @@ re-import the realm over what the admin console holds.
 Chromium resolves `*.localhost` to 127.0.0.1 natively, and the wait for the token tolerates a
 `SecurityError` while the main frame is still an opaque mid-navigation document.
 
+## The external proxy
+
+`run_scenario.py external-proxy` proves the stack works with its ports published and nothing in
+front of them. `external_proxy_check.py` puts a real proxy there and checks the contract in
+[docs/40-external-proxy.md](../../docs/40-external-proxy.md), against a stack left up with
+`--keep`:
+
+```bash
+uv run python tests/e2e/run_scenario.py external-proxy --port-base 22000 \
+  --workdir /tmp/neops-e2e/proxy --keep --extra-env NEOPS_ES_HEAP=512m
+uv run python tests/e2e/external_proxy_check.py /tmp/neops-e2e/proxy/repo --caddy-port 22443
+```
+
+It runs `caddy:2` on the host network from `caddy/Caddyfile`, which is the documented Caddy
+snippet with the harness's hostnames, ports and `tls internal`, then repoints the clone's public
+URLs at it and runs `./neops render && ./neops up`.
+
+| Assertion | Why it is not obvious |
+|---|---|
+| doctor is fully green, deny probe included | the same run without a proxy fails that one probe by design |
+| every spelling of the worker routes answers 403 with an empty body | Caddy's own 403 has no body, the engine's has one, which is how the two are told apart |
+| `/health`, `/workers`, `/function-blocks/registrations/list` and `/blackboard/jobs` still reach the engine | the monitor app needs them, so the deny rule must be exact |
+| `GET` on a denied path and `POST /workers` are not blocked | the rule is `POST`-only and anchored |
+| a 1 MB body reaches the CMS, and the adapted config carries the 200 MB limit | 200 MB is asserted on `caddy adapt`, not sent |
+| a `graphql-ws` upgrade on `/graphql` answers `101` | subscriptions break silently through a proxy that drops the hop-by-hop headers |
+| the cms container really has `RATELIMIT_IP_META_KEY` | without it `--probe-ratelimit` passes while testing nothing |
+| `--probe-ratelimit` passes and a forged `X-Real-IP` is still rate-limited | proves the proxy overwrites the header rather than passing the client's through |
+
+The rate-limit half waits out a minute first: core allows five logins a minute per address and
+doctor spends two of them on every run.
+
 ## Chaos runs
 
 `chaos.py` takes the clone a `--keep` run left behind and breaks the deployment on purpose.
