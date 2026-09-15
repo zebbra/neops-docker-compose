@@ -13,3 +13,5 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 site/
+
+docs/assets/document_dates/

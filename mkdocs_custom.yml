@@ -1,0 +1,46 @@
+site_name: NeOps docker-compose
+
+# Project-only additions on top of the canonical base
+# (zebbra/mkdocs-documentation/assets/mkdocs_base.yml). Everything else — admonitions, tabs,
+# snippets, mermaid, tasklist, abbr, magiclink — is already in the base and applies site-wide.
+# Lists CONCATENATE on merge, so only add what the base does not already carry.
+plugins:
+  - exclude:
+      glob:
+        # Design specs and implementation plans for this repo's own build — not part of the
+        # operator-facing site. See docs/superpowers/*.
+        - superpowers/*
+        # Source trees symlinked into docs/ for snippet includes. They are
+        # include targets, not pages.
+        - cust-cert/*
+        - certs/*
+        - examples/*
+        - metrics/*
+        - migrations/*
+        - neops_compose/*
+        - tests/*
+
+nav:
+  - Home: index.md
+  - Install: 10-install.md
+  - Scenarios: 20-scenarios.md
+  - Operations: 30-operations.md
+  - External proxy: 40-external-proxy.md
+  - Troubleshooting: 50-troubleshooting.md
+
+# --8<-- [start:repo]
+repo_url: https://github.com/zebbra/neops-docker-compose
+edit_uri: edit/release/2.0/docs
+# --8<-- [end:repo]
+
+# --8<-- [start:social]
+extra:
+  social:
+    - icon: fontawesome/solid/house
+      link: https://zebbra.ch
+      name: Zebbra
+# --8<-- [end:social]
+
+# --8<-- [start:copyright]
+copyright: Copyright &copy; Zebbra AG
+# --8<-- [end:copyright]

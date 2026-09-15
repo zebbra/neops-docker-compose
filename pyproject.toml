@@ -25,7 +25,7 @@ packages = ["neops_compose"]
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-extend-exclude = ["docs"]
+extend-exclude = ["docs", ".make_scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
