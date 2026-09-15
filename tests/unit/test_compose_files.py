@@ -118,3 +118,35 @@ def test_every_publicly_routed_service_has_a_healthcheck():
     }
     for name in SERVICE_URLS:
         assert declared[name].get("healthcheck"), f"{name} is routed publicly but has no healthcheck"
+
+
+VAR_RE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}")
+
+
+def _host_port(mapping: str, env) -> int:
+    resolved = VAR_RE.sub(lambda m: env.get(m["name"], m["default"] or ""), mapping)
+    return int(resolved.split(":")[0])
+
+
+def _published_traefik_ports(files: tuple[str, ...], env) -> list[int]:
+    return sorted(
+        _host_port(mapping, env)
+        for name in files
+        for mapping in ((load(REPO / name).get("services") or {}).get("traefik") or {}).get("ports") or []
+    )
+
+
+def test_traefik_publishes_exactly_the_ports_preflight_reserves():
+    """`./neops check` reserves the ports a scenario needs; anything else traefik binds is a
+    collision nobody was warned about. Plain http has no websecure entrypoint, so no 443."""
+    from neops_compose.env import Env
+    from neops_compose.preflight import required_ports
+    from neops_compose.scenario import Scenario
+
+    for example in sorted(REPO.glob("examples/*.env")):
+        env = Env(example)
+        scenario = Scenario.from_env(env)
+        if scenario.proxy != "traefik":
+            continue
+        reserved = sorted(port for _, port in required_ports(env, scenario))
+        assert _published_traefik_ports(scenario.files, env) == reserved, example.name
