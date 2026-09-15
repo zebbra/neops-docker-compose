@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import Enum
 from urllib.parse import urlsplit
 
 from neops_compose.env import Env
@@ -81,3 +82,31 @@ def public_urls(env: Env, scenario: Scenario) -> dict[str, PublicUrl]:
     if scenario.metrics and env.is_set("NEOPS_GRAFANA_URL"):
         keys.append("NEOPS_GRAFANA_URL")
     return {key: PublicUrl.parse(env.require(key)) for key in keys}
+
+
+class MonitorPlacement(Enum):
+    """Where the monitor app sits relative to the web client.
+
+    On the web client's origin it lives under a path (MONITOR_BASE_PATH, stripped by the
+    proxy); on the web hostname with another port it is shared-host mode's own entrypoint,
+    published as NEOPS_MONITOR_PORT; otherwise it has a hostname of its own.
+    """
+
+    WEB_PATH = "the web client's origin plus a path"
+    WEB_PORT = "the web hostname on NEOPS_MONITOR_PORT"
+    OWN_HOST = "a hostname of its own"
+
+
+def monitor_placement(urls: dict[str, PublicUrl]) -> MonitorPlacement:
+    web, workflows = urls["NEOPS_WEB_URL"], urls["NEOPS_WORKFLOWS_URL"]
+    if workflows.same_origin(web):
+        return MonitorPlacement.WEB_PATH
+    if workflows.host == web.host:
+        return MonitorPlacement.WEB_PORT
+    return MonitorPlacement.OWN_HOST
+
+
+def monitor_entrypoint_wanted(urls: dict[str, PublicUrl], scenario: Scenario) -> bool:
+    """Whether Traefik gets its `monitor` entrypoint and compose publishes NEOPS_MONITOR_PORT:
+    one answer for the rendered static config, the compose fragment and the port preflight."""
+    return scenario.shared_host and monitor_placement(urls) is MonitorPlacement.WEB_PORT

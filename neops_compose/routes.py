@@ -15,7 +15,9 @@ a trailing slash; Traefik's Path/PathPrefix matchers do neither. traefik_model
 therefore joins these fragments (each relative, no leading slash) into a single
 case-insensitive, slash-tolerant PathRegexp rather than matching each verbatim.
 
-WEB_RESERVED_PATHS: paths the web client SPA owns on its origin.
+WEB_RESERVED_PATHS: paths the web client SPA owns on its origin: its auth routes and
+the /monitor route that embeds the workflow manager (routeMonitor in
+neops-web-client src/app/app-routing/routing-keys.ts).
 """
 
 CORE_PREFIXES: tuple[str, ...] = (
@@ -38,4 +40,4 @@ ENGINE_PUBLIC_WORKER_ROUTES: tuple[str, ...] = (
     "function-blocks/register",
 )
 
-WEB_RESERVED_PATHS: tuple[str, ...] = ("/auth", "/login")
+WEB_RESERVED_PATHS: tuple[str, ...] = ("/auth", "/login", "/monitor")

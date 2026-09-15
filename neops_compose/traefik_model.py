@@ -4,10 +4,10 @@ import re
 from dataclasses import dataclass
 
 from neops_compose.env import Env
-from neops_compose.ports import DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT, MONITOR_CONTAINER_PORT
+from neops_compose.ports import DEFAULT_HTTPS_PORT, MONITOR_CONTAINER_PORT
 from neops_compose.routes import CORE_PREFIXES, ENGINE_PUBLIC_WORKER_ROUTES
 from neops_compose.scenario import Scenario
-from neops_compose.urls import PublicUrl, public_urls
+from neops_compose.urls import PublicUrl, monitor_entrypoint_wanted, public_urls
 
 SERVICE_URLS = {
     "web": "http://web:8080",
@@ -73,32 +73,45 @@ class _Layout:
     urls: dict[str, PublicUrl]
     scenario: Scenario
     secure: bool
-    monitor_port: int
+    monitor_entrypoint: bool
 
-    def entrypoint_for(self, url: PublicUrl) -> str:
-        web = self.urls["NEOPS_WEB_URL"]
-        if self.scenario.shared_host and url.port == self.monitor_port and url.host == web.host:
-            return "monitor"
+    @property
+    def entrypoint(self) -> str:
         return "websecure" if self.secure else "web"
 
     def router(
-        self, name: str, url: PublicUrl, service: str, priority: int, rule: str = "", mws: tuple = ()
+        self,
+        name: str,
+        url: PublicUrl,
+        service: str,
+        priority: int,
+        rule: str = "",
+        mws: tuple = (),
+        entrypoint: str = "",
     ) -> Router:
         return Router(
-            name, rule or _host_rule(url), self.entrypoint_for(url), service, priority, mws, self.secure
+            name, rule or _host_rule(url), entrypoint or self.entrypoint, service, priority, mws, self.secure
         )
 
 
-def _entrypoints(scenario: Scenario, secure: bool, https_port: int) -> list[EntryPoint]:
+def _entrypoints(secure: bool, https_port: int, monitor: bool) -> list[EntryPoint]:
     # Traefik's redirection "to" field has no separate "port" sibling: reference the
     # websecure entrypoint by name at the default port, or target the port directly.
     redirect_to = "websecure" if https_port == DEFAULT_HTTPS_PORT else f":{https_port}"
     entrypoints = [EntryPoint("web", ":80", redirect_to if secure else None)]
     if secure:
         entrypoints.append(EntryPoint("websecure", ":443"))
-    if scenario.shared_host:
+    if monitor:
         entrypoints.append(EntryPoint("monitor", f":{MONITOR_CONTAINER_PORT}"))
     return entrypoints
+
+
+def _strip_prefix(name: str, url: PublicUrl) -> tuple[dict[str, dict], tuple[str, ...]]:
+    """A service published under a path prefix serves from its root: the prefix is stripped
+    on the way in. Nothing to strip for a URL without a path."""
+    if not url.path:
+        return {}, ()
+    return {f"{name}-strip": {"stripPrefix": {"prefixes": [url.path]}}}, (f"{name}-strip",)
 
 
 def _cms_routers(layout: _Layout) -> list[Router]:
@@ -124,11 +137,8 @@ def _engine_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
     """Two routers for one service: the ordinary one, and a higher-priority one whose only
     job is to answer 403 on the worker routes, which must never be reachable from outside."""
     engine = layout.urls["NEOPS_ENGINE_URL"]
-    middlewares: dict[str, dict] = {DENY_MIDDLEWARE: {"ipAllowList": {"sourceRange": [DENY_RANGE]}}}
-    engine_mws: tuple[str, ...] = ()
-    if engine.path:
-        middlewares["engine-strip"] = {"stripPrefix": {"prefixes": [engine.path]}}
-        engine_mws = ("engine-strip",)
+    middlewares, engine_mws = _strip_prefix("engine", engine)
+    middlewares[DENY_MIDDLEWARE] = {"ipAllowList": {"sourceRange": [DENY_RANGE]}}
     return [
         layout.router("engine", engine, "engine", 10, mws=engine_mws),
         layout.router(
@@ -142,14 +152,25 @@ def _engine_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
     ], middlewares
 
 
+def _monitor_router(layout: _Layout) -> tuple[Router, dict[str, dict]]:
+    """On its own entrypoint the monitor owns the whole port; under a path of the web
+    client's origin it is routed like the engine, prefix stripped, above the web catch-all."""
+    monitor = layout.urls["NEOPS_WORKFLOWS_URL"]
+    middlewares, mws = _strip_prefix("monitor", monitor)
+    entrypoint = "monitor" if layout.monitor_entrypoint else ""
+    return layout.router("monitor", monitor, "monitor", 10, mws=mws, entrypoint=entrypoint), middlewares
+
+
 def _core_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
     """The four services every scenario has."""
     engine, middlewares = _engine_routers(layout)
+    monitor, monitor_middlewares = _monitor_router(layout)
+    middlewares.update(monitor_middlewares)
     return [
         layout.router("web", layout.urls["NEOPS_WEB_URL"], "web", 1),
         *_cms_routers(layout),
         *engine,
-        layout.router("monitor", layout.urls["NEOPS_WORKFLOWS_URL"], "monitor", 10),
+        monitor,
     ], middlewares
 
 
@@ -163,17 +184,18 @@ def _service_routers(layout: _Layout) -> list[Router]:
 
 def build_traefik(env: Env, scenario: Scenario) -> TraefikConfig:
     tls = scenario.tls
+    urls = public_urls(env, scenario)
     layout = _Layout(
-        urls=public_urls(env, scenario),
+        urls=urls,
         scenario=scenario,
         secure=tls is not None,
-        monitor_port=int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT))),
+        monitor_entrypoint=monitor_entrypoint_wanted(urls, scenario),
     )
     routers, middlewares = _core_routers(layout)
     routers += _service_routers(layout)
     https_port = int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)))
     return TraefikConfig(
-        entrypoints=tuple(_entrypoints(scenario, layout.secure, https_port)),
+        entrypoints=tuple(_entrypoints(layout.secure, https_port, layout.monitor_entrypoint)),
         routers=tuple(routers),
         services={name: SERVICE_URLS[name] for name in sorted({r.service for r in routers})},
         middlewares=dict(sorted(middlewares.items())),

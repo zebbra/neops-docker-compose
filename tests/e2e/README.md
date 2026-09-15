@@ -50,7 +50,7 @@ run at once on different bases and none of them collides with whatever already o
 |---|---|
 | base + 80 | Traefik HTTP, or the web client in expose mode |
 | base + 443 | Traefik HTTPS |
-| base + 444 | the monitor entrypoint in shared-host mode |
+| base + 444 | the monitor entrypoint in shared-host mode, when the monitor has its own port |
 | base + 180 | Keycloak's loopback port |
 | base + 300 | Grafana's loopback port |
 | base + 0 / 30 / 31 | CMS, engine and monitor in expose mode |

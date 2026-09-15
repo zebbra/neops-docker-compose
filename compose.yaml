@@ -257,6 +257,9 @@ services:
     environment:
       ENGINE_BASE_URL: ${NEOPS_ENGINE_URL}
       WEBCLIENT_ORIGIN: ${NEOPS_WEB_URL}
+    env_file:
+      # MONITOR_BASE_PATH, the path of NEOPS_WORKFLOWS_URL, derived by ./neops render.
+      - ./generated/monitor.env
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/config.js >/dev/null || exit 1"]
       interval: 15s

@@ -1,8 +1,11 @@
 # Overlay: single public hostname. Core's URL prefixes are routed to the CMS on the web
-# client's hostname (rendered from NEOPS_CMS_URL == NEOPS_WEB_URL); the engine and Keycloak
-# live under path prefixes; the monitor app gets its own entrypoint so it stays a
-# distinct origin (NEOPS_WORKFLOWS_URL=https://<host>:<NEOPS_MONITOR_PORT>).
+# client's hostname (rendered from NEOPS_CMS_URL == NEOPS_WEB_URL) and the engine and Keycloak
+# live under path prefixes. The monitor app is either a path of the web client's origin too
+# (NEOPS_WORKFLOWS_URL=https://<host>/workflows) or its own entrypoint on another port
+# (https://<host>:<NEOPS_MONITOR_PORT>). Only the second form publishes a port, and a port
+# mapping cannot be conditional in compose, so ./neops render decides it in the extended file.
 services:
   traefik:
-    ports:
-      - "${NEOPS_MONITOR_PORT:-8443}:8443"
+    extends:
+      file: ./generated/traefik/ports.yaml
+      service: traefik

@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT
 from neops_compose.routes import CORE_PREFIXES, WEB_RESERVED_PATHS
 from neops_compose.scenario import BASE_FILE, OVERLAYS, Scenario
-from neops_compose.urls import BASE_URLS, BadUrl, PublicUrl
+from neops_compose.urls import (
+    BASE_URLS,
+    BadUrl,
+    MonitorPlacement,
+    PublicUrl,
+    monitor_entrypoint_wanted,
+    monitor_placement,
+)
 
 PLACEHOLDERS = {"changeme", "change_me", "unsafe", "password", "secret", "xxx"}
 BASE_SECRETS = (
@@ -36,6 +44,13 @@ ALL_SECRET_KEYS = (
     BASE_SECRETS + KEYCLOAK_SECRETS + ("NEOPS_OIDC_CLIENT_ID", OIDC_CLIENT_SECRET, GRAFANA_ADMIN_PASSWORD)
 )
 GENERATED_MIN_LENGTH = 16
+# The URLs that may carry a path prefix. NEOPS_CMS_URL never does (see _cms_rules).
+PREFIXED_URLS = ("NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL", "NEOPS_KEYCLOAK_URL", "NEOPS_GRAFANA_URL")
+MONITOR_SAME_ORIGIN_WHY = (
+    " (for example /workflows): the web client treats a bare copy of its own origin as no "
+    "workflow manager at all, and only relays its session to a monitor on another origin; "
+    "under a path of its origin the monitor reads the session from local storage instead"
+)
 
 
 def generated_secrets(scenario: Scenario) -> tuple[str, ...]:
@@ -52,6 +67,20 @@ def generated_secrets(scenario: Scenario) -> tuple[str, ...]:
 
 class BadPorts(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class _Ports:
+    http: int
+    https: int
+    monitor: int
+    monitor_declared: bool
+
+    def public(self, scenario: Scenario) -> tuple[str, int]:
+        """The one port every URL uses behind Traefik, and the .env key that sets it."""
+        if scenario.tls:
+            return "NEOPS_HTTPS_PORT", self.https
+        return "NEOPS_HTTP_PORT", self.http
 
 
 def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
@@ -92,7 +121,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
         except BadPorts as exc:
             out.append(str(exc))
         else:
-            out += _url_rules(urls, scenario, *ports)
+            out += _url_rules(urls, scenario, ports)
     return out
 
 
@@ -157,25 +186,20 @@ def _parse_urls(env: Env, keys: tuple[str, ...]) -> tuple[dict[str, PublicUrl], 
     return urls, out
 
 
-def _ports(env: Env) -> tuple[int, int, int]:
+def _ports(env: Env) -> _Ports:
     try:
-        http_port = int(env.get("NEOPS_HTTP_PORT", str(DEFAULT_HTTP_PORT)))
-        https_port = int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)))
-        monitor_port = int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT)))
+        return _Ports(
+            http=int(env.get("NEOPS_HTTP_PORT", str(DEFAULT_HTTP_PORT))),
+            https=int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT))),
+            monitor=int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT))),
+            monitor_declared=env.is_set("NEOPS_MONITOR_PORT"),
+        )
     except ValueError:
         raise BadPorts("NEOPS_HTTP_PORT, NEOPS_HTTPS_PORT and NEOPS_MONITOR_PORT must be integers") from None
-    return http_port, https_port, monitor_port
 
 
-def _url_rules(
-    urls: dict[str, PublicUrl], scenario: Scenario, http_port: int, https_port: int, monitor_port: int
-) -> list[str]:
-    return (
-        _cms_rules(urls, scenario)
-        + _monitor_rules(urls)
-        + _path_rules(urls, scenario)
-        + _traefik_rules(urls, scenario, http_port, https_port, monitor_port)
-    )
+def _url_rules(urls: dict[str, PublicUrl], scenario: Scenario, ports: _Ports) -> list[str]:
+    return _cms_rules(urls, scenario) + _path_rules(urls, scenario) + _traefik_rules(urls, scenario, ports)
 
 
 def _cms_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
@@ -199,27 +223,24 @@ def _cms_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
     return out
 
 
-def _monitor_rules(urls: dict[str, PublicUrl]) -> list[str]:
-    web = urls["NEOPS_WEB_URL"]
-    out = []
-    if urls["NEOPS_WORKFLOWS_URL"].same_origin(web):
-        out.append(
-            "NEOPS_WORKFLOWS_URL must be a different origin (host or port) than NEOPS_WEB_URL: "
-            "the web client disables the workflow manager on the same origin"
-        )
-    return out
+def _under(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix + "/")
 
 
 def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
     web = urls["NEOPS_WEB_URL"]
     out = []
     reserved = CORE_PREFIXES + WEB_RESERVED_PATHS
-    for key in ("NEOPS_ENGINE_URL", "NEOPS_KEYCLOAK_URL", "NEOPS_GRAFANA_URL"):
+    for key in PREFIXED_URLS:
         u = urls.get(key)
-        if u and u.path and any(u.path == r or u.path.startswith(r + "/") for r in reserved):
+        if u is None:
+            continue
+        if u.path and any(_under(u.path, r) for r in reserved):
             out.append(f"{key} path {u.path} is reserved by core or the web client")
-        if u and u.same_origin(web) and not u.path:
-            out.append(f"{key} shares the web client's origin and needs a path prefix")
+        if u.same_origin(web) and not u.path:
+            why = MONITOR_SAME_ORIGIN_WHY if key == "NEOPS_WORKFLOWS_URL" else ""
+            out.append(f"{key} shares the web client's origin and needs a path prefix{why}")
+    out += _prefix_collisions(urls)
     if scenario.proxy == "traefik" and not scenario.shared_host:
         for key, u in urls.items():
             if key == "NEOPS_CMS_URL":
@@ -232,9 +253,19 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
     return out
 
 
-def _traefik_rules(
-    urls: dict[str, PublicUrl], scenario: Scenario, http_port: int, https_port: int, monitor_port: int
-) -> list[str]:
+def _prefix_collisions(urls: dict[str, PublicUrl]) -> list[str]:
+    """Two services on one origin need prefixes that neither contains the other's, or the
+    router with the longer rule takes the other one's requests."""
+    prefixed = [(key, urls[key]) for key in PREFIXED_URLS if key in urls and urls[key].path]
+    out = []
+    for i, (a_key, a) in enumerate(prefixed):
+        for b_key, b in prefixed[i + 1 :]:
+            if a.same_origin(b) and (_under(a.path, b.path) or _under(b.path, a.path)):
+                out.append(f"{a_key} ({a.path}) and {b_key} ({b.path}) overlap on {a.origin}")
+    return out
+
+
+def _traefik_rules(urls: dict[str, PublicUrl], scenario: Scenario, ports: _Ports) -> list[str]:
     out: list[str] = []
     if scenario.proxy != "traefik":
         return out
@@ -245,33 +276,38 @@ def _traefik_rules(
                 f"{key} must use {expected_scheme}:// with this COMPOSE_FILE "
                 f"(TLS overlay {'present' if scenario.tls else 'absent'})"
             )
-
-    web = urls["NEOPS_WEB_URL"]
-
-    if scenario.shared_host:
-        conflict_port = https_port if scenario.tls else http_port
-        conflict_key = "NEOPS_HTTPS_PORT" if scenario.tls else "NEOPS_HTTP_PORT"
-        if monitor_port == conflict_port:
-            out.append(
-                f"NEOPS_MONITOR_PORT must differ from {conflict_key} in shared-host mode "
-                f"({monitor_port}): otherwise Traefik cannot tell the monitor URL apart "
-                "from the other shared-host routes on the same port"
-            )
-
-    def is_monitor_entrypoint(u: PublicUrl) -> bool:
-        return scenario.shared_host and u.host == web.host and u.port == monitor_port
-
-    expected_port = https_port if scenario.tls else http_port
-    port_key = "NEOPS_HTTPS_PORT" if scenario.tls else "NEOPS_HTTP_PORT"
+    port_key, expected_port = ports.public(scenario)
+    own_entrypoint = monitor_entrypoint_wanted(urls, scenario)
     for key, u in urls.items():
-        if is_monitor_entrypoint(u):
+        if key == "NEOPS_WORKFLOWS_URL" and own_entrypoint:
             continue
         if u.port != expected_port:
             out.append(f"{key} must use port {port_key} ({expected_port})")
-
-    wf = urls["NEOPS_WORKFLOWS_URL"]
-    if scenario.shared_host and wf.host == web.host and wf.port != monitor_port:
-        out.append(
-            f"NEOPS_WORKFLOWS_URL on the web hostname must use port NEOPS_MONITOR_PORT ({monitor_port})"
-        )
+    if scenario.shared_host:
+        out += _monitor_port_rules(urls, scenario, ports)
     return out
+
+
+def _monitor_port_rules(urls: dict[str, PublicUrl], scenario: Scenario, ports: _Ports) -> list[str]:
+    """Shared-host mode: the monitor on the web hostname is either its own entrypoint on
+    NEOPS_MONITOR_PORT or a path on the web client's origin, which publishes no port."""
+    placement = monitor_placement(urls)
+    port_key, public = ports.public(scenario)
+    if placement is MonitorPlacement.WEB_PORT:
+        if ports.monitor == public:
+            return [
+                f"NEOPS_MONITOR_PORT must differ from {port_key} in shared-host mode "
+                f"({ports.monitor}): otherwise Traefik cannot tell the monitor URL apart "
+                "from the other shared-host routes on the same port"
+            ]
+        if urls["NEOPS_WORKFLOWS_URL"].port != ports.monitor:
+            return [
+                "NEOPS_WORKFLOWS_URL on the web hostname must use port NEOPS_MONITOR_PORT "
+                f"({ports.monitor}), or be the web client's origin plus a path"
+            ]
+    elif ports.monitor_declared:
+        return [
+            f"NEOPS_MONITOR_PORT is set, but NEOPS_WORKFLOWS_URL is {placement.value}, "
+            "which publishes no monitor port: remove NEOPS_MONITOR_PORT"
+        ]
+    return []

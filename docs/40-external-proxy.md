@@ -19,8 +19,11 @@ own reverse proxy at them:
 | Keycloak, if used | 8180 | `NEOPS_KEYCLOAK_PORT` |
 | Grafana, if used | 3000 | `NEOPS_GRAFANA_PORT` |
 
-Route each `NEOPS_*_URL` hostname to the matching port. Whatever proxy you use, it must satisfy
-four rules or the deployment misbehaves in ways that are easy to misdiagnose.
+Route each `NEOPS_*_URL` hostname to the matching port. If a URL carries a path (the engine or
+the monitor under a prefix of the web client's hostname), route that prefix to the port and strip
+it before forwarding; the monitor learns its prefix from `NEOPS_WORKFLOWS_URL` on its own.
+Whatever proxy you use, it must satisfy four rules or the deployment misbehaves in ways that are
+easy to misdiagnose.
 
 ## 1. Overwrite `X-Forwarded-Proto` and `X-Real-IP`
 

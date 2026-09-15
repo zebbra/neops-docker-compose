@@ -29,7 +29,7 @@ from neops_compose.backup import ARCHIVE_NAME  # noqa: E402
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import NAME_WIDTH, Http, login  # noqa: E402
 from neops_compose.scenario import OVERRIDE_FILE, Scenario  # noqa: E402
-from neops_compose.urls import PublicUrl  # noqa: E402
+from neops_compose.urls import MonitorPlacement, PublicUrl, monitor_placement  # noqa: E402
 
 EXAMPLE_DOMAIN = "neops.example.com"
 TEST_DOMAIN = "neops.localhost"
@@ -181,13 +181,19 @@ def apply_traefik_ports(values: dict[str, str], scenario: Scenario, ports: Ports
     for key in URL_KEYS:
         if key in values:
             values[key] = _at(values[key], scheme, public)
-    if scenario.shared_host:
+    if scenario.shared_host and _monitor_has_own_port(values):
         values["NEOPS_MONITOR_PORT"] = str(ports.monitor)
         values["NEOPS_WORKFLOWS_URL"] = _at(values["NEOPS_WORKFLOWS_URL"], scheme, ports.monitor)
     if scenario.keycloak:
         values["NEOPS_KEYCLOAK_PORT"] = str(ports.keycloak)
     if scenario.metrics:
         values["NEOPS_GRAFANA_PORT"] = str(ports.grafana)
+
+
+def _monitor_has_own_port(values: dict[str, str]) -> bool:
+    """The rewrite above put every URL on the public port, so the port form of the shared-host
+    example now reads as the web origin: the example's own NEOPS_MONITOR_PORT tells them apart."""
+    return "NEOPS_MONITOR_PORT" in values
 
 
 def use_self_signed_tls(values: dict[str, str], scenario: Scenario) -> None:
@@ -418,6 +424,31 @@ def assert_shared_host_routing(report: Report, values: dict[str, str], http: Htt
     report.add(status == 200, f"core static files are served under /djstatic/ ({status})")
     status, _ = http.request(engine, "/health")
     report.add(status == 200, f"the engine answers under {engine.path}/health ({status})")
+    assert_monitor_routing(report, values, http)
+
+
+def assert_monitor_routing(report: Report, values: dict[str, str], http: Http) -> None:
+    """Under a path of the web origin the monitor's HTML must reference its assets under
+    that prefix, or the browser fetches them from the web client's catch-all instead."""
+    monitor = PublicUrl.parse(values["NEOPS_WORKFLOWS_URL"])
+    web = PublicUrl.parse(values["NEOPS_WEB_URL"])
+    status, html = http.request(monitor, "/")
+    report.add(
+        status == 200 and "<html" in html.lower(), f"the monitor index answers under {monitor} ({status})"
+    )
+    if (
+        monitor_placement({"NEOPS_WEB_URL": web, "NEOPS_WORKFLOWS_URL": monitor})
+        is not MonitorPlacement.WEB_PATH
+    ):
+        return
+    status, config = http.request(monitor, "/config.js")
+    report.add(
+        status == 200 and f'basePath: "{monitor.path}"' in config,
+        f"the monitor config under {monitor} carries basePath {monitor.path!r} ({status})",
+    )
+    report.add(
+        f'src="{monitor.path}/config.js"' in html, f"the monitor HTML loads config.js under {monitor.path}"
+    )
 
 
 def assert_metrics_containers(report: Report, clone: Path) -> None:

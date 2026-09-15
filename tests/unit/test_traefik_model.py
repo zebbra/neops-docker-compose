@@ -106,6 +106,33 @@ def test_worker_deny_rule_honours_the_engine_path_prefix():
     assert not pattern.match("/workers/register")
 
 
+SHARED_PATHS = SHARED.replace("https://neops.example.com:8443", "https://neops.example.com/workflows")
+
+
+def test_shared_host_monitor_under_a_path_rides_the_public_entrypoint(tmp_path):
+    """The path form has no monitor entrypoint at all: the monitor is routed like the engine,
+    prefix stripped, above the web client's catch-all."""
+    c = cfg(tmp_path, SHARED_PATHS)
+    r = by_name(c)
+    assert r["monitor"].rule == "Host(`neops.example.com`) && PathPrefix(`/workflows`)"
+    assert r["monitor"].entrypoint == "websecure" and r["monitor"].tls
+    assert r["monitor"].priority > r["web"].priority
+    assert r["monitor"].middlewares == ("monitor-strip",)
+    assert c.middlewares["monitor-strip"] == {"stripPrefix": {"prefixes": ["/workflows"]}}
+    assert [e.name for e in c.entrypoints] == ["web", "websecure"]
+    assert c.services["monitor"] == "http://monitor:80"
+
+
+def test_shared_host_monitor_on_its_own_hostname_has_no_monitor_entrypoint(tmp_path):
+    c = cfg(tmp_path, SHARED.replace("https://neops.example.com:8443", "https://workflows.neops.example.com"))
+    r = by_name(c)
+    assert (
+        r["monitor"].rule == "Host(`workflows.neops.example.com`)" and r["monitor"].entrypoint == "websecure"
+    )
+    assert r["monitor"].middlewares == ()
+    assert [e.name for e in c.entrypoints] == ["web", "websecure"]
+
+
 SHARED_NO_TLS = """
 COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.traefik-shared-host.yaml
 NEOPS_WEB_URL=http://neops.example.com

@@ -114,16 +114,18 @@ echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-neops.conf
 
 ### Monitor app blank (same origin)
 
-The disabling logic lives in the web client, not the monitor app. The web client derives the
-monitor's origin from `NEOPS_WORKFLOWS_URL` and treats it as "no monitor configured" whenever that
-origin equals its own: the `/monitor` route stops existing, the header entry stops appearing, and
-the postMessage relay that hands the monitor its session token never runs. The monitor app itself
-never sees a token in that case and falls back to its own no-session screen, blank in practice.
-This is why `./neops check` refuses an `.env` where `NEOPS_WORKFLOWS_URL` and `NEOPS_WEB_URL` share
-a host and port: the rule exists specifically to catch this before the deployment starts. If you
-see a blank monitor page anyway, check that `NEOPS_WORKFLOWS_URL` still resolves to something other
-than the web client (an `.env` edit made outside `check`'s reach, or a proxy accidentally routing
-both hostnames to the same place).
+The disabling logic lives in the web client, not the monitor app. The web client reads
+`NEOPS_WORKFLOWS_URL` and treats a URL that is exactly its own origin, with no path, as "no
+monitor configured": the `/monitor` route stops existing and the header entry stops appearing.
+With the monitor on another origin the web client hands it the session token over a postMessage
+relay; under a path of the web client's own origin (`https://neops.example.com/workflows`) there
+is no relay, and the monitor reads the session from the browser's local storage, which the two
+share. This is why `./neops check` refuses an `.env` where `NEOPS_WORKFLOWS_URL` is the bare
+`NEOPS_WEB_URL`: the rule exists specifically to catch this before the deployment starts. If you
+see a blank monitor page anyway, check that `NEOPS_WORKFLOWS_URL` still carries its path, port or
+hostname (an `.env` edit made outside `check`'s reach, or a proxy accidentally routing both
+hostnames to the same place), and that `generated/monitor.env` carries the same path as the URL
+(`./neops render` rewrites it).
 
 ### Keycloak `Invalid parameter: redirect_uri`
 

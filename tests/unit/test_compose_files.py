@@ -83,6 +83,7 @@ def test_no_interpolation_of_generated_only_keys():
         "KC_HTTP_RELATIVE_PATH",
         "SESSION_COOKIE_SECURE",
         "CSRF_COOKIE_SECURE",
+        "MONITOR_BASE_PATH",
     }
     for f in COMPOSE_FILES:
         for key in generated_only:
@@ -170,11 +171,17 @@ def _binding(mapping: str, env) -> tuple[str, int]:
     return address, int(fields[-2])
 
 
-def _published_ports(files: tuple[str, ...], env) -> list[tuple[str, int]]:
+def _published_ports(env, scenario) -> list[tuple[str, int]]:
+    """The tracked files' port mappings plus the fragment the shared-host overlay extends."""
+    from neops_compose.render import traefik_ports
+
+    docs = [load(REPO / name) for name in scenario.files]
+    if scenario.shared_host:
+        docs.append(traefik_ports(env, scenario))
     return sorted(
         _binding(mapping, env)
-        for name in files
-        for service in (load(REPO / name).get("services") or {}).values()
+        for doc in docs
+        for service in (doc.get("services") or {}).values()
         for mapping in service.get("ports") or []
     )
 
@@ -189,4 +196,13 @@ def test_the_merged_config_publishes_exactly_the_ports_preflight_reserves():
     for example in sorted(REPO.glob("examples/*.env")):
         env = Env(example)
         scenario = Scenario.from_env(env)
-        assert _published_ports(scenario.files, env) == sorted(required_ports(env, scenario)), example.name
+        assert _published_ports(env, scenario) == sorted(required_ports(env, scenario)), example.name
+
+
+def test_the_shared_host_overlay_extends_the_fragment_render_writes():
+    """The overlay names the file and render writes it: the two must agree or every
+    shared-host `docker compose config` fails with a missing file."""
+    from neops_compose.render import TRAEFIK_PORTS_FRAGMENT
+
+    traefik = load(REPO / "compose.traefik-shared-host.yaml")["services"]["traefik"]
+    assert traefik == {"extends": {"file": f"./generated/{TRAEFIK_PORTS_FRAGMENT}", "service": "traefik"}}

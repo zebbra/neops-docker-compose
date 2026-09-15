@@ -64,11 +64,91 @@ def test_shared_host_accepts_engine_path_and_distinct_monitor_origin(tmp_repo):
     assert problems(env, sc, tmp_repo) == []
 
 
-def test_monitor_must_not_share_web_origin(tmp_repo):
+SHARED_PATHS = (
+    GOOD.replace("compose.traefik.yaml:", "compose.traefik.yaml:compose.traefik-shared-host.yaml:")
+    .replace("https://cms.neops.example.com", "https://neops.example.com")
+    .replace("https://engine.neops.example.com", "https://neops.example.com/engine")
+    .replace("https://workflows.neops.example.com", "https://neops.example.com/workflows")
+)
+
+
+def test_shared_host_accepts_the_monitor_under_a_path_of_the_web_origin(tmp_repo):
+    env, sc = make(tmp_repo, SHARED_PATHS)
+    assert problems(env, sc, tmp_repo) == []
+
+
+def test_monitor_on_the_bare_web_origin_is_rejected_in_every_mode(tmp_repo):
+    for text in (
+        GOOD,
+        SHARED_PATHS,
+        GOOD.replace(
+            "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml",
+            "COMPOSE_FILE=compose.yaml:compose.expose.yaml",
+        ),
+    ):
+        env, sc = make(
+            tmp_repo,
+            text.replace("https://neops.example.com/workflows", "https://neops.example.com").replace(
+                "https://workflows.neops.example.com", "https://neops.example.com"
+            ),
+        )
+        out = problems(env, sc, tmp_repo)
+        assert any(
+            p.startswith("NEOPS_WORKFLOWS_URL shares the web client's origin and needs a path prefix")
+            and "local storage" in p
+            for p in out
+        ), out
+
+
+def test_monitor_path_in_hosts_mode_needs_the_shared_host_overlay(tmp_repo):
     env, sc = make(
         tmp_repo, GOOD.replace("https://workflows.neops.example.com", "https://neops.example.com/workflows")
     )
-    assert any("NEOPS_WORKFLOWS_URL" in p and "origin" in p for p in problems(env, sc, tmp_repo))
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_WORKFLOWS_URL" in p and "compose.traefik-shared-host.yaml" in p for p in out), out
+
+
+def test_shared_host_path_form_refuses_a_monitor_port(tmp_repo):
+    env, sc = make(tmp_repo, SHARED_PATHS + "NEOPS_MONITOR_PORT=8443\n")
+    out = problems(env, sc, tmp_repo)
+    assert out == [
+        "NEOPS_MONITOR_PORT is set, but NEOPS_WORKFLOWS_URL is the web client's origin plus a path, "
+        "which publishes no monitor port: remove NEOPS_MONITOR_PORT"
+    ]
+
+
+def test_shared_host_own_hostname_monitor_refuses_a_monitor_port(tmp_repo):
+    text = SHARED_PATHS.replace("https://neops.example.com/workflows", "https://workflows.neops.example.com")
+    env, sc = make(tmp_repo, text)
+    assert problems(env, sc, tmp_repo) == []
+    env, sc = make(tmp_repo, text + "NEOPS_MONITOR_PORT=8443\n")
+    assert any(
+        "a hostname of its own" in p and "remove NEOPS_MONITOR_PORT" in p for p in problems(env, sc, tmp_repo)
+    )
+
+
+@pytest.mark.parametrize("path", ["/graphql", "/admin/x", "/login", "/monitor", "/auth"])
+def test_monitor_path_must_not_collide_with_core_or_web_paths(tmp_repo, path):
+    env, sc = make(tmp_repo, SHARED_PATHS.replace("/workflows", path))
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_WORKFLOWS_URL" in p and "reserved" in p for p in out), out
+
+
+@pytest.mark.parametrize("path", ["/engine", "/engine/ui"])
+def test_monitor_path_must_not_overlap_the_engine_prefix(tmp_repo, path):
+    env, sc = make(tmp_repo, SHARED_PATHS.replace("/workflows", path))
+    out = problems(env, sc, tmp_repo)
+    assert out == [
+        f"NEOPS_ENGINE_URL (/engine) and NEOPS_WORKFLOWS_URL ({path}) overlap on https://neops.example.com"
+    ]
+
+
+def test_prefixes_on_different_origins_never_overlap(tmp_repo):
+    text = SHARED_PATHS.replace(
+        "https://neops.example.com/workflows", "https://neops.example.com:8443/engine"
+    )
+    env, sc = make(tmp_repo, text + "NEOPS_MONITOR_PORT=8443\n")
+    assert problems(env, sc, tmp_repo) == []
 
 
 def test_engine_path_must_not_collide_with_core_or_web_paths(tmp_repo):
@@ -257,6 +337,7 @@ def test_shared_host_monitor_port_must_differ_from_https_port(tmp_repo):
         GOOD.replace("compose.traefik.yaml:", "compose.traefik.yaml:compose.traefik-shared-host.yaml:")
         .replace("https://cms.neops.example.com", "https://neops.example.com")
         .replace("https://engine.neops.example.com", "https://neops.example.com/engine")
+        .replace("https://workflows.neops.example.com", "https://neops.example.com:8443")
         + "NEOPS_MONITOR_PORT=443\n"
     )
     env, sc = make(tmp_repo, text)
@@ -274,6 +355,7 @@ def test_shared_host_monitor_port_must_differ_from_http_port_without_tls(tmp_rep
         text.replace("https://", "http://")
         .replace("http://cms.neops.example.com", "http://neops.example.com")
         .replace("http://engine.neops.example.com", "http://neops.example.com/engine")
+        .replace("http://workflows.neops.example.com", "http://neops.example.com:8443")
         + "NEOPS_MONITOR_PORT=80\n"
     )
     env, sc = make(tmp_repo, text)

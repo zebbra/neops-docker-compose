@@ -39,6 +39,10 @@ NEOPS_ENGINE_URL=https://neops.example.com/engine
 NEOPS_WORKFLOWS_URL=https://neops.example.com:8443
 """
 EXPOSE_HTTP = EXPOSE_SHARED.replace("https://", "http://")
+SHARED_PORT = EXPOSE_SHARED.replace(
+    "compose.expose.yaml", "compose.traefik.yaml:compose.traefik-shared-host.yaml:compose.tls-files.yaml"
+)
+SHARED_PATHS = SHARED_PORT.replace("https://neops.example.com:8443", "https://neops.example.com/workflows")
 
 
 def run(tmp_repo, text):
@@ -132,6 +136,28 @@ def test_external_oidc_provider_can_trust_an_unverified_email(tmp_repo):
         "server_url": "https://login.example.com/.well-known/openid-configuration",
         "trust_email_without_verification": True,
     }
+
+
+def test_monitor_env_carries_the_path_of_the_workflows_url(tmp_repo):
+    _, paths = run(tmp_repo, HOSTS)
+    assert envfile(paths.generated / "monitor.env") == {"MONITOR_BASE_PATH": ""}
+    _, paths = run(tmp_repo, SHARED_PATHS)
+    assert envfile(paths.generated / "monitor.env") == {"MONITOR_BASE_PATH": "/workflows"}
+
+
+def test_traefik_ports_fragment_publishes_the_monitor_port_only_for_its_own_entrypoint(tmp_repo):
+    _, paths = run(tmp_repo, SHARED_PORT + "NEOPS_MONITOR_PORT=9443\n")
+    fragment = paths.generated / "traefik" / "ports.yaml"
+    assert yaml.safe_load(fragment.read_text()) == {"services": {"traefik": {"ports": ["9443:8443"]}}}
+    _, paths = run(tmp_repo, SHARED_PORT)
+    assert yaml.safe_load(fragment.read_text()) == {"services": {"traefik": {"ports": ["8443:8443"]}}}
+    _, paths = run(tmp_repo, SHARED_PATHS)
+    assert yaml.safe_load(fragment.read_text()) == {"services": {"traefik": {}}}
+
+
+def test_traefik_ports_fragment_exists_only_with_the_shared_host_overlay(tmp_repo):
+    _, paths = run(tmp_repo, HOSTS)
+    assert not (paths.generated / "traefik" / "ports.yaml").exists()
 
 
 def test_keycloak_realm_and_providers(tmp_repo):

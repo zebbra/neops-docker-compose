@@ -50,6 +50,35 @@ def test_required_ports_by_scenario(tmp_path):
     ]
 
 
+SHARED = (
+    "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.traefik-shared-host.yaml:compose.tls-files.yaml\n"
+    "NEOPS_WEB_URL=https://neops.example.com\n"
+    "NEOPS_CMS_URL=https://neops.example.com\n"
+    "NEOPS_ENGINE_URL=https://neops.example.com/engine\n"
+)
+
+
+@pytest.mark.parametrize(
+    "workflows_url,reserved",
+    [
+        ("https://neops.example.com:8443", True),
+        ("https://neops.example.com/workflows", False),
+        ("https://workflows.neops.example.com", False),
+    ],
+)
+def test_the_monitor_port_is_reserved_only_for_a_monitor_on_its_own_entrypoint(
+    tmp_path, workflows_url, reserved
+):
+    ports = ports_for(tmp_path, SHARED + f"NEOPS_WORKFLOWS_URL={workflows_url}\n")
+    assert (("0.0.0.0", 8443) in ports) is reserved
+
+
+def test_a_rejected_workflows_url_still_reserves_the_monitor_port(tmp_path):
+    """The .env check reports the URL; the port check reports a collision on top, if any."""
+    ports = ports_for(tmp_path, SHARED + "NEOPS_WORKFLOWS_URL=not a url\n")
+    assert ("0.0.0.0", 8443) in ports
+
+
 def test_the_keycloak_and_grafana_loopback_ports_are_reserved_in_both_proxy_modes(tmp_path):
     """Both overlays publish their port unconditionally, so Traefik in front of them changes
     nothing: an unreserved port is a collision the operator was never warned about."""

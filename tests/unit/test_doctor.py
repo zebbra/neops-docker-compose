@@ -69,6 +69,19 @@ def test_http_probes_hosts_mode():
     assert ("https://engine.neops.example.com/blackboard/job", "POST", {}) in http.calls
 
 
+def test_the_monitor_config_probe_asks_under_the_monitor_path():
+    """Under a path of the web client's origin, config.js lives under that prefix too."""
+    shared = urls() | {
+        "NEOPS_WEB_URL": PublicUrl.parse("https://neops.example.com"),
+        "NEOPS_CMS_URL": PublicUrl.parse("https://neops.example.com"),
+        "NEOPS_WORKFLOWS_URL": PublicUrl.parse("https://neops.example.com/workflows"),
+    }
+    http = healthy()
+    probes = doctor.http_probes(shared, http)
+    assert [p for p in probes if p.name == "monitor config"][0].ok
+    assert ("https://neops.example.com/workflows/config.js", "GET", {}) in http.calls
+
+
 def deny_probe_of(probes: list[doctor.Probe]) -> doctor.Probe:
     return [p for p in probes if p.name == "engine worker API denied"][0]
 

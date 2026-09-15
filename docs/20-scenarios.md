@@ -18,7 +18,7 @@ COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml
 |---|---|---|
 | external proxy | `compose.expose.yaml` | publishes each service on `127.0.0.1:<port>` for a reverse proxy you run |
 | Traefik | `compose.traefik.yaml` | a bundled Traefik that terminates TLS and routes by hostname |
-| shared hostname | `compose.traefik-shared-host.yaml` | routes the CMS and the monitor on the web client's own hostname instead of separate ones (needs Traefik) |
+| shared hostname | `compose.traefik-shared-host.yaml` | routes the CMS, the engine and the monitor on the web client's own hostname instead of separate ones (needs Traefik) |
 | TLS from files | `compose.tls-files.yaml` | your certificate, or a self-signed one minted by `./neops keys` (needs Traefik) |
 | TLS from Let's Encrypt | `compose.tls-acme.yaml` | HTTP-01 certificates (needs Traefik) |
 | OIDC | `compose.oidc.yaml` | login through an external identity provider; disables local password login |
@@ -98,23 +98,37 @@ either leaves loopback the warning is back. Put a proxy in front and switch to
 NEOPS_WEB_URL=https://neops.example.com
 NEOPS_CMS_URL=https://neops.example.com                # same origin as the web client, no path
 NEOPS_ENGINE_URL=https://neops.example.com/engine
-NEOPS_WORKFLOWS_URL=https://neops.example.com:8443     # distinct origin; port = NEOPS_MONITOR_PORT
+NEOPS_WORKFLOWS_URL=https://neops.example.com/workflows   # or https://neops.example.com:8443, see below
 NEOPS_KEYCLOAK_URL=https://neops.example.com/sso       # any path that is not a core or web-client prefix
 NEOPS_GRAFANA_URL=https://neops.example.com/grafana
 ```
 
-One certificate, one DNS record. `NEOPS_CMS_URL` must equal `NEOPS_WEB_URL` exactly: core cannot
-be served under a path prefix (its static file URLs are absolute), so instead the CMS's own URL
-prefixes (`/graphql`, `/graphiql`, `/admin`, `/djstatic`, `/.well-known`, `/accounts`, the
-`/auth/oidc-*` routes and `/webhook`) are routed to it on the web client's hostname, unstripped.
-That list lives in `neops_compose/routes.py`; a core release that adds a new top-level URL prefix
-needs that file updated too. `NEOPS_WORKFLOWS_URL` (the monitor app) always needs a distinct
-origin from the web client. It is served on its own port, `NEOPS_MONITOR_PORT`, because the web
-client itself disables the workflow-manager link when the two origins match.
+One certificate, one DNS record, and with the monitor under a path, one port. `NEOPS_CMS_URL`
+must equal `NEOPS_WEB_URL` exactly: core cannot be served under a path prefix (its static file
+URLs are absolute), so instead the CMS's own URL prefixes (`/graphql`, `/graphiql`, `/admin`,
+`/djstatic`, `/.well-known`, `/accounts`, the `/auth/oidc-*` routes and `/webhook`) are routed
+to it on the web client's hostname, unstripped. That list lives in `neops_compose/routes.py`; a
+core release that adds a new top-level URL prefix needs that file updated too.
 
-Whichever mode you pick, `NEOPS_WORKFLOWS_URL` must never be the same origin as `NEOPS_WEB_URL`,
-and paths reserved by the web client's own SPA (`/auth`, `/login`) can't be reused by another
-service either.
+The engine and the monitor app are routed by path prefix, which Traefik strips before the
+request reaches them. The monitor is told its prefix (`MONITOR_BASE_PATH` in the generated
+`generated/monitor.env`, derived from `NEOPS_WORKFLOWS_URL`) so the HTML it serves carries it.
+Two shapes are valid for `NEOPS_WORKFLOWS_URL` here:
+
+| Shape | `.env` | Publishes |
+|---|---|---|
+| a path of the web client's origin | `NEOPS_WORKFLOWS_URL=https://neops.example.com/workflows`, no `NEOPS_MONITOR_PORT` | nothing beyond `NEOPS_HTTPS_PORT` (`examples/traefik-shared-host-paths.env`) |
+| the web hostname on its own port | `NEOPS_WORKFLOWS_URL=https://neops.example.com:8443` and `NEOPS_MONITOR_PORT=8443` | that port, as a second Traefik entrypoint (`examples/traefik-shared-host-tls-files.env`) |
+
+Setting `NEOPS_MONITOR_PORT` with the path shape is refused: nothing would listen on it.
+
+Whichever mode you pick, `NEOPS_WORKFLOWS_URL` must never be the bare origin of `NEOPS_WEB_URL`.
+The web client treats a workflow-manager URL equal to its own origin as "no workflow manager"
+and only relays its session token to a monitor on another origin; under a path of its own
+origin the monitor reads the session from the browser's local storage instead, which is why
+the path shape works and the bare one does not. Paths reserved by the web client's own SPA
+(`/auth`, `/login`, `/monitor`) can't be reused by another service, and two services on one
+origin need prefixes that do not contain each other.
 
 ## TLS
 
