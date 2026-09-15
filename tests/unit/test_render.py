@@ -94,6 +94,19 @@ def test_cms_env_https_scheme_leaves_secure_cookies_unset(tmp_repo):
     assert "CSRF_COOKIE_SECURE" not in cms
 
 
+def test_cms_env_carries_the_ratelimit_key_from_dotenv(tmp_repo):
+    """Only compose.traefik.yaml sets it on the services; behind an external proxy .env is
+    the only place an operator can set it, and doctor --probe-ratelimit is meaningless
+    unless it actually reaches core."""
+    _, paths = run(tmp_repo, EXPOSE_SHARED + "RATELIMIT_IP_META_KEY=HTTP_X_REAL_IP\n")
+    assert envfile(paths.generated / "cms.env")["RATELIMIT_IP_META_KEY"] == "HTTP_X_REAL_IP"
+
+
+def test_cms_env_omits_the_ratelimit_key_when_unset(tmp_repo):
+    _, paths = run(tmp_repo, EXPOSE_SHARED)
+    assert "RATELIMIT_IP_META_KEY" not in envfile(paths.generated / "cms.env")
+
+
 def test_external_oidc_providers(tmp_repo):
     _, paths = run(tmp_repo, EXTERNAL)
     doc = json.loads((paths.generated / "providers.json").read_text())

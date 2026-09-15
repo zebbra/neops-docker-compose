@@ -15,7 +15,9 @@ KEYCLOAK_CLIENT_ID = "neops-auth"
 KEYCLOAK_PROVIDER_ID = "keycloak"
 # Core reads these with a default that only applies when the variable is ABSENT:
 # an empty EMAIL_URL is an invalid email schema, not "use consolemail://".
-OPTIONAL_CORE_KEYS = ("SENTRY_DSN", "SENTRY_ENVIRONMENT", "EMAIL_URL")
+# RATELIMIT_IP_META_KEY only means something behind a proxy that overwrites the header,
+# so it stays the operator's call in .env; compose.traefik.yaml sets it for its own proxy.
+OPTIONAL_CORE_KEYS = ("SENTRY_DSN", "SENTRY_ENVIRONMENT", "EMAIL_URL", "RATELIMIT_IP_META_KEY")
 
 
 class MissingSecret(Exception):
