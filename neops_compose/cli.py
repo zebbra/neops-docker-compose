@@ -203,9 +203,8 @@ def _render_diff(ctx: Ctx) -> None:
         }
     for path in sorted(set(before) | set(after)):
         a, b = before.get(path, "").splitlines(), after.get(path, "").splitlines()
-        diff = difflib.unified_diff(
-            a, b, f"generated/{path.name} (current)", f"generated/{path.name} (rendered)", lineterm=""
-        )
+        name = path.relative_to(ctx.repo)
+        diff = difflib.unified_diff(a, b, f"{name} (current)", f"{name} (rendered)", lineterm="")
         for line in diff:
             print(line)
 
