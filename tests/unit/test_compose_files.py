@@ -106,3 +106,15 @@ def test_no_healthcheck_addresses_localhost():
             if not test:
                 continue
             assert "localhost" not in " ".join(test), f"{f.name}: {name} healthcheck uses localhost"
+
+
+def test_every_publicly_routed_service_has_a_healthcheck():
+    """`up --wait` only waits for services that declare one, and doctor probes these
+    through Traefik the moment `up` returns: without a healthcheck it races the boot."""
+    from neops_compose.traefik_model import SERVICE_URLS
+
+    declared = {
+        name: service for f in COMPOSE_FILES for name, service in (load(f).get("services") or {}).items()
+    }
+    for name in SERVICE_URLS:
+        assert declared[name].get("healthcheck"), f"{name} is routed publicly but has no healthcheck"

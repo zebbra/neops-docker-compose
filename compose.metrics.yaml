@@ -61,6 +61,12 @@ services:
     volumes:
       - ./metrics/scrape_config.yml:/etc/victoriametrics/scrape_config.yml:ro
       - ${NEOPS_DATA_DIR:-./data}/metrics/victoria:/victoria-metrics-data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8428/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     logging: *logging
     restart: unless-stopped
 
@@ -76,7 +82,14 @@ services:
     volumes:
       - ./metrics/vmalert/rules:/etc/vmalert/rules:ro
     depends_on:
-      - victoriametrics
+      victoriametrics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8880/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     logging: *logging
     restart: unless-stopped
 
@@ -94,6 +107,15 @@ services:
     ports:
       - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_GRAFANA_PORT:-3000}:3000"
     depends_on:
-      - victoriametrics
+      victoriametrics:
+        condition: service_healthy
+    healthcheck:
+      # First boot runs the whole sqlite migration set and installs plugins before it listens,
+      # so without this `up --wait` returns early and doctor probes a closed port.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
     logging: *logging
     restart: unless-stopped
