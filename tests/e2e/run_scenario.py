@@ -414,6 +414,18 @@ def assert_worker(report: Report, clone: Path) -> None:
     )
 
 
+def assert_bare_admin_redirects(report: Report, values: dict[str, str], http: Http) -> None:
+    """Core answers the bare `/admin` with a 500 (neops-core #2276); the rendered Traefik
+    configuration must issue the slash redirect in its place, in both routing modes."""
+    cms = PublicUrl.parse(values["NEOPS_CMS_URL"])
+    status, headers, _ = http.fetch(cms, "/admin")
+    location = headers.get("Location", "")
+    report.add(
+        status in (301, 308) and location == f"{cms}/admin/",
+        f"the bare /admin redirects to /admin/ ({status} -> {location!r})",
+    )
+
+
 def assert_shared_host_routing(report: Report, values: dict[str, str], http: Http) -> None:
     web = PublicUrl.parse(values["NEOPS_WEB_URL"])
     engine = PublicUrl.parse(values["NEOPS_ENGINE_URL"])
@@ -521,6 +533,8 @@ def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario
             assert_admin_manages_entities(report, values, http, token)
         if PublicUrl.parse(values["NEOPS_CMS_URL"]).scheme == "http":
             assert_plain_http_admin(report, values, http)
+    if scenario.proxy == "traefik":
+        assert_bare_admin_redirects(report, values, http)
     if scenario.shared_host:
         assert_shared_host_routing(report, values, http)
     if scenario.metrics:

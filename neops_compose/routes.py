@@ -20,6 +20,11 @@ the /monitor route that embeds the workflow manager (routeMonitor in
 neops-web-client src/app/app-routing/routing-keys.ts).
 """
 
+# Core prefixes that are directories: Django serves them under a trailing slash only, and the
+# legacy catch-all in core (neops-core #2276) answers the bare form with a 500 instead of the
+# usual slash redirect, so the proxy redirects `/admin` to `/admin/` itself.
+CORE_DIRECTORY_PREFIXES: tuple[str, ...] = ("/admin", "/accounts")
+
 CORE_PREFIXES: tuple[str, ...] = (
     "/graphql",
     "/graphiql",

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTPS_PORT, MONITOR_CONTAINER_PORT
-from neops_compose.routes import CORE_PREFIXES, ENGINE_PUBLIC_WORKER_ROUTES
+from neops_compose.routes import CORE_DIRECTORY_PREFIXES, CORE_PREFIXES, ENGINE_PUBLIC_WORKER_ROUTES
 from neops_compose.scenario import Scenario
 from neops_compose.urls import PublicUrl, monitor_entrypoint_wanted, public_urls
 
@@ -114,12 +114,31 @@ def _strip_prefix(name: str, url: PublicUrl) -> tuple[dict[str, dict], tuple[str
     return {f"{name}-strip": {"stripPrefix": {"prefixes": [url.path]}}}, (f"{name}-strip",)
 
 
+CMS_SLASH_MIDDLEWARE = "cms-slash"
+
+
+def cms_slash_middleware() -> dict[str, dict]:
+    """Redirect the bare directory prefixes of core to their slashed form (neops-core #2276).
+    redirectRegex sees the whole URL, so the scheme and host are captured and kept."""
+    alternation = "|".join(re.escape(p.lstrip("/")) for p in CORE_DIRECTORY_PREFIXES)
+    return {
+        CMS_SLASH_MIDDLEWARE: {
+            "redirectRegex": {
+                "regex": f"^(https?://[^/]+/(?:{alternation}))$",
+                "replacement": "${1}/",
+                "permanent": True,
+            }
+        }
+    }
+
+
 def _cms_routers(layout: _Layout) -> list[Router]:
     """Shared-hostname mode has no hostname of its own for the CMS, so it claims core's
     prefixes on the web client's host, at a priority that beats the web router."""
     cms = layout.urls["NEOPS_CMS_URL"]
+    mws = (CMS_SLASH_MIDDLEWARE,)
     if not layout.scenario.shared_host:
-        return [layout.router("cms", cms, "cms", 10)]
+        return [layout.router("cms", cms, "cms", 10, mws=mws)]
     host = layout.urls["NEOPS_WEB_URL"].host
     return [
         layout.router(
@@ -128,6 +147,7 @@ def _cms_routers(layout: _Layout) -> list[Router]:
             "cms",
             100,
             rule=f"Host(`{host}`) && PathPrefix(`{prefix}`)",
+            mws=mws,
         )
         for prefix in CORE_PREFIXES
     ]
@@ -166,6 +186,7 @@ def _core_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
     engine, middlewares = _engine_routers(layout)
     monitor, monitor_middlewares = _monitor_router(layout)
     middlewares.update(monitor_middlewares)
+    middlewares.update(cms_slash_middleware())
     return [
         layout.router("web", layout.urls["NEOPS_WEB_URL"], "web", 1),
         *_cms_routers(layout),

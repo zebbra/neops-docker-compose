@@ -34,6 +34,13 @@ headers must be **overwritten**, not appended to. A proxy that appends lets a cl
 `X-Forwarded-Proto` itself can make core believe an insecure request was HTTPS. Terminate TLS at
 the proxy and set both headers explicitly rather than trusting whatever the client sent.
 
+## 1b. Redirect the bare `/admin` and `/accounts`
+
+Core answers `/admin` and `/accounts` without a trailing slash with a 500 instead of Django's
+usual slash redirect (neops-core #2276). The bundled Traefik redirects both to their slashed
+form; an external proxy should do the same (`/admin` to `/admin/`, `/accounts` to
+`/accounts/`), or accept that a hand-typed `https://cms.example.com/admin` errors.
+
 ## 2. Deny the engine's worker routes
 
 The workflow engine's blackboard API is unauthenticated by design: it is meant to be reached

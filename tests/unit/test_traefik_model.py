@@ -3,7 +3,7 @@ import re
 
 from neops_compose.env import Env
 from neops_compose.scenario import Scenario
-from neops_compose.traefik_model import build_traefik, static_config, worker_deny_rule
+from neops_compose.traefik_model import CMS_SLASH_MIDDLEWARE, build_traefik, static_config, worker_deny_rule
 
 HOSTS = """
 COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml
@@ -161,3 +161,25 @@ def test_https_redirect_targets_a_non_default_port_directly(tmp_path):
     static = static_config(c)
     entry = static["entryPoints"]["web"]["http"]["redirections"]["entryPoint"]
     assert entry["to"] == ":8443" and "port" not in entry
+
+
+def test_every_cms_router_redirects_the_bare_directory_prefixes(tmp_path):
+    """Core answers `/admin` (no slash) with a 500 (neops-core #2276), so the proxy issues the
+    slash redirect Django would have; the regex sees the whole URL and keeps scheme and host."""
+    for text in (HOSTS, SHARED):
+        c = cfg(tmp_path, text)
+        cms_routers = [r for r in c.routers if r.service == "cms"]
+        assert cms_routers and all(CMS_SLASH_MIDDLEWARE in r.middlewares for r in cms_routers)
+        assert all(CMS_SLASH_MIDDLEWARE not in r.middlewares for r in c.routers if r.service != "cms")
+    redirect = c.middlewares[CMS_SLASH_MIDDLEWARE]["redirectRegex"]
+    assert redirect["replacement"] == "${1}/" and redirect["permanent"] is True
+    pattern = re.compile(redirect["regex"])
+    for url in ("https://neops.example.com/admin", "http://cms.neops.example.com:8080/accounts"):
+        assert pattern.sub(r"\1/", url) == url + "/", url
+    for url in (
+        "https://neops.example.com/admin/",
+        "https://neops.example.com/admin/login/",
+        "https://neops.example.com/administrator",
+        "https://neops.example.com/graphql",
+    ):
+        assert pattern.search(url) is None, url
