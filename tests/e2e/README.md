@@ -92,7 +92,8 @@ it lives in `keycloak_login.py` and runs against a stack left up with `--keep`:
 
 ```bash
 uv run --with playwright playwright install chromium          # once per machine
-uv run python tests/e2e/run_scenario.py oidc-keycloak --port-base 20000 --workdir /tmp/kc --keep
+uv run python tests/e2e/run_scenario.py oidc-keycloak --port-base 20000 --workdir /tmp/kc \
+  --keep --extra-env NEOPS_ES_HEAP=512m
 uv run --with playwright python tests/e2e/keycloak_login.py /tmp/kc/repo
 ```
 
@@ -155,6 +156,20 @@ or a typed confirmation.
 `tests/unit/test_chaos.py` holds the three `.env` corruptions against the rules that must
 reject them, so a reworded message cannot turn a chaos assertion into a silent pass. It needs
 no Docker.
+
+### Keycloak
+
+`chaos.py` runs against a password-login scenario, so the OIDC-specific breakage is driven by
+hand against an `oidc-keycloak` clone. Each step ends with a fresh `keycloak_login.py` run,
+which is the only thing that proves the deployment still signs people in.
+
+| Step | Assertion |
+|---|---|
+| `docker kill` the `keycloak` container | it stays down, `./neops up` brings it back in under a minute and login works again |
+| kill the container's `java` child | `restart: unless-stopped` recreates it on its own; PID 1 is `kc.sh`, and Docker treats a `docker kill` as a manual stop, so the policy does not fire for that |
+| `./neops rotate keycloak-client` | the new secret matches in `data/secrets/keycloak-client.env`, in Keycloak and in core's `SocialApp` row, and a fresh browser login still works |
+| `./neops restart cms` | `appSettings.oidcProviders` still lists Keycloak with `localLoginEnabled: false` — the seed lives in the database, not in the environment |
+| create a realm role, `./neops down && ./neops up` | the role is still there and Keycloak logs `Realm 'neops' already exists. Import skipped` |
 
 ## Not covered here
 
