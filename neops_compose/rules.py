@@ -24,7 +24,7 @@ OIDC_KEYS = (
 OIDC_CLIENT_SECRET = "NEOPS_OIDC_CLIENT_SECRET"
 KEYCLOAK_SECRETS = ("NEOPS_KEYCLOAK_ADMIN_PASSWORD", "NEOPS_KEYCLOAK_DB_PASSWORD")
 GRAFANA_ADMIN_PASSWORD = "NEOPS_GRAFANA_ADMIN_PASSWORD"
-SECRET_HINT = "generate one with: openssl rand -hex 32"
+SECRET_HINT = "run ./neops secrets, or generate one with: openssl rand -hex 32"
 
 # Every key that is genuinely secret-shaped: an example must ship it blank, and validating an
 # example means filling it with a dummy value first. Used by both the compose-config gate
@@ -35,6 +35,19 @@ SECRET_HINT = "generate one with: openssl rand -hex 32"
 ALL_SECRET_KEYS = (
     BASE_SECRETS + KEYCLOAK_SECRETS + ("NEOPS_OIDC_CLIENT_ID", OIDC_CLIENT_SECRET, GRAFANA_ADMIN_PASSWORD)
 )
+GENERATED_MIN_LENGTH = 16
+
+
+def generated_secrets(scenario: Scenario) -> tuple[str, ...]:
+    """The secrets a scenario needs that nobody else issues: `./neops secrets` mints them and
+    `check` demands them. The OIDC client credentials are deliberately absent, they come from
+    the identity provider."""
+    keys = BASE_SECRETS
+    if scenario.keycloak:
+        keys += KEYCLOAK_SECRETS
+    if scenario.metrics:
+        keys += (GRAFANA_ADMIN_PASSWORD,)
+    return keys
 
 
 class BadPorts(Exception):
@@ -44,7 +57,7 @@ class BadPorts(Exception):
 def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     out: list[str] = []
     out += _overlay_problems(scenario, repo)
-    out += _required(env, BASE_SECRETS, secret=True, min_length=16)
+    out += _required(env, generated_secrets(scenario), secret=True, min_length=GENERATED_MIN_LENGTH)
     urls, url_problems = _parse_urls(env, BASE_URLS)
     out += url_problems
     if scenario.tls == "files" and not env.flag("NEOPS_TLS_SELF_SIGNED"):
@@ -65,12 +78,10 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             hint="the client secret from your identity provider's client configuration",
         )
     if scenario.keycloak:
-        out += _required(env, KEYCLOAK_SECRETS, secret=True, min_length=16)
         kc, p = _parse_urls(env, ("NEOPS_KEYCLOAK_URL",))
         out += p
         urls.update(kc)
     if scenario.metrics:
-        out += _required(env, (GRAFANA_ADMIN_PASSWORD,), secret=True, min_length=16)
         if env.is_set("NEOPS_GRAFANA_URL"):
             gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
             out += p

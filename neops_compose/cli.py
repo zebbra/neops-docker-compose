@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("migrate", "apply pending deployment migrations")
     sp.add_argument("--dry-run", action="store_true")
     sp.add_argument("--fake", metavar="NAME", help="mark a migration applied without running it (full name)")
+    add("secrets", "fill every blank generated secret in .env (never overwrites)")
     add("keys", "generate missing key material (never overwrites)")
     add("token", "mint the engine's CMS API key when missing or invalid")
     sp = add("render", "regenerate generated/ from .env")
@@ -134,6 +135,8 @@ def dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
             workflow.check(ctx, check_images=not args.no_images)
         case "migrate":
             return _migrate(args, ctx)
+        case "secrets":
+            workflow.fill_secrets(ctx)
         case "keys":
             workflow.keys(ctx)
         case "token":

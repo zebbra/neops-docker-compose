@@ -4,6 +4,7 @@ import http.client
 import json
 import socket
 import ssl
+import time
 from dataclasses import dataclass
 
 from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
@@ -13,6 +14,7 @@ ONE_SHOTS = {"cms-init"}
 NAME_WIDTH = 28
 LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
 WORKER_PROBE = "worker registered"
+WORKER_POLL_SECONDS = 5
 DB_UNREACHABLE = "the CMS cannot reach its database (login answered: internal error)"
 EXTERNAL_PROXY_DENY_HINT = "verify that your reverse proxy denies these routes (docs/40-external-proxy.md)"
 
@@ -23,6 +25,7 @@ class Probe:
     ok: bool
     detail: str = ""
     severity: str = "fail"  # "warn" means doctor reports it and still passes
+    pending: bool = False  # not ok yet, but a state that resolves itself: worth asking again
 
 
 @dataclass(frozen=True)
@@ -262,7 +265,8 @@ def worker_probe(engine: PublicUrl, http: Http, admin: Login) -> Probe:
         workers = json.loads(text)
         items = workers if isinstance(workers, list) else workers.get("items", workers.get("data", []))
         online = [w for w in items if str(w.get("status", w.get("state", ""))).upper() == "ONLINE"]
-        return Probe(WORKER_PROBE, bool(online), f"{len(online)} online of {len(items)} workers")
+        detail = f"{len(online)} online of {len(items)} workers"
+        return Probe(WORKER_PROBE, bool(online), detail, pending=not online)
     except Exception as exc:
         return Probe(WORKER_PROBE, False, f"unexpected /workers payload: {exc}")
 
@@ -290,7 +294,20 @@ def ratelimit_probe(cms: PublicUrl, http: Http) -> Probe:
     )
 
 
-def _login_probes(ctx: Ctx, cms: PublicUrl, engine: PublicUrl, http: Http) -> list[Probe]:
+def settled_worker_probe(engine: PublicUrl, http: Http, admin: Login, grace: float) -> Probe:
+    """A worker registers its function blocks one request at a time once the engine answers,
+    so for a while after a start "0 online" is the honest answer and not the verdict."""
+    deadline = time.monotonic() + grace
+    while True:
+        probe = worker_probe(engine, http, admin)
+        if not probe.pending or time.monotonic() >= deadline:
+            return probe
+        time.sleep(WORKER_POLL_SECONDS)
+
+
+def _login_probes(
+    ctx: Ctx, cms: PublicUrl, engine: PublicUrl, http: Http, worker_grace: float
+) -> list[Probe]:
     """The admin login goes first: core allows five logins a minute from one address, and
     the bad-credentials probe spends one of them."""
     if ctx.scenario.oidc:
@@ -298,7 +315,7 @@ def _login_probes(ctx: Ctx, cms: PublicUrl, engine: PublicUrl, http: Http) -> li
         return [bad_login_probe(cms, http), skipped]
     user = ctx.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
     admin = login(cms, http, user, ctx.env.get("NEOPS_ADMIN_PASSWORD"))
-    return [bad_login_probe(cms, http), worker_probe(engine, http, admin)]
+    return [bad_login_probe(cms, http), settled_worker_probe(engine, http, admin, worker_grace)]
 
 
 def _tls_probe(http: Http, web: PublicUrl) -> Probe:
@@ -310,13 +327,17 @@ def _tls_probe(http: Http, web: PublicUrl) -> Probe:
 
 
 def run(
-    ctx: Ctx, connect: str | None = None, insecure: bool = False, probe_ratelimit: bool = False
+    ctx: Ctx,
+    connect: str | None = None,
+    insecure: bool = False,
+    probe_ratelimit: bool = False,
+    worker_grace: float = 0,
 ) -> list[Probe]:
     probes = container_probes(ctx.compose.ps())
     urls = public_urls(ctx.env, ctx.scenario)
     http = Http(connect=connect, insecure=insecure)
     probes += http_probes(urls, http, "warn" if ctx.scenario.proxy == "expose" else "fail")
-    probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http)
+    probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http, worker_grace)
     if probe_ratelimit:
         probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http))
     if ctx.scenario.tls:

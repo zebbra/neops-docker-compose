@@ -292,3 +292,52 @@ def test_a_certificate_close_to_expiry_fails_the_tls_probe(tmp_path):
 def test_cert_days_left_is_none_over_plain_http():
     with serving() as port:
         assert doctor.Http(connect="127.0.0.1").cert_days_left(PublicUrl.parse(f"http://x:{port}")) is None
+
+
+class SequencedHttp(FakeHttp):
+    """Answers /workers with one payload per call, in order, repeating the last."""
+
+    def __init__(self, workers_payloads: list[str]):
+        super().__init__({})
+        self.payloads = list(workers_payloads)
+
+    def request(self, url, path, method="GET", body=None, headers=None):
+        self.calls.append((str(url) + path, method, headers or {}))
+        if path != "/workers":
+            return (404, "")
+        payload = self.payloads.pop(0) if len(self.payloads) > 1 else self.payloads[0]
+        return (200, payload)
+
+
+def test_the_worker_probe_waits_for_a_worker_that_is_still_registering(monkeypatch):
+    """Right after `up` the engine answers before the worker has registered its blocks: doctor
+    asks again within the grace period instead of failing the start on a race."""
+    engine = PublicUrl.parse("https://engine.neops.example.com")
+    admin = doctor.Login(token="t")
+    naps: list[float] = []
+    monkeypatch.setattr(doctor.time, "sleep", naps.append)
+    http = SequencedHttp(["[]", '[{"state":"offline"}]', '[{"state":"online"}]'])
+
+    probe = doctor.settled_worker_probe(engine, http, admin, grace=60)
+
+    assert probe.ok and probe.detail == "1 online of 1 workers"
+    assert naps == [doctor.WORKER_POLL_SECONDS] * 2
+
+
+def test_the_worker_probe_gives_up_after_the_grace_period(monkeypatch):
+    engine = PublicUrl.parse("https://engine.neops.example.com")
+    clock = iter(range(0, 1000, 10))
+    monkeypatch.setattr(doctor.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(doctor.time, "sleep", lambda s: None)
+
+    probe = doctor.settled_worker_probe(engine, SequencedHttp(["[]"]), doctor.Login(token="t"), grace=25)
+
+    assert not probe.ok and probe.pending and probe.detail == "0 online of 0 workers"
+
+
+def test_a_plain_doctor_run_does_not_wait_for_workers(monkeypatch):
+    """Only the start commands wait: a standalone `./neops doctor` answers now."""
+    engine = PublicUrl.parse("https://engine.neops.example.com")
+    monkeypatch.setattr(doctor.time, "sleep", lambda s: pytest.fail("slept"))
+    probe = doctor.settled_worker_probe(engine, SequencedHttp(["[]"]), doctor.Login(token="t"), grace=0)
+    assert not probe.ok

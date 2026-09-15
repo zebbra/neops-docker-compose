@@ -21,6 +21,7 @@ Every command below runs from the repo root, against the `.env` in place there. 
 | `./neops compose -- <args>` | pass-through to `docker compose` with this deployment's `COMPOSE_FILE`; `compose -- config` prints every secret, so treat its output accordingly |
 | `./neops check` | preflight only, no changes |
 | `./neops migrate [--dry-run] [--fake NAME]` | apply pending deployment migrations |
+| `./neops secrets` | fill every blank generated secret in `.env` (database passwords, the Django secret key, the admin passwords); never overwrites |
 | `./neops keys` | generate any missing key material; never overwrites |
 | `./neops token` | mint the engine's CMS API key if missing or invalid |
 | `./neops render [--diff]` | rebuild `generated/` from `.env`; `--diff` shows what would change without writing |

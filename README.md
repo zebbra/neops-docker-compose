@@ -21,7 +21,8 @@ Full documentation: `docs/` (and docs.neops.io once published).
 git clone https://github.com/zebbra/neops-docker-compose.git && cd neops-docker-compose
 git checkout release/2.0
 cp examples/traefik-tls-files.env .env      # pick the scenario that matches your setup
-$EDITOR .env                                 # hostnames + every blank secret (openssl rand -hex 32)
+$EDITOR .env                                 # hostnames
+./neops secrets                              # fills every blank secret
 cp /path/to/cert.pem certs/cert.pem && cp /path/to/key.pem certs/key.pem   # tls-files only
 ./neops install
 ```

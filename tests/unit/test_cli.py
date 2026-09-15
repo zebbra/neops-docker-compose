@@ -34,6 +34,7 @@ def test_every_command_is_wired():
         "compose",
         "check",
         "migrate",
+        "secrets",
         "keys",
         "token",
         "render",

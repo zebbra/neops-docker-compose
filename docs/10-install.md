@@ -30,7 +30,8 @@ cp examples/traefik-tls-files.env .env
 The [scenario table](20-scenarios.md) explains every option. Open `.env` and fill in:
 
 - the four (or six, with Keycloak and metrics) public URLs, for your own hostnames;
-- every blank secret (generate each with `openssl rand -hex 32`);
+- every blank secret: `./neops secrets` generates the ones your scenario needs and leaves
+  anything already set alone (or generate each by hand with `openssl rand -hex 32`);
 - `NEOPS_TLS_CERT_FILE` / `NEOPS_TLS_KEY_FILE` (or copy your certificate into `certs/cert.pem`
   and `certs/key.pem`), unless you are using `NEOPS_TLS_SELF_SIGNED=true` or Let's Encrypt.
 
@@ -75,7 +76,9 @@ message:
 
 `./neops up` repeats every step except the image check: resolving images is `check`'s job, and
 repeating it on each start would make every restart depend on the registry. Run `./neops check`
-after a `git pull` that moves an image tag.
+after a `git pull` that moves an image tag. `up` on a deployment that was never installed takes
+the same two-phase start as `install`, so starting with `up` is not a mistake, only a skipped
+image check.
 
 !!! note "external-proxy mode ends on a `WARN`"
 

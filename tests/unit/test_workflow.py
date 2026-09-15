@@ -58,7 +58,7 @@ class FakeCompose:
         self.calls.append("pull")
 
     def up(self, *services, **kwargs):
-        self.calls.append("up")
+        self.calls.append("up" if not services else "up:" + ",".join(services))
 
 
 def make_ctx(tmp_path, env_text="COMPOSE_FILE=compose.yaml\n", compose=None) -> Ctx:
@@ -131,6 +131,15 @@ def test_install_checks_images_only_after_render(tmp_path, monkeypatch):
     assert order.index("render") < order.index("check_images")
 
 
+CMS_FIRST = "up:" + ",".join(workflow.CMS_FIRST)
+
+
+def _with_engine_token(ctx: Ctx) -> Ctx:
+    ctx.paths.engine_env.parent.mkdir(parents=True, exist_ok=True)
+    ctx.paths.engine_env.write_text("NEOPS_CMS_TOKEN=already-minted\n")
+    return ctx
+
+
 def _stub_up(monkeypatch, order: list[str], minted: bool = False) -> None:
     monkeypatch.setattr(
         workflow, "check", lambda c, check_images=True: order.append(f"check(images={check_images})")
@@ -160,7 +169,7 @@ def test_up_checks_without_images_and_guards_before_it_changes_anything(tmp_path
 def test_up_pulls_and_starts_once_when_the_engine_token_is_already_valid(tmp_path, monkeypatch):
     order: list[str] = []
     _stub_up(monkeypatch, order, minted=False)
-    ctx = make_ctx(tmp_path)
+    ctx = _with_engine_token(make_ctx(tmp_path))
     workflow.up(ctx)
     assert order == ["check(images=False)", "migrate", "keys", "render", "finish"]
     assert ctx.compose.calls == ["pull", "up"]
@@ -169,10 +178,44 @@ def test_up_pulls_and_starts_once_when_the_engine_token_is_already_valid(tmp_pat
 def test_up_starts_a_second_time_when_a_token_was_minted(tmp_path, monkeypatch):
     """The engine reads its CMS token from an env file at container start, so a token minted
     after the first `up` only reaches it through a second one."""
-    ctx = make_ctx(tmp_path)
+    ctx = _with_engine_token(make_ctx(tmp_path))
     _stub_up(monkeypatch, [], minted=True)
     workflow.up(ctx)
     assert ctx.compose.calls == ["pull", "up", "up"]
+
+
+def test_a_first_up_never_asks_compose_for_images(tmp_path, monkeypatch):
+    """`docker compose config` cannot load a deployment whose generated/ does not exist yet,
+    and there is no previous start to compare against anyway."""
+
+    class NoConfigYet(FakeCompose):
+        def images(self):
+            raise AssertionError("compose config was asked before render")
+
+    _stub_up(monkeypatch, [], minted=True)
+    workflow.up(make_ctx(tmp_path, compose=NoConfigYet()))
+
+
+def test_a_first_up_brings_the_cms_up_alone_before_the_engine(tmp_path, monkeypatch):
+    """`up` as the very first command, without `install`: the engine refuses its placeholder
+    token, and `up --wait` on the whole stack would wait on that restart loop for the whole
+    timeout. Without a token the start is the two-phase one install does."""
+    ctx = make_ctx(tmp_path)
+    _stub_up(monkeypatch, [], minted=True)
+    workflow.up(ctx)
+    assert ctx.compose.calls == ["pull", CMS_FIRST, "up"]
+
+
+def test_install_starts_the_cms_alone_first_and_everything_once_the_token_exists(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    _stub_up(monkeypatch, [], minted=True)
+    monkeypatch.setattr(workflow, "check_images", lambda c: None)
+    workflow.install(ctx)
+    assert ctx.compose.calls == ["pull", CMS_FIRST, "up"]
+    _stub_up(monkeypatch, [], minted=False)
+    ctx.compose.calls.clear()
+    workflow.install(_with_engine_token(ctx))
+    assert ctx.compose.calls == ["pull", "up"]
 
 
 def test_up_never_reaches_the_images_check_that_needs_a_rendered_generated_tree(tmp_path, monkeypatch):
