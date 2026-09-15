@@ -12,6 +12,7 @@ from neops_compose.scenario import Scenario
 from neops_compose.urls import PublicUrl
 
 ONE_SHOTS = {"cms-init"}
+NAME_WIDTH = 28
 LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
 WORKER_PROBE = "worker registered"
 
@@ -301,7 +302,9 @@ def run(
 
 
 def format_report(probes: list[Probe]) -> str:
-    return "\n".join(f"{'OK  ' if p.ok else 'FAIL'} {p.name:<28} {p.detail}".rstrip() for p in probes)
+    return "\n".join(
+        f"{'OK  ' if p.ok else 'FAIL'} {p.name:<{NAME_WIDTH}} {p.detail}".rstrip() for p in probes
+    )
 
 
 def all_ok(probes: list[Probe]) -> bool:

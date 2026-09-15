@@ -54,6 +54,13 @@ def test_compose_runs_docker_compose_from_the_repo_root(tmp_path, monkeypatch):
     ]
 
 
+def test_pull_tolerates_an_image_that_exists_only_locally(tmp_path, monkeypatch):
+    fake = FakeRun()
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
+    Compose(tmp_path).pull()
+    assert fake.calls[-1][0] == ["docker", "compose", "pull", "--quiet", "--ignore-pull-failures"]
+
+
 def test_exec_keeps_env_values_out_of_argv(tmp_path, monkeypatch):
     fake = FakeRun()
     monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)

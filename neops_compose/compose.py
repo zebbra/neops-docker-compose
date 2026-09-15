@@ -44,7 +44,10 @@ class Compose:
         self.run(*args, *services)
 
     def pull(self) -> None:
-        self.run("pull", "--quiet")
+        """An image that exists only on this host has no manifest to fetch and must not
+        abort the start. `check` refuses an image that is neither local nor pullable, and
+        `up` fails on one that is genuinely missing, so ignoring the failure hides nothing."""
+        self.run("pull", "--quiet", "--ignore-pull-failures")
 
     def down(self) -> None:
         self.run("down", "--remove-orphans")
