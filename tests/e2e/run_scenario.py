@@ -354,7 +354,6 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     try:
         neops(clone, "check", "--no-images")
-        neops(clone, "compose", "--", "pull", "--ignore-pull-failures", "--quiet", check=False)
         if install(report, clone, scenario.proxy == "expose", "install"):
             run_assertions(report, clone, values, scenario)
     finally:

@@ -146,13 +146,18 @@ def _image_check(image: str) -> Check:
     return Check("image", False, f"{image}: not pullable ({reason}); run docker login quay.io")
 
 
-def _image_checks(compose: Compose) -> list[Check]:
+def image_checks(compose: Compose) -> list[Check]:
     try:
         images = compose.images()
     except ComposeError as exc:
         first_line = str(exc).splitlines()[0]
         return [
-            Check("image", False, f"docker compose config failed: {first_line}; run ./neops render first")
+            Check(
+                "image",
+                False,
+                f"docker compose config failed: {first_line}; run ./neops render first, "
+                "or ./neops check --no-images before the first install",
+            )
         ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=REGISTRY_WORKERS) as pool:
         return list(pool.map(_image_check, images))
@@ -199,7 +204,7 @@ def run_checks(
             running = set()
     out += _port_checks(env, scenario, running)
     if check_images and daemon_ok and all(c.ok for c in env_checks):
-        out += _image_checks(compose)
+        out += image_checks(compose)
     if daemon_ok:
         out += _db_password_checks(env, compose, running)
     return out

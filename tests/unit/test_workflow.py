@@ -44,12 +44,19 @@ def test_guard_downgrade_raises_only_for_core(tmp_path):
 class FakeCompose:
     def __init__(self, image="quay.io/zebbra/neops-core:2.1.0"):
         self.image = image
+        self.calls: list[str] = []
 
     def ps(self):
         return [{"Service": "cms", "Image": self.image, "State": "running"}]
 
     def images(self):
         return [self.image]
+
+    def pull(self):
+        self.calls.append("pull")
+
+    def up(self, *services, **kwargs):
+        self.calls.append("up")
 
 
 def make_ctx(tmp_path) -> Ctx:
@@ -99,3 +106,24 @@ def test_status_separates_a_missing_verdict_from_a_failed_one():
     assert workflow._verdict({"at": "x", "images": {}}) == "doctor: not recorded"
     assert workflow._verdict({"at": "x", "doctor_ok": False}) == "doctor FAILED"
     assert workflow._verdict({"at": "x", "doctor_ok": True}) == "doctor ok"
+
+
+def test_install_checks_images_only_after_render(tmp_path, monkeypatch):
+    """docker compose cannot resolve the image list until render has written generated/,
+    so a first install that checked images up front could never pass its own preflight."""
+    ctx = make_ctx(tmp_path)
+    order: list[str] = []
+    monkeypatch.setattr(
+        workflow, "check", lambda c, check_images=True: order.append(f"check(images={check_images})")
+    )
+    monkeypatch.setattr(workflow, "migrate_all", lambda c: order.append("migrate"))
+    monkeypatch.setattr(workflow, "keys", lambda c: order.append("keys"))
+    monkeypatch.setattr(workflow, "render", lambda *a: order.append("render"))
+    monkeypatch.setattr(workflow, "check_images", lambda c: order.append("check_images"))
+    monkeypatch.setattr(workflow.token, "ensure_engine_token", lambda *a: order.append("token"))
+    monkeypatch.setattr(workflow, "_finish", lambda *a: order.append("finish"))
+
+    workflow.install(ctx)
+
+    assert order[0] == "check(images=False)"
+    assert order.index("render") < order.index("check_images")

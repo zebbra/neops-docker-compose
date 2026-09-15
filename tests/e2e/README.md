@@ -69,7 +69,8 @@ under `data/secrets/tls/`, so no run needs an operator-supplied certificate. The
 `NEOPS_MONITOR_IMAGE=neops-monitor-app:local` and expects that image to exist on the host.
 Build it from the workflow-engine checkout (`rest/monitor-app/Dockerfile`) if it does not.
 `docker compose pull` cannot fetch a local-only tag, which is why `Compose.pull()` passes
-`--ignore-pull-failures`.
+`--ignore-pull-failures`. The harness therefore does not pre-pull: `install` renders
+`generated/` first, and nothing can read the compose files before that anyway.
 
 ## The override file
 

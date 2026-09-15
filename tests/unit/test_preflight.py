@@ -166,7 +166,7 @@ def test_unpullable_image_names_the_registry_error(monkeypatch):
 def test_image_checks_keep_input_order(monkeypatch):
     monkeypatch.setattr(preflight, "_cmd", lambda *args: (0, "ok"))
     images = [f"img{n}:1" for n in range(12)]
-    checks = preflight._image_checks(FakeCompose(images=images))
+    checks = preflight.image_checks(FakeCompose(images=images))
     assert [c.detail for c in checks] == [f"{i} (local)" for i in images]
 
 

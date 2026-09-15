@@ -67,6 +67,14 @@ def check(ctx: Ctx, check_images: bool = True) -> None:
         )
 
 
+def check_images(ctx: Ctx) -> None:
+    """Separate from check(): resolving the image list needs generated/, which render writes."""
+    checks = preflight.image_checks(ctx.compose)
+    ctx.log(preflight.format_report(checks))
+    if not preflight.all_ok(checks):
+        raise Blocked("preflight failed; fix the FAIL lines above")
+
+
 def _selfsigned_keys(ctx: Ctx) -> None:
     hosts = public_hosts(ctx.env, ctx.scenario)
     cert = ctx.paths.tls_dir / "cert.pem"
@@ -113,10 +121,11 @@ def _finish(ctx: Ctx, connect: str | None, insecure: bool) -> None:
 
 
 def install(ctx: Ctx, connect: str | None = None, insecure: bool = False) -> None:
-    check(ctx)
+    check(ctx, check_images=False)
     migrate_all(ctx)
     keys(ctx)
     render(ctx.env, ctx.scenario, ctx.paths)
+    check_images(ctx)
     ctx.log("pulling images")
     ctx.compose.pull()
     ctx.log("starting the CMS")
