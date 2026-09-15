@@ -7,23 +7,25 @@ Run from the repo root: uv run python tests/compose_config_check.py
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SECRET_KEYS = (
-    "NEOPS_CMS_DB_PASSWORD",
-    "NEOPS_ENGINE_DB_PASSWORD",
-    "DJANGO_SECRET_KEY",
-    "NEOPS_ADMIN_PASSWORD",
-    "NEOPS_KEYCLOAK_ADMIN_PASSWORD",
-    "NEOPS_KEYCLOAK_DB_PASSWORD",
-    "NEOPS_GRAFANA_ADMIN_PASSWORD",
-    "NEOPS_OIDC_CLIENT_ID",
-    "NEOPS_OIDC_CLIENT_SECRET",
-)
+DUMMY_SECRET = "dummy0123456789abcdef"
+
+
+def _fill_secrets(text: str, keys: tuple[str, ...]) -> str:
+    """Replace a still-blank `KEY=` line with a dummy value, for every key in `keys`.
+
+    Per-line rather than a literal `\\nKEY=\\n` match: that literal form misses a blank key on
+    the first line of the file (no leading newline) and a blank key on the last line when the
+    file has no trailing newline, both of which are exactly the kind of file an operator hand-edits.
+    """
+    pattern = re.compile(r"^(" + "|".join(re.escape(k) for k in keys) + r")=$", re.MULTILINE)
+    return pattern.sub(lambda m: f"{m.group(1)}={DUMMY_SECRET}", text)
 
 
 def main() -> int:
@@ -32,10 +34,16 @@ def main() -> int:
     from neops_compose.env import Env
     from neops_compose.paths import Paths
     from neops_compose.render import render
+    from neops_compose.rules import ALL_SECRET_KEYS
     from neops_compose.scenario import Scenario
 
+    examples = sorted((REPO / "examples").glob("*.env"))
+    if not examples:
+        print("no examples/*.env found")
+        return 1
+
     failures = 0
-    for example in sorted((REPO / "examples").glob("*.env")):
+    for example in examples:
         with tempfile.TemporaryDirectory() as tmp:
             scratch = Path(tmp) / "repo"
             scratch.mkdir()
@@ -45,9 +53,7 @@ def main() -> int:
             (scratch / "cust-cert").mkdir()
             for name in ("cert.pem", "key.pem"):
                 (scratch / "certs" / name).write_text("placeholder")
-            text = example.read_text()
-            for key in SECRET_KEYS:
-                text = text.replace(f"\n{key}=\n", f"\n{key}=dummy0123456789abcdef\n")
+            text = _fill_secrets(example.read_text(), ALL_SECRET_KEYS)
             (scratch / ".env").write_text(text)
             env = Env(scratch / ".env")
             paths = Paths.for_repo(scratch, env)

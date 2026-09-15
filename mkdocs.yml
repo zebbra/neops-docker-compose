@@ -72,13 +72,6 @@ plugins:
 - exclude:
     glob:
     - superpowers/*
-    - cust-cert/*
-    - certs/*
-    - examples/*
-    - metrics/*
-    - migrations/*
-    - neops_compose/*
-    - tests/*
 repo_url: https://github.com/zebbra/neops-docker-compose
 site_name: NeOps docker-compose
 theme:

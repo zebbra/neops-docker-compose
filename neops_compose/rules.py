@@ -22,8 +22,20 @@ OIDC_KEYS = (
     "NEOPS_OIDC_CLIENT_ID",
     "NEOPS_OIDC_DISCOVERY_URL",
 )
+OIDC_CLIENT_SECRET = "NEOPS_OIDC_CLIENT_SECRET"
 KEYCLOAK_SECRETS = ("NEOPS_KEYCLOAK_ADMIN_PASSWORD", "NEOPS_KEYCLOAK_DB_PASSWORD")
+GRAFANA_ADMIN_PASSWORD = "NEOPS_GRAFANA_ADMIN_PASSWORD"
 SECRET_HINT = "generate one with: openssl rand -hex 32"
+
+# Every key that is genuinely secret-shaped: an example must ship it blank, and validating an
+# example means filling it with a dummy value first. Used by both the compose-config gate
+# (tests/compose_config_check.py) and the example-validation tests (tests/unit/test_examples.py)
+# instead of each carrying its own copy of this list. Deliberately not OIDC_KEYS wholesale: the
+# provider id, name and discovery URL in that tuple are required but plain config, not secrets,
+# and the shipped OIDC examples ship them filled in on purpose.
+ALL_SECRET_KEYS = (
+    BASE_SECRETS + KEYCLOAK_SECRETS + ("NEOPS_OIDC_CLIENT_ID", OIDC_CLIENT_SECRET, GRAFANA_ADMIN_PASSWORD)
+)
 
 
 class BadPorts(Exception):
@@ -49,7 +61,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
         out += _required(env, OIDC_KEYS, secret=False)
         out += _required(
             env,
-            ("NEOPS_OIDC_CLIENT_SECRET",),
+            (OIDC_CLIENT_SECRET,),
             secret=True,
             hint="the client secret from your identity provider's client configuration",
         )
@@ -59,7 +71,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
         out += p
         urls.update(kc)
     if scenario.metrics:
-        out += _required(env, ("NEOPS_GRAFANA_ADMIN_PASSWORD",), secret=True, min_length=16)
+        out += _required(env, (GRAFANA_ADMIN_PASSWORD,), secret=True, min_length=16)
         if env.is_set("NEOPS_GRAFANA_URL"):
             gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
             out += p
