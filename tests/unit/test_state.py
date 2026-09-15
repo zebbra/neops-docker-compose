@@ -91,3 +91,10 @@ def test_newer_schema_tells_the_operator_to_update(tmp_path):
     p.write_text(json.dumps({"schema": SCHEMA + 1, "cli": "9.0.0"}))
     with pytest.raises(StateError, match="update the CLI"):
         State.load(p)
+
+
+def test_non_object_last_up_raises_state_error(tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({"schema": SCHEMA, "last_up": "2026-09-14"}))
+    with pytest.raises(StateError, match="last_up must be an object"):
+        State.load(p)

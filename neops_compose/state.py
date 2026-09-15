@@ -50,6 +50,8 @@ def _validate(path: Path, raw: dict) -> None:
     for name in LIST_FIELDS:
         if name in raw and not isinstance(raw[name], list):
             raise StateError(f"{path} is not a valid state file: {name} must be a list")
+    if raw.get("last_up") is not None and not isinstance(raw["last_up"], dict):
+        raise StateError(f"{path} is not a valid state file: last_up must be an object")
 
 
 @dataclass
