@@ -9,6 +9,7 @@ ALLOWED_BIND_ROOTS = (
     "${NEOPS_DATA_DIR:-./data}/",
     "./generated/",
     "./certs/",
+    "./cms/",
     "./cust-cert/",
     "./metrics/",
     "${NEOPS_TLS_CERT_FILE:-./certs/cert.pem}",
@@ -95,6 +96,22 @@ def test_admin_credentials_are_confined_to_cms_init():
         assert "NEOPS_ADMIN_PASSWORD" not in services[name]["environment"], (
             f"{name} must not carry NEOPS_ADMIN_PASSWORD, only cms-init needs it"
         )
+
+
+def test_cms_init_seeds_the_admin_role():
+    """A Django superuser holding no NeOps role can log in and then read and write nothing, so
+    the role seed belongs to the install rather than to an operator's first manual step."""
+    init = load(REPO / "compose.yaml")["services"]["cms-init"]
+    assert (REPO / "cms" / "bootstrap_admin_role.py").is_file()
+    sources = [bind_source(v) for v in init["volumes"]]
+    assert "./cms/bootstrap_admin_role.py" in sources
+    # cms-init overrides the anchor's volume list rather than extending it, so the mounts the
+    # anchor carries have to be repeated here or they silently disappear.
+    assert "${NEOPS_DATA_DIR:-./data}/secrets/jwt" in sources
+    command = " ".join(init["command"])
+    assert "/etc/neops/bootstrap_admin_role.py" in command
+    assert "grant_workflow_permissions" in command
+    assert "NEOPS_ADMIN_ROLE" in init["environment"]
 
 
 def test_no_healthcheck_addresses_localhost():

@@ -124,7 +124,8 @@ services:
     restart: unless-stopped
 
   cms-init:
-    # One-shot: Django migrations, Elasticsearch indices, the superuser. Re-runs on every `up` (idempotent).
+    # One-shot: Django migrations, Elasticsearch indices, the superuser and the role that makes
+    # it usable. Re-runs on every `up` (idempotent).
     # Does not use the image's init.sh, which exits 1 on a fresh database (neops-core #2269).
     # The admin credentials live only here, not in x-core-env: the long-lived cms/cms-worker/
     # cms-beat containers have no reason to carry NEOPS_ADMIN_PASSWORD.
@@ -134,6 +135,11 @@ services:
       NEOPS_ADMIN_USER: ${NEOPS_ADMIN_USER:-neops}
       NEOPS_ADMIN_EMAIL: ${NEOPS_ADMIN_EMAIL:-neops@example.com}
       NEOPS_ADMIN_PASSWORD: ${NEOPS_ADMIN_PASSWORD}
+      NEOPS_ADMIN_ROLE: ${NEOPS_ADMIN_ROLE:-admin}
+    volumes:
+      - ${NEOPS_DATA_DIR:-./data}/secrets/jwt:/etc/neops/jwt:ro
+      - ./cust-cert:/cust-cert:ro
+      - ./cms/bootstrap_admin_role.py:/etc/neops/bootstrap_admin_role.py:ro
     restart: "no"
     depends_on:
       postgres-cms:
@@ -152,6 +158,13 @@ services:
           echo "$$out" | grep -q resource_already_exists_exception || { echo "$$out"; exit 1; }
         fi
         python manage.py shell -c "import os; from django.contrib.auth import get_user_model; U = get_user_model(); u, created = U.objects.get_or_create(username=os.environ['NEOPS_ADMIN_USER'], defaults={'email': os.environ['NEOPS_ADMIN_EMAIL'], 'is_staff': True, 'is_superuser': True}); created and (u.set_password(os.environ['NEOPS_ADMIN_PASSWORD']), u.save()); print('superuser', 'created' if created else 'present')"
+        python manage.py shell < /etc/neops/bootstrap_admin_role.py
+        if python manage.py help grant_workflow_permissions >/dev/null 2>&1; then
+          python manage.py grant_workflow_permissions --role "$$NEOPS_ADMIN_ROLE" --profile admin --yes \
+            || echo "grant_workflow_permissions failed; grant the workflow rights by hand (docs/10-install.md)"
+        else
+          echo "grant_workflow_permissions unavailable in this image"
+        fi
 
   cms:
     <<: *core-service

@@ -47,7 +47,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             scratch = Path(tmp) / "repo"
             scratch.mkdir()
-            for f in list(REPO.glob("compose*.yaml")) + [REPO / "metrics"]:
+            for f in list(REPO.glob("compose*.yaml")) + [REPO / "metrics", REPO / "cms"]:
                 (scratch / f.name).symlink_to(f)
             (scratch / "certs").mkdir()
             (scratch / "cust-cert").mkdir()
