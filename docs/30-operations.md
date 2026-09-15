@@ -61,6 +61,11 @@ There is no `./neops restore`; restoring is a manual sequence, deliberately, bec
 judgment about which secrets to keep:
 
 ```bash
+# 0. On a fresh host: check this repo out at the release the backup names in its manifest.json,
+#    and put the archive where the commands below can read it.
+git clone <this repo> neops && cd neops
+mkdir -p backups && cp -a /media/<the archive>/<timestamp> backups/
+
 # 1. Put the deployment's .env back (or reconcile it with the current one) and prepare data/.
 cp backups/<timestamp>/.env .env
 ./neops migrate                                    # creates data/ if this is a fresh host
@@ -68,25 +73,33 @@ cp -a backups/<timestamp>/secrets/. data/secrets/
 cp -a backups/<timestamp>/certs/. certs/            # if the scenario uses certs/
 cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 
-# 2. Start only the databases and load the dumps.
+# 2. Start only the databases and load the dumps. --wait matters: pg_restore cannot connect
+#    while Postgres is still initialising, and `up -d` returns before it is.
 ./neops render
-./neops compose -- up -d postgres-cms postgres-engine   # + postgres-keycloak, if used
-./neops compose -- exec -T postgres-cms pg_restore -U neops -d neops --clean \
+./neops compose -- up -d --wait postgres-cms postgres-engine   # + postgres-keycloak, if used
+./neops compose -- exec -T postgres-cms pg_restore -U neops -d neops --clean --if-exists \
   < backups/<timestamp>/cms.dump
-./neops compose -- exec -T postgres-engine pg_restore -U postgres -d neops-workflow --clean \
+./neops compose -- exec -T postgres-engine pg_restore -U postgres -d neops-workflow --clean --if-exists \
   < backups/<timestamp>/engine.dump
 # keycloak, if used:
-./neops compose -- exec -T postgres-keycloak pg_restore -U keycloak -d keycloak --clean \
+./neops compose -- exec -T postgres-keycloak pg_restore -U keycloak -d keycloak --clean --if-exists \
   < backups/<timestamp>/keycloak.dump
 
 # 3. Bring up the rest and rebuild the search index (not part of the backup).
 ./neops up
-./neops compose -- exec cms python manage.py elastic_index --create
 ./neops compose -- exec cms python manage.py elastic_index --populate --models core.Device core.Interface
 
 # 4. Confirm.
 ./neops doctor
 ```
+
+`--if-exists` is not optional on a fresh database: without it every `DROP` in the dump fails
+against a schema that does not exist yet, and `pg_restore` ends with hundreds of errors and a
+non-zero exit while having loaded the data correctly — indistinguishable from a real failure.
+
+The indices themselves need no `elastic_index --create`: `up` runs `cms-init`, which creates
+them. Only the contents have to be rebuilt, which is what `--populate` does. Running `--create`
+after `up` fails with `resource_already_exists_exception`.
 
 Restoring onto a host whose `neops-core` image is *older* than the one the backup was taken with
 is not supported: Django migrations do not run backwards. Restore onto the same or a newer core
