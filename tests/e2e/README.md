@@ -79,12 +79,36 @@ It disables Elasticsearch's disk allocation thresholds, because a host above the
 stage turns every index read-only and `cms-init` then fails in a way that has nothing to do
 with the change under test. The file is gitignored and is exactly what it is there for.
 
+## The Keycloak browser login
+
+`run_scenario.py oidc-keycloak` only proves that the providers are seeded. The sign-in itself
+is a browser flow — three redirects across two origins, a one-time code and a role claim — so
+it lives in `keycloak_login.py` and runs against a stack left up with `--keep`:
+
+```bash
+uv run --with playwright playwright install chromium          # once per machine
+uv run python tests/e2e/run_scenario.py oidc-keycloak --port-base 20000 --workdir /tmp/kc --keep
+uv run --with playwright python tests/e2e/keycloak_login.py /tmp/kc/repo
+```
+
+It creates the realm user `e2e-keycloak` and a `neops-e2e` role on the `neops-auth` client
+through Keycloak's admin REST API on the loopback port (`--port-base` + 180, plain HTTP, so no
+trust store is involved), then drives Chromium with `ignore_https_errors` through the web
+client's "Login with Keycloak" button. It asserts that the app leaves `/login`, that
+`localStorage.token` holds a bearer token, and that `resource_access.neops-auth.roles` reached
+core — the authorization-critical half, which a login that merely succeeds does not prove.
+Screenshots and page HTML from a failure land in `<workdir>/playwright/`.
+
+Two flags skip the browser and only talk to the admin API: `--create-realm-role NAME` and
+`--assert-realm-role NAME`, which is how a chaos run shows that `down` + `up` does not
+re-import the realm over what the admin console holds.
+
+Chromium resolves `*.localhost` to 127.0.0.1 natively, and the wait for the token tolerates a
+`SecurityError` while the main frame is still an opaque mid-navigation document.
+
 ## Not covered here
 
 - `traefik-acme` needs public DNS and port 80 reachable from the internet. The
   `compose-config` gate is its only check.
 - `oidc-external` needs a real identity provider. Same.
-- The Keycloak browser login is a manual step: run `oidc-keycloak` with `--keep`, create a
-  user in the admin console at `https://auth.neops.localhost:<base+443>` (user `admin`,
-  password `NEOPS_KEYCLOAK_ADMIN_PASSWORD` from the clone's `.env`), assign it client roles
-  on `neops-auth`, then open the web client and sign in through the Keycloak button.
+- Single logout (`/auth/oidc-logout/`) — the login script stops at the landed session.
