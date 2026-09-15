@@ -224,7 +224,6 @@ def build_env(example: Path, name: str, ports: Ports, extra: dict[str, str]) -> 
         apply_traefik_ports(values, scenario, ports)
     values["COMPOSE_FILE"] = values["COMPOSE_FILE"] + ":" + OVERRIDE_FILE
     values["COMPOSE_PROJECT_NAME"] = f"neops-e2e-{name}-{ports.base}"
-    values["NEOPS_MONITOR_IMAGE"] = "neops-monitor-app:local"
     values.update(extra)
     return values
 

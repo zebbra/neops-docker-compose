@@ -30,14 +30,6 @@ cp /path/to/cert.pem certs/cert.pem && cp /path/to/key.pem certs/key.pem   # tls
 starts the CMS, mints the engine's API key, starts everything else and runs `./neops doctor`.
 Log in at `NEOPS_WEB_URL` as `NEOPS_ADMIN_USER`.
 
-> **Known issue — the monitor image is not published yet.** `quay.io/zebbra/neops-monitor-app:<tag>`
-> does not exist until the workflow engine's next tag after
-> [neops-workflow-engine#291](https://github.com/zebbra/neops-workflow-engine/pull/291), which is what
-> starts publishing it. Until that tag ships, `install` stops at the image check with
-> `not pullable`. Build the image yourself from a checkout of the engine
-> (`docker build -f rest/monitor-app/Dockerfile -t neops-monitor-app:local .`) and point `.env` at it
-> with `NEOPS_MONITOR_IMAGE=neops-monitor-app:local`.
-
 ## Scenarios
 
 | Example | What you get |
