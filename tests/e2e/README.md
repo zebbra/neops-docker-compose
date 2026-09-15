@@ -72,12 +72,9 @@ under `data/secrets/tls/`, so no run needs an operator-supplied certificate. The
 
 ## The monitor image
 
-`quay.io/zebbra/neops-monitor-app` is not published yet, so the harness sets
-`NEOPS_MONITOR_IMAGE=neops-monitor-app:local` and expects that image to exist on the host.
-Build it from the workflow-engine checkout (`rest/monitor-app/Dockerfile`) if it does not.
-`docker compose pull` cannot fetch a local-only tag, which is why `Compose.pull()` passes
-`--ignore-pull-failures`. The harness therefore does not pre-pull: `install` renders
-`generated/` first, and nothing can read the compose files before that anyway.
+The harness runs the published `quay.io/zebbra/neops-monitor-app` tag pinned in `compose.yaml`. To
+exercise a local build instead, pass `--extra-env NEOPS_MONITOR_IMAGE=neops-monitor-app:local`;
+`Compose.pull()` passes `--ignore-pull-failures`, so a local-only tag does not abort the start.
 
 ## The override file
 

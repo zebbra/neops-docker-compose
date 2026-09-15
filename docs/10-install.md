@@ -39,23 +39,6 @@ it.
 
 ## Install
 
-!!! warning "Known issue: the monitor image is not published yet"
-
-    `quay.io/zebbra/neops-monitor-app:<tag>` does not exist in the registry yet. The workflow
-    engine starts publishing it with its next tag after
-    [neops-workflow-engine#291](https://github.com/zebbra/neops-workflow-engine/pull/291); until
-    that tag ships, `install` stops at the image check with `not pullable`.
-
-    Build it yourself from a checkout of the engine repository and point `.env` at the result:
-
-    ```bash
-    docker build -f rest/monitor-app/Dockerfile -t neops-monitor-app:local .   # in neops-workflow-engine
-    echo 'NEOPS_MONITOR_IMAGE=neops-monitor-app:local' >> .env                 # in this repository
-    ```
-
-    A locally built image needs no registry: the image check accepts anything already on the host.
-    Remove the override once the published tag exists.
-
 ```bash
 ./neops install
 ```
