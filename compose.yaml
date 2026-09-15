@@ -5,10 +5,10 @@
 # an emergency (NEOPS_CORE_TAG, ...). NEOPS_*_IMAGE replaces the whole reference.
 x-versions:
   core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.1.0-beta.6}}
-  engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.43.0-beta.3}}
-  monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.43.0-beta.3}}
+  engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.43.0-beta.4}}
+  monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.43.0-beta.4}}
   worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.2.0-beta.5}}
-  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-5.0.0}}
+  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-5.1.0-beta.1}}
 
 x-logging: &logging
   driver: json-file
