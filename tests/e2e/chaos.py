@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Chaos checks against a stack left running by run_scenario.py --keep.
 
-    uv run python tests/e2e/chaos.py <clone dir> [--prune]
+    uv run python tests/e2e/chaos.py <clone dir> [--prune] [--only STEP ...]
 
-1. Kill each service in turn; `compose up -d --wait` brings it back and doctor is green again.
-2. Stop and start the stack; the admin account, the engine's API key and the state survive.
-3. Corrupt .env three ways; `./neops check` names each problem and exits 1.
-4. Restart the engine under a polling worker; the worker keeps working.
-5. Stop the CMS database; logins fail while it is gone and work again when it returns.
+kill      Kill each service in turn; `compose up -d --wait` brings it back and doctor is green.
+restart   Stop and start the stack; the admin, the device group, the API key and the state survive.
+prune     The same, with `docker system prune -a --volumes` in the middle, so `up` re-pulls.
+env       Corrupt .env three ways; `./neops check` names each problem and exits 1.
+engine    Restart the engine under a polling worker; the worker keeps working.
+database  Stop the CMS database; logins fail while it is gone and work again when it returns.
 
-`--prune` adds `docker system prune -a --volumes` between the stop and the start of step 2.
-It removes every unused image on the host, so it is off by default and asks before running.
-Exit code 0 only when every step passed. See tests/e2e/README.md.
+`--only` picks steps by those names and runs them in the listed order; the default is every
+step but `prune`, and `--prune` swaps `prune` in for `restart`. The prune removes every unused
+image, container and volume on the host, so it asks before running. Exit code 0 only when
+every step passed. See tests/e2e/README.md.
 """
 
 from __future__ import annotations
@@ -22,13 +24,22 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from run_scenario import CONNECT, Report, neops  # noqa: E402
+from run_scenario import (  # noqa: E402
+    CONNECT,
+    GROUP_DELETE,
+    GROUP_READ,
+    GROUP_UPSERT,
+    Report,
+    gql,
+    neops,
+)
 
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import NAME_WIDTH, Http, Login, login  # noqa: E402
@@ -37,16 +48,17 @@ from neops_compose.urls import PublicUrl  # noqa: E402
 KILL_SERVICES = ("cms", "engine", "redis", "postgres-cms", "worker", "traefik")
 WAIT_TIMEOUT = "600"
 POLLING_MARKER = "Worker ready and listening for jobs"
-# The plan asked for a device written through `deviceUpsert` here. core's GraphQL writes are
-# role-gated and `install` seeds a superuser holding no NeOps role, so a shipped deployment
-# answers "User is not allowed to create a group." until an operator grants one from the CMS
-# admin site (docs/10-install.md, "Adding users"). Persistence is asserted through what the
-# deployment does provide: the admin account, the minted API key and the CLI's own state.
+# A database row, which the files under data/ do not prove on their own. run_scenario.py uses
+# its own group name and deletes it again, so the two can run against one clone without
+# either seeing the other's row.
+CHAOS_GROUP = "e2e-chaos-survivor"
 
 # Core allows five logins a minute from one address and doctor spends two of them, so a
 # doctor run right after another can fail on the rate limit alone. That is not a recovery
 # failure: wait out the window and ask again.
 RATE_LIMIT_MARKERS = ("rate limit", "too many")
+STEP_NAMES = ("kill", "restart", "prune", "env", "engine", "database")
+DEFAULT_STEPS = tuple(name for name in STEP_NAMES if name != "prune")
 PRUNE_WARNING = (
     "docker system prune -a --volumes removes every unused image, container and volume on "
     "this host, including other projects' (KIND, the lab)."
@@ -64,6 +76,10 @@ class Stack:
     @property
     def cms(self) -> PublicUrl:
         return PublicUrl.parse(self.values["NEOPS_CMS_URL"])
+
+    @property
+    def project(self) -> str:
+        return self.values["COMPOSE_PROJECT_NAME"]
 
     @property
     def engine_env(self) -> Path:
@@ -94,6 +110,10 @@ class Stack:
 
     def api_keys(self) -> int:
         return len(json.loads(self.state_file.read_text())["api_keys"])
+
+    def last_up_images(self) -> list[str]:
+        """What the previous `up` ran, which is what the next one has to find or fetch again."""
+        return sorted(set(json.loads(self.state_file.read_text())["last_up"]["images"].values()))
 
     def logs_since(self, service: str, since: str) -> str:
         """The engine's /workers needs a worker:read role the admin user does not have, so
@@ -199,24 +219,89 @@ def confirm_prune() -> bool:
     return input("type PRUNE to continue: ").strip() == "PRUNE"
 
 
-def prune_host(report: Report) -> None:
+def docker_out(*args: str) -> list[str]:
+    result = subprocess.run(["docker", *args], check=True, text=True, capture_output=True)
+    return result.stdout.split()
+
+
+def image_exists(reference: str) -> bool:
+    return subprocess.run(["docker", "image", "inspect", reference], capture_output=True).returncode == 0
+
+
+def project_volumes(project: str) -> list[str]:
+    return docker_out("volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={project}")
+
+
+def prune_host(report: Report) -> bool:
     if not confirm_prune():
-        report.add(False, "prune was requested but not confirmed")
-        return
+        return report.add(False, "prune was requested but not confirmed")
     subprocess.run(["docker", "system", "prune", "-a", "--volumes", "-f"], check=True)
+    return True
+
+
+def assert_prune_emptied_the_host(report: Report, stack: Stack) -> None:
+    """The local monitor image is the one the prune must not take: nothing can re-pull a
+    local-only tag, so a running container elsewhere on the host has to pin it."""
+    local = stack.values["NEOPS_MONITOR_IMAGE"]
+    fetchable = [ref for ref in stack.last_up_images() if ref != local]
+    left = [ref for ref in fetchable if image_exists(ref)]
+    report.add(not left, f"the prune removed all {len(fetchable)} fetchable stack images ({left})")
+    report.add(image_exists(local), f"{local} survived the prune")
+    volumes = project_volumes(stack.project)
+    report.add(not volumes, f"no docker volume belongs to {stack.project} ({volumes})")
+
+
+def bring_up(report: Report, stack: Stack, what: str) -> None:
+    started = time.monotonic()
+    neops(stack.clone, "up", "--connect", CONNECT, "--insecure")
+    report.add(True, f"`up` brought the stack back {what} [{time.monotonic() - started:.0f}s]")
+
+
+def write_group(report: Report, stack: Stack, token: str) -> str | None:
+    try:
+        upserted = gql(stack.http, stack.cms, token, GROUP_UPSERT, {"n": CHAOS_GROUP})
+        group_id = upserted["deviceGroupUpsert"]["deviceGroup"]["id"]
+    except Exception as exc:
+        report.add(False, f"the admin creates the device group {CHAOS_GROUP!r} ({exc})")
+        return None
+    report.add(True, f"the admin creates the device group {CHAOS_GROUP!r} (id {group_id})")
+    return group_id
+
+
+def assert_group_survived(report: Report, stack: Stack, token: str, group_id: str, what: str) -> None:
+    """Read the row back and delete it again: the read proves the data survived, the delete
+    proves the database came back writable and leaves the clone as it was found."""
+    try:
+        found = gql(stack.http, stack.cms, token, GROUP_READ, {"n": CHAOS_GROUP})["groups"]["results"]
+        survived = [g["id"] for g in found] == [group_id]
+        report.add(survived, f"the device group is still there {what} ({found})")
+        gql(stack.http, stack.cms, token, GROUP_DELETE, {"id": group_id})
+        left = gql(stack.http, stack.cms, token, GROUP_READ, {"n": CHAOS_GROUP})["groups"]["results"]
+        report.add(left == [], f"the admin can write again {what}: the group deletes ({left})")
+    except Exception as exc:
+        report.add(False, f"the device group is still there {what} ({exc})")
 
 
 def step_restart_survival(report: Report, stack: Stack, prune: bool) -> None:
     started = time.monotonic()
-    admin_can_log_in(report, stack, "before the restart")
+    before = stack.admin_login()
+    report.add(bool(before.token), f"the admin can log in before the restart ({before.error})")
+    group_id = write_group(report, stack, before.token) if before.token else None
     engine_env_before = stack.engine_env.read_bytes()
     keys_before = stack.api_keys()
+
     neops(stack.clone, "down")
-    if prune:
-        prune_host(report)
-    neops(stack.clone, "up", "--connect", CONNECT, "--insecure")
+    if prune and not prune_host(report):
+        return
     what = "after a prune and a restart" if prune else "after a stop and a start"
-    admin_can_log_in(report, stack, what)
+    if prune:
+        assert_prune_emptied_the_host(report, stack)
+    bring_up(report, stack, what)
+
+    after = stack.admin_login()
+    report.add(bool(after.token), f"the admin can log in {what} ({after.error})")
+    if after.token and group_id:
+        assert_group_survived(report, stack, after.token, group_id, what)
     report.add(
         stack.engine_env.read_bytes() == engine_env_before, f"data/secrets/engine.env is unchanged {what}"
     )
@@ -227,6 +312,8 @@ def step_restart_survival(report: Report, stack: Stack, prune: bool) -> None:
         f"one API key before and after ({keys_before} -> {keys_after})",
         started,
     )
+    ok, detail = doctor_green(stack.clone)
+    report.add(ok, f"doctor green {what} ({detail})")
 
 
 def broken_envs(original: str) -> list[tuple[str, str, str]]:
@@ -313,18 +400,30 @@ def step_database_outage(report: Report, stack: Stack) -> None:
     report.add(ok, f"doctor green after the database outage ({detail})")
 
 
-def run_steps(report: Report, stack: Stack, prune: bool) -> None:
-    steps = (
-        ("kill and recover", lambda: step_kill_and_recover(report, stack)),
-        ("restart survival", lambda: step_restart_survival(report, stack, prune)),
-        ("broken .env", lambda: step_broken_env(report, stack)),
-        ("engine restart", lambda: step_engine_restart(report, stack)),
-        ("database outage", lambda: step_database_outage(report, stack)),
-    )
-    for name, step in steps:
+def steps_by_name(report: Report, stack: Stack) -> dict[str, Callable[[], None]]:
+    """`prune` is `restart` with a host-wide prune in the middle; the assertions are the same."""
+    return {
+        "kill": lambda: step_kill_and_recover(report, stack),
+        "restart": lambda: step_restart_survival(report, stack, prune=False),
+        "prune": lambda: step_restart_survival(report, stack, prune=True),
+        "env": lambda: step_broken_env(report, stack),
+        "engine": lambda: step_engine_restart(report, stack),
+        "database": lambda: step_database_outage(report, stack),
+    }
+
+
+def selected_steps(only: list[str] | None, prune: bool) -> list[str]:
+    if only:
+        return only
+    return [("prune" if name == "restart" and prune else name) for name in DEFAULT_STEPS]
+
+
+def run_steps(report: Report, stack: Stack, names: list[str]) -> None:
+    steps = steps_by_name(report, stack)
+    for name in names:
         print(f"\n=== {name} ===", flush=True)
         try:
-            step()
+            steps[name]()
         except Exception as exc:  # one broken step must not hide the others
             report.add(False, f"step {name!r} raised {type(exc).__name__}: {exc}")
 
@@ -333,6 +432,13 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("clone", type=Path, help="the clone directory run_scenario.py --keep left behind")
     ap.add_argument("--prune", action="store_true", help=PRUNE_WARNING)
+    ap.add_argument(
+        "--only",
+        action="append",
+        choices=STEP_NAMES,
+        metavar="STEP",
+        help=f"run only this step, repeatable and ordered: {', '.join(STEP_NAMES)}",
+    )
     args = ap.parse_args(argv)
 
     clone = args.clone.resolve()
@@ -342,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
     stack = load_stack(clone)
     report = Report()
     started = time.monotonic()
-    run_steps(report, stack, args.prune)
+    run_steps(report, stack, selected_steps(args.only, args.prune))
     print(
         f"\nchaos: {len(report.results) - len(report.failed)}/{len(report.results)} assertions "
         f"passed in {time.monotonic() - started:.0f}s",

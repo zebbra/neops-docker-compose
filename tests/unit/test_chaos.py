@@ -26,6 +26,23 @@ def test_add_overlay_appends_to_compose_file():
     assert text == "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.expose.yaml\n"
 
 
+def test_the_default_run_never_touches_the_host():
+    assert "prune" not in chaos.selected_steps(None, prune=False)
+
+
+def test_prune_replaces_the_plain_restart_rather_than_adding_to_it():
+    assert chaos.selected_steps(None, prune=True) == ["kill", "prune", "env", "engine", "database"]
+
+
+def test_only_wins_over_prune_and_keeps_the_order_given():
+    assert chaos.selected_steps(["prune"], prune=False) == ["prune"]
+    assert chaos.selected_steps(["env", "kill"], prune=True) == ["env", "kill"]
+
+
+def test_every_step_name_resolves_to_a_step():
+    assert sorted(chaos.steps_by_name(chaos.Report(), stack=None)) == sorted(chaos.STEP_NAMES)
+
+
 def test_every_chaos_corruption_is_reported_with_the_word_it_asserts(tmp_repo):
     for label, broken, needle in chaos.broken_envs(GOOD):
         env, scenario = make(tmp_repo, broken)

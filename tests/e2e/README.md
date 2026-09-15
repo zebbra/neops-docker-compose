@@ -155,13 +155,20 @@ uv run python tests/e2e/run_scenario.py traefik-tls-selfsigned --port-base 19000
 uv run python tests/e2e/chaos.py /tmp/neops-e2e/chaos/repo
 ```
 
-| Step | Assertion |
-|---|---|
-| kill `cms`, `engine`, `redis`, `postgres-cms`, `worker`, `traefik` in turn | `compose up -d --wait` brings each back and doctor is green again |
-| `./neops down` then `./neops up` | the admin still logs in, `data/secrets/engine.env` is byte-identical and `state.json` still holds one API key |
-| three corrupted `.env` files | `./neops check` exits 1 and names each problem, and passes again once restored |
-| `./neops restart engine` under a polling worker | the engine goes healthy again, the worker container survives and doctor is green |
-| `compose stop postgres-cms` | logins fail while the database is gone and work again when it returns |
+| Step | Name | Assertion |
+|---|---|---|
+| kill `cms`, `engine`, `redis`, `postgres-cms`, `worker`, `traefik` in turn | `kill` | `compose up -d --wait` brings each back and doctor is green again |
+| `./neops down` then `./neops up` | `restart` | the admin still logs in, a device group written before the stop reads back and deletes again, `data/secrets/engine.env` is byte-identical, `state.json` still holds one API key and doctor is green |
+| the same with a host-wide prune in the middle | `prune` | everything `restart` asserts, plus the prune emptied the host and `up` fetched every image again |
+| three corrupted `.env` files | `env` | `./neops check` exits 1 and names each problem, and passes again once restored |
+| `./neops restart engine` under a polling worker | `engine` | the engine goes healthy again, the worker container survives and doctor is green |
+| `compose stop postgres-cms` | `database` | logins fail while the database is gone and work again when it returns |
+
+`--only` runs the named steps in the order given, which is how the prune is driven on its own:
+
+```bash
+CHAOS_PRUNE=yes uv run python tests/e2e/chaos.py /tmp/neops-e2e/chaos/repo --only prune
+```
 
 A green run takes about five minutes, most of it inside `up -d --wait`: killing `redis` or
 `postgres-cms` recreates everything that depends on them and re-runs `cms-init`, and the
@@ -174,18 +181,32 @@ Three things the run accommodates, each a property of the product rather than a 
 - **Core rate-limits login to five a minute per address** and every doctor run spends two, so
   a doctor that fails *only* on the worker probe with a rate-limit message is retried after a
   minute instead of being believed.
-- **The restart step proves persistence without writing an entity.** It checks the admin
-  account, the minted API key and `state.json` rather than a device, because a device write
-  would need the worker and a platform row that no scenario seeds. The role that makes such a
-  write legal at all is seeded by `cms-init` and is covered by `run_scenario.py`'s own
-  device-group assertion.
+- **The restart step writes a device group, not a device.** A device would need the worker and
+  a platform row that no scenario seeds, so the row it carries across the stop is a group. The
+  admin role that makes the write legal is seeded by `cms-init`; `run_scenario.py` asserts that
+  separately, under its own group name, so the two can run against one clone.
 - **An engine restart costs no re-registration.** The engine keeps worker registrations in its
   own Postgres, so the worker logs nothing across the restart and simply keeps polling.
 
-The `--prune` flag adds `docker system prune -a --volumes` between the stop and the start of
-the restart step. That deletes every unused image, container and volume on the host, KIND's
-and the lab's included, so it is off by default and refuses to run without `CHAOS_PRUNE=yes`
-or a typed confirmation.
+### The prune step
+
+`--prune` swaps the `prune` step in for `restart`, and `--only prune` runs it alone. It is
+`restart` with `docker system prune -a --volumes` between the `down` and the `up`, and it adds
+three assertions the plain restart cannot make:
+
+- every image the last `up` ran is gone, except `NEOPS_MONITOR_IMAGE` — so the `up` that
+  follows really fetched them again rather than finding them cached;
+- `NEOPS_MONITOR_IMAGE` is still there. It is a local-only tag that nothing can re-pull, so a
+  container running elsewhere on the host has to pin it or the step cannot pass;
+- no volume carries `com.docker.compose.project=<project>`. The stack keeps every byte in bind
+  mounts under `data/`, which is why a volume wipe cannot touch it; the assertion is what
+  would catch a named volume being introduced later.
+
+The prune deletes every unused image, container and volume **on the whole host**, other
+projects' included, and orphaned named volumes are not spared. List what will go first
+(`docker volume ls -f dangling=true`) and pin anything worth keeping to a running container.
+The step is off by default and refuses to run without `CHAOS_PRUNE=yes` or a typed
+confirmation.
 
 `tests/unit/test_chaos.py` holds the three `.env` corruptions against the rules that must
 reject them, so a reworded message cannot turn a chaos assertion into a silent pass. It needs
