@@ -95,3 +95,14 @@ def test_admin_credentials_are_confined_to_cms_init():
         assert "NEOPS_ADMIN_PASSWORD" not in services[name]["environment"], (
             f"{name} must not carry NEOPS_ADMIN_PASSWORD, only cms-init needs it"
         )
+
+
+def test_no_healthcheck_addresses_localhost():
+    """localhost resolves to ::1 first in these images and the servers bind IPv4 only, so a
+    healthcheck against it never passes (the monitor app's nginx is the one that bit us)."""
+    for f in COMPOSE_FILES:
+        for name, service in (load(f).get("services") or {}).items():
+            test = (service.get("healthcheck") or {}).get("test")
+            if not test:
+                continue
+            assert "localhost" not in " ".join(test), f"{f.name}: {name} healthcheck uses localhost"
