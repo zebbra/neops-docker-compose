@@ -130,10 +130,11 @@ uv run python tests/e2e/chaos.py /tmp/neops-e2e/chaos/repo
 | `./neops restart engine` under a polling worker | the engine goes healthy again, the worker container survives and doctor is green |
 | `compose stop postgres-cms` | logins fail while the database is gone and work again when it returns |
 
-A full run takes about 15 minutes, most of it inside `up -d --wait`: killing `redis` or
-`postgres-cms` recreates everything that depends on them and re-runs `cms-init`. Each step
-prints `PASS`/`FAIL` with its own elapsed time, and a step that raises does not stop the ones
-after it, so one run reports everything that is broken.
+A green run takes about five minutes, most of it inside `up -d --wait`: killing `redis` or
+`postgres-cms` recreates everything that depends on them and re-runs `cms-init`, and the
+`down` plus `up` pulls every image again. A run with failures takes longer, because the waits
+spend their whole timeout. Each step prints `PASS`/`FAIL` with its own elapsed time, and a
+step that raises does not stop the ones after it, so one run reports everything that is broken.
 
 Three things the run accommodates, each a property of the product rather than a defect:
 
