@@ -182,10 +182,52 @@ def _ctx(tmp_path, compose_file: str) -> Ctx:
     )
 
 
-def _run_with(tmp_path, monkeypatch, compose_file: str) -> list[doctor.Probe]:
+def _run_with(tmp_path, monkeypatch, compose_file: str, extra_env: str = "") -> list[doctor.Probe]:
     http = healthy({"/blackboard/job": (200, "{}")})
     monkeypatch.setattr(doctor, "Http", lambda **kwargs: http)
-    return doctor.run(_ctx(tmp_path, compose_file))
+    ctx = _ctx(tmp_path, compose_file)
+    if extra_env:
+        (tmp_path / ".env").write_text((tmp_path / ".env").read_text() + extra_env)
+        ctx = _ctx_from(tmp_path)
+    return doctor.run(ctx)
+
+
+def _ctx_from(tmp_path) -> Ctx:
+    env = Env(tmp_path / ".env")
+    return Ctx(
+        repo=tmp_path,
+        env=env,
+        paths=Paths.for_repo(tmp_path, env),
+        scenario=Scenario.from_env(env),
+        compose=type("C", (), {"ps": staticmethod(lambda: [])})(),
+        state=State(),
+        log=lambda m: None,
+    )
+
+
+LOCAL_URLS = "".join(
+    f"{k}={v}\n"
+    for k, v in {
+        "NEOPS_WEB_URL": "http://localhost:8080",
+        "NEOPS_CMS_URL": "http://localhost:8000",
+        "NEOPS_ENGINE_URL": "http://localhost:3030",
+        "NEOPS_WORKFLOWS_URL": "http://localhost:3031",
+    }.items()
+)
+
+
+def test_a_loopback_only_deployment_skips_the_deny_probe_instead_of_warning_forever(tmp_path, monkeypatch):
+    """examples/local.env: no proxy will ever deny the worker routes, and with the engine on
+    127.0.0.1 nothing off this host can reach them. A permanent WARN there is noise."""
+    probes = _run_with(tmp_path, monkeypatch, "compose.yaml:compose.expose.yaml", LOCAL_URLS)
+    probe = deny_probe_of(probes)
+    assert probe.ok and probe.detail == doctor.LOOPBACK_ONLY
+
+
+def test_loopback_urls_on_a_public_bind_address_still_warn(tmp_path, monkeypatch):
+    extra = LOCAL_URLS + "NEOPS_BIND_ADDRESS=0.0.0.0\n"
+    probes = _run_with(tmp_path, monkeypatch, "compose.yaml:compose.expose.yaml", extra)
+    assert not deny_probe_of(probes).ok and deny_probe_of(probes).severity == "warn"
 
 
 def test_run_warns_about_the_worker_api_in_expose_mode_and_fails_in_traefik_mode(tmp_path, monkeypatch):

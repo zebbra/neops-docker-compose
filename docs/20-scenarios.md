@@ -81,9 +81,10 @@ to each `127.0.0.1` port directly, over plain HTTP, with local password login. E
 own origin, so the same-origin rules above are satisfied without any hostname. It is the
 compose equivalent of the neops-lab control plane and is meant for one machine: with no proxy
 to deny them, the engine's worker routes answer to every process on this host, which is why
-`NEOPS_BIND_ADDRESS` must stay `127.0.0.1` and `./neops doctor` ends on a `WARN` (see
-[Install](10-install.md)). Put a proxy in front and switch to `examples/external-proxy.env`
-before exposing it to a network.
+`NEOPS_BIND_ADDRESS` must stay `127.0.0.1`: with both the engine URL and the bind address on
+loopback, `./neops doctor` skips the deny probe rather than warning forever, and the moment
+either leaves loopback the warning is back. Put a proxy in front and switch to
+`examples/external-proxy.env` before exposing it to a network.
 
 ### Shared hostname
 

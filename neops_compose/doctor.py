@@ -13,6 +13,12 @@ from neops_compose.urls import BASE_URLS, PublicUrl, public_urls
 ONE_SHOTS = {"cms-init"}
 NAME_WIDTH = 28
 LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
+DENY_PROBE = "engine worker API denied"
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+LOOPBACK_ONLY = (
+    "skipped: the engine is published on the loopback address only, "
+    "so nothing beyond this host reaches these routes"
+)
 WORKER_PROBE = "worker registered"
 WORKER_POLL_SECONDS = 5
 DB_UNREACHABLE = "the CMS cannot reach its database (login answered: internal error)"
@@ -158,7 +164,9 @@ def _deny_probe(engine: PublicUrl, http: Http, severity: str = "fail") -> Probe:
     In expose mode the deny belongs to a proxy the operator has not necessarily put in front
     yet, so this is a warning there: a first install must be able to finish and say so.
     """
-    name = "engine worker API denied"
+    name = DENY_PROBE
+    if severity == "skip":
+        return Probe(name, True, LOOPBACK_ONLY)
     hint = (
         EXTERNAL_PROXY_DENY_HINT
         if severity == "warn"
@@ -326,6 +334,23 @@ def _tls_probe(http: Http, web: PublicUrl) -> Probe:
     return Probe("tls certificate", days is not None and days > 14, f"{days} days until expiry")
 
 
+def _is_loopback(host: str) -> bool:
+    return host in LOOPBACK_HOSTS or host.startswith("127.")
+
+
+def deny_severity(ctx: Ctx, engine: PublicUrl) -> str:
+    """Behind the bundled Traefik the deny is a rule the CLI rendered, so a hole is a failure.
+    Behind an external proxy it is the operator's rule and may not be in place yet: a warning.
+    With the engine URL and the bind address both on loopback there is no proxy and no
+    network path either, so a permanent warning would only teach people to ignore warnings."""
+    if ctx.scenario.proxy != "expose":
+        return "fail"
+    bind = ctx.env.get("NEOPS_BIND_ADDRESS", "127.0.0.1")
+    if _is_loopback(engine.host) and _is_loopback(bind):
+        return "skip"
+    return "warn"
+
+
 def run(
     ctx: Ctx,
     connect: str | None = None,
@@ -336,7 +361,7 @@ def run(
     probes = container_probes(ctx.compose.ps())
     urls = public_urls(ctx.env, ctx.scenario)
     http = Http(connect=connect, insecure=insecure)
-    probes += http_probes(urls, http, "warn" if ctx.scenario.proxy == "expose" else "fail")
+    probes += http_probes(urls, http, deny_severity(ctx, urls["NEOPS_ENGINE_URL"]))
     probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http, worker_grace)
     if probe_ratelimit:
         probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http))
