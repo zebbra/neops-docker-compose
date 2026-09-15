@@ -25,6 +25,12 @@ COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml
 | Keycloak | `compose.keycloak.yaml` | a bundled Keycloak as that identity provider (needs OIDC) |
 | metrics | `compose.metrics.yaml` | VictoriaMetrics, vmalert, Grafana, and per-service exporters |
 
+The Celery worker and beat containers of core's 1.0 task path are not part of any scenario by
+default: a 2.0 deployment runs its automation through the engine and the worker SDK, and the CMS
+indexes Elasticsearch synchronously without them. A deployment that still runs 1.0 tasks or
+cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with the next
+`./neops up`; removing the line and running `./neops down` then `./neops up` stops them again.
+
 Overlays combine freely, and `examples/` ships one complete `.env` per combination we test. Put
 anything of your own in `compose.override.yaml` (gitignored) and append it to `COMPOSE_FILE`;
 never edit a tracked compose file, or the next `git pull` conflicts with your change.

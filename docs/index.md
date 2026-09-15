@@ -35,8 +35,8 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `elasticsearch` | `elasticsearch:8.9.2` | search index behind the CMS device/interface views |
 | `cms-init` | `neops-core` | one-shot: Django migrations, create the Elasticsearch indices, create the superuser |
 | `cms` | `neops-core` | the CMS web process (network CMS + GraphQL API at `/graphql`) |
-| `cms-worker` | `neops-core` | Celery worker |
-| `cms-beat` | `neops-core` | Celery beat scheduler |
+| `cms-worker` | `neops-core` | Celery worker for the 1.0 task path; off unless `COMPOSE_PROFILES=cms-tasks` |
+| `cms-beat` | `neops-core` | Celery beat scheduler for the same; off unless `COMPOSE_PROFILES=cms-tasks` |
 | `engine` | `neops-workflow-engine` | the 2.0 workflow engine (blackboard REST API) |
 | `monitor` | `neops-monitor-app` | the workflow manager UI (temporary, being folded into the web client) |
 | `worker` | `neops-worker-sdk` | polls the engine's blackboard and drives devices; base function blocks only |

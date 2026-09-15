@@ -66,6 +66,15 @@ def test_base_stack_has_the_expected_services():
         assert svc.get("logging", {}).get("driver") == "json-file", f"{name} lacks the logging block"
 
 
+def test_the_celery_containers_are_off_unless_the_profile_is_active():
+    """A 2.0 deployment automates through the engine and the worker SDK; the 1.0 task path
+    (Celery worker and beat) starts only with COMPOSE_PROFILES=cms-tasks."""
+    services = load(REPO / "compose.yaml")["services"]
+    for name, svc in services.items():
+        expected = ["cms-tasks"] if name in ("cms-worker", "cms-beat") else None
+        assert svc.get("profiles") == expected, name
+
+
 def test_no_interpolation_of_generated_only_keys():
     generated_only = {
         "DJANGO_ALLOWED_HOSTS",

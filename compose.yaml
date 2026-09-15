@@ -188,8 +188,12 @@ services:
       retries: 6
       start_period: 150s
 
+  # Celery worker and beat: the 1.0 task path. A 2.0 deployment runs its automation through the
+  # engine and the worker SDK and does not need them, so they sit behind a profile:
+  # COMPOSE_PROFILES=cms-tasks in .env starts them.
   cms-worker:
     <<: *core-service
+    profiles: ["cms-tasks"]
     environment:
       <<: *core-env
       ELASTICSEARCH_DSL_SIGNAL_PROCESSOR: neops.core.documents.neops_signal_processor.NeopsCacheSignalProcessor
@@ -207,6 +211,7 @@ services:
 
   cms-beat:
     <<: *core-service
+    profiles: ["cms-tasks"]
     environment: *core-env
     command: ["/usr/local/bin/celery", "-A", "neopsapp", "beat",
               "--scheduler", "neops.enterprise.celery.cron.scheduler:NeopsCeleryScheduler", "-l", "INFO"]

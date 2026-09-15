@@ -58,7 +58,8 @@ class Compose:
         self.run("pull", "--quiet", "--ignore-pull-failures")
 
     def down(self) -> None:
-        self.run("down", "--remove-orphans")
+        """Every profile, or the containers of a profile that was active last time survive."""
+        self.run("--profile", "*", "down", "--remove-orphans")
 
     def exec(self, service: str, *cmd: str, env: dict[str, str] | None = None) -> str:
         """`-e KEY` carries no value: compose reads it from our environment, keeping it out of argv."""
