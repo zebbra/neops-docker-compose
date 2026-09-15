@@ -1,6 +1,6 @@
 ---
-title: NeOps docker-compose
-description: Production docker-compose deployment of the NeOps 2.0 stack, operated with the ./neops CLI.
+title: Neops docker-compose
+description: Production docker-compose deployment of the Neops 2.0 stack, operated with the ./neops CLI.
 tags: [overview, concept]
 # NOTE for whoever wires this repo's docs/ into the neops-documentation umbrella as a submodule:
 # only this repo's mkdocs_custom.yml `nav` fragment is spliced into the umbrella build, not its
@@ -8,9 +8,9 @@ tags: [overview, concept]
 # content) needs excluding again on the umbrella side or it renders as stray public pages.
 ---
 
-# NeOps docker-compose
+# Neops docker-compose
 
-*A production deployment of the NeOps 2.0 stack on a single Docker host, installed and operated
+*A production deployment of the Neops 2.0 stack on a single Docker host, installed and operated
 with one command, `./neops`.*
 
 This repository is a static `compose.yaml` plus a handful of overlay files, selected in `.env`

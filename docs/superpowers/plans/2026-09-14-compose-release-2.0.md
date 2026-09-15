@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the `release/2.0` branch of `neops-docker-compose`: a production compose deployment of the NeOps 2.0 stack with a uv-managed `./neops` CLI (one-line install, deployment migrations, key/token handling, doctor, backup, rotation), overlay-selected scenarios (external proxy, Traefik with three TLS modes, shared-hostname routing, OIDC with external IdP or bundled Keycloak, metrics), bind-mount-only durable state, and a fix to the engine's release workflow so the monitor image gets published.
+**Goal:** Build the `release/2.0` branch of `neops-docker-compose`: a production compose deployment of the Neops 2.0 stack with a uv-managed `./neops` CLI (one-line install, deployment migrations, key/token handling, doctor, backup, rotation), overlay-selected scenarios (external proxy, Traefik with three TLS modes, shared-hostname routing, OIDC with external IdP or bundled Keycloak, metrics), bind-mount-only durable state, and a fix to the engine's release workflow so the monitor image gets published.
 
 **Architecture:** Static `compose.yaml` plus small overlays selected by `COMPOSE_FILE` in `.env`. A Python package `neops_compose` (argparse CLI) validates `.env`, renders the few files that depend on it (`generated/`: Traefik static+dynamic config, per-service env files, OIDC provider seed, Keycloak realm), generates key material under `data/secrets/`, runs numbered deployment migrations recorded in `data/.neops/state.json`, and orchestrates the two-phase first start (CMS up → mint engine API key → everything). Every durable byte lives under `data/` as a bind mount.
 
-**Tech Stack:** Docker Compose v2 (≥ 2.24; 5.4 on the dev box), Python 3.12 via `uv`, `cryptography`, `python-dotenv`, `pytest`, `ruff`; Traefik v3.6.25, Keycloak 26.5.2, Postgres 16, Redis 7, Elasticsearch 8.9.2; NeOps images pinned in `compose.yaml`.
+**Tech Stack:** Docker Compose v2 (≥ 2.24; 5.4 on the dev box), Python 3.12 via `uv`, `cryptography`, `python-dotenv`, `pytest`, `ruff`; Traefik v3.6.25, Keycloak 26.5.2, Postgres 16, Redis 7, Elasticsearch 8.9.2; Neops images pinned in `compose.yaml`.
 
 **Spec:** `docs/superpowers/specs/2026-09-14-compose-release-2.0-design.md` (approved). Read it first; this plan does not repeat its rationale.
 
@@ -72,7 +72,7 @@ git commit -qm "chore: remove the 1.0 compose layout from release/2.0"
 [project]
 name = "neops-compose"
 version = "2.0.0"
-description = "Operator CLI for the NeOps 2.0 docker-compose deployment"
+description = "Operator CLI for the Neops 2.0 docker-compose deployment"
 requires-python = ">=3.12"
 dependencies = [
   "cryptography>=43",
@@ -1384,7 +1384,7 @@ def ensure_selfsigned(tls_dir: Path, hosts: list[str], rotate: bool = False, day
         return False
     now = dt.datetime.now(dt.UTC)
     ca_key = _rsa_key()
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "NeOps deployment CA")])
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Neops deployment CA")])
     ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
           .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
           .not_valid_before(now - dt.timedelta(minutes=5)).not_valid_after(now + dt.timedelta(days=days * 2))
@@ -1639,7 +1639,7 @@ def keycloak_realm(env: Env, paths: Paths) -> dict:
         "registrationAllowed": False,
         "clients": [{
             "clientId": KEYCLOAK_CLIENT_ID,
-            "name": "NeOps",
+            "name": "Neops",
             "enabled": True,
             "protocol": "openid-connect",
             "publicClient": False,
@@ -1738,7 +1738,7 @@ Run: `uv run pytest tests/unit/test_compose_files.py -q` → `test_base_stack_ha
 - [ ] **Step 2: Write `compose.yaml`**
 
 ```yaml
-# NeOps 2.0 production stack. Scenario overlays are selected with COMPOSE_FILE in .env;
+# Neops 2.0 production stack. Scenario overlays are selected with COMPOSE_FILE in .env;
 # see .env.example and examples/. Operate it with ./neops (see README.md).
 #
 # Image pins: the tested set for this release. Override per image from .env only in
@@ -2525,7 +2525,7 @@ def test_examples_ship_no_secrets():
 
 ```bash
 # =============================================================================
-# NeOps 2.0 docker-compose — configuration reference
+# Neops 2.0 docker-compose — configuration reference
 # =============================================================================
 # Copy one of examples/*.env to .env, fill in the secrets and URLs, then run:
 #     ./neops install
@@ -2648,7 +2648,7 @@ NEOPS_TLS_KEY_FILE=./certs/key.pem
 Each example is complete: an operator copies it to `.env`, fills the blank secrets, and edits the hostnames. Shared header for all nine (write it verbatim at the top of each file, then the scenario block):
 
 ```bash
-# NeOps 2.0 — <scenario name>. Copy to .env, fill every blank secret (openssl rand -hex 32),
+# Neops 2.0 — <scenario name>. Copy to .env, fill every blank secret (openssl rand -hex 32),
 # set your hostnames, then: ./neops install.  Reference for every key: .env.example
 COMPOSE_PATH_SEPARATOR=:
 ```
@@ -4622,7 +4622,7 @@ def log(message: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="neops", description="Operate the NeOps 2.0 docker-compose deployment.")
+    p = argparse.ArgumentParser(prog="neops", description="Operate the Neops 2.0 docker-compose deployment.")
     sub = p.add_subparsers(dest="command", required=True)
 
     def add(name: str, help_: str) -> argparse.ArgumentParser:
@@ -4961,7 +4961,7 @@ git commit -qm "chore: make check (lint, tests, compose-config gate) and CI"
 ```markdown
 # neops-docker-compose
 
-Production deployment of the NeOps 2.0 stack with Docker Compose: neops-core (CMS), the workflow
+Production deployment of the Neops 2.0 stack with Docker Compose: neops-core (CMS), the workflow
 engine, the workflow manager UI, a worker, the web client, Postgres per service, Redis and
 Elasticsearch, with optional Traefik, Keycloak and a metrics stack.
 
@@ -4971,7 +4971,7 @@ Full documentation: `docs/` (and docs.neops.io once published).
 
 - A Linux host with Docker Engine and Compose v2 (`docker compose version` ≥ 2.24), `git`, and
   [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
-- `docker login quay.io` with an account that can pull the licensed NeOps images.
+- `docker login quay.io` with an account that can pull the licensed Neops images.
 - DNS records for the public hostnames you choose (or one record in shared-hostname mode),
   and either a certificate for them or a public host for Let's Encrypt.
 - `vm.max_map_count ≥ 262144` for Elasticsearch (`./neops check` tells you the exact command).
@@ -5042,7 +5042,7 @@ edited tracked files break the next `git pull`.
   - `docs/30-operations.md`: every command, backup and restore step by step (`pg_restore -U neops -d neops --clean cms.dump` inside `postgres-cms`, same for the engine and Keycloak, then `manage.py elastic_index --create` and `--populate --models core.Device core.Interface`), rotation matrix (what each rotation invalidates), migrations, upgrades and the downgrade rule, `purge`.
   - `docs/40-external-proxy.md`: the proxy contract with nginx and Caddy snippets (route by host; `proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-Proto $scheme; client_max_body_size 200m;`; the engine deny locations for `/blackboard/job`, `/workers/register`, `/workers/*/ping`, `/workers/*/unregister`, `/function-blocks/register` as `return 403`), and the `RATELIMIT_IP_META_KEY` warning.
   - `docs/50-troubleshooting.md`: the doctor probes and what each failure means; `DisallowedHost`, 500 on login (`RATELIMIT_IP_META_KEY`), engine refusing to start (`NEOPS_CMS_TOKEN`, JWT key), Elasticsearch `max_map_count`, monitor blank (same origin), Keycloak `Invalid parameter: redirect_uri`.
-  - `mkdocs_custom.yml`: `site_name: NeOps docker-compose`, `nav:` listing the six pages.
+  - `mkdocs_custom.yml`: `site_name: Neops docker-compose`, `nav:` listing the six pages.
 
 - [ ] **Step 3: Vendor the shared tooling** (same mechanism as the sibling repos)
 

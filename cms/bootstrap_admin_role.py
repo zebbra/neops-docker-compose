@@ -1,9 +1,9 @@
-"""Give the first superuser a NeOps role, so that a fresh install is usable.
+"""Give the first superuser a Neops role, so that a fresh install is usable.
 
 Fed to `manage.py shell` by cms-init, which mounts it at /etc/neops/bootstrap_admin_role.py.
 
 Core's GraphQL is gated by the neops_permissions_simple plugin and a Django superuser
-carries no NeOps role, so without this the account cms-init creates can log in and then
+carries no Neops role, so without this the account cms-init creates can log in and then
 read nothing and write nothing ("User is not allowed to create a group."). The role, the
 scope and the grant between them cannot be made over GraphQL either: roleUpsert and
 roleScopeUpsert are themselves role-gated, so the very first one has to be written here.

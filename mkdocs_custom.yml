@@ -1,4 +1,4 @@
-site_name: NeOps docker-compose
+site_name: Neops docker-compose
 
 # Project-only additions on top of the canonical base
 # (zebbra/mkdocs-documentation/assets/mkdocs_base.yml). Everything else (admonitions, tabs,

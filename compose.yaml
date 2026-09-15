@@ -1,4 +1,4 @@
-# NeOps 2.0 production stack. Scenario overlays are selected with COMPOSE_FILE in .env;
+# Neops 2.0 production stack. Scenario overlays are selected with COMPOSE_FILE in .env;
 # see .env.example and examples/. Operate it with ./neops (see README.md).
 #
 # Image pins: the tested set for this release. Override per image from .env only in

@@ -48,7 +48,7 @@ def _add_start_arguments(sp: argparse.ArgumentParser, name: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="neops", description="Operate the NeOps 2.0 docker-compose deployment.")
+    p = argparse.ArgumentParser(prog="neops", description="Operate the Neops 2.0 docker-compose deployment.")
     sub = p.add_subparsers(dest="command", required=True)
 
     def add(name: str, help_: str) -> argparse.ArgumentParser:

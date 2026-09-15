@@ -1,6 +1,6 @@
 # neops-docker-compose
 
-Production deployment of the NeOps 2.0 stack with Docker Compose: neops-core (CMS), the workflow
+Production deployment of the Neops 2.0 stack with Docker Compose: neops-core (CMS), the workflow
 engine, the workflow manager UI, a worker, the web client, Postgres per service, Redis and
 Elasticsearch, with optional Traefik, Keycloak and a metrics stack.
 
@@ -10,7 +10,7 @@ Full documentation: `docs/` (and docs.neops.io once published).
 
 - A Linux host with Docker Engine and Compose v2 (`docker compose version` ≥ 2.24), `git`, and
   [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
-- `docker login quay.io` with an account that can pull the licensed NeOps images.
+- `docker login quay.io` with an account that can pull the licensed Neops images.
 - DNS records for the public hostnames you choose (or one record in shared-hostname mode),
   and either a certificate for them or a public host for Let's Encrypt.
 - `vm.max_map_count ≥ 262144` for Elasticsearch (`./neops check` tells you the exact command).

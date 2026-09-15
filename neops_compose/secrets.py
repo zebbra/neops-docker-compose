@@ -93,7 +93,7 @@ def stale_sans(cert_path: Path, hosts: list[str]) -> set[str]:
     return set(hosts) - selfsigned_sans(cert_path)
 
 
-CA_COMMON_NAME = "NeOps deployment CA"
+CA_COMMON_NAME = "Neops deployment CA"
 CA_DAYS = 3650
 BACKDATE = dt.timedelta(minutes=5)  # tolerate a few minutes of clock skew on the first start
 

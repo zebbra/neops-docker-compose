@@ -80,7 +80,7 @@ Check `docker compose logs engine`. Two causes account for nearly every case:
 
 ### Logged in, but everything is empty and every write says "User is not allowed"
 
-Core gates entity reads and writes on a NeOps *role*, which is separate from Django's superuser
+Core gates entity reads and writes on a Neops *role*, which is separate from Django's superuser
 flag. An account holding no role signs in normally and then sees empty device, group and
 interface tables, while every write answers `User is not allowed to create a group.` or the
 equivalent for the model it touched.

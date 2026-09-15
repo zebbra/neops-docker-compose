@@ -10,7 +10,7 @@ tags: [howto]
 
 - A Linux host with Docker Engine and Compose v2 (`docker compose version` reports at least 2.24),
   `git`, and [`uv`](https://docs.astral.sh/uv/).
-- `docker login quay.io` with an account that can pull the licensed NeOps images.
+- `docker login quay.io` with an account that can pull the licensed Neops images.
 - DNS records for the public hostnames the scenario you pick needs (one record in
   shared-hostname mode, up to six otherwise, see [Scenarios](20-scenarios.md)).
 - A TLS certificate for those hostnames, or a publicly reachable host on port 80 for Let's
@@ -101,7 +101,7 @@ is created; change it afterwards with `./neops rotate admin-password`, not by ed
 
 ## The first user's permissions
 
-Being a Django superuser grants nothing in NeOps itself. Core gates every entity read and write
+Being a Django superuser grants nothing in Neops itself. Core gates every entity read and write
 on a *role*, so an account without one logs in, sees empty tables and gets
 `User is not allowed to create a group.` from every write. `cms-init` therefore also seeds, for
 `NEOPS_ADMIN_USER`:

@@ -6,7 +6,7 @@
 
 Creates a realm user and a `neops-auth` client role through Keycloak's admin REST API, drives
 Chromium through the web client's "Login with Keycloak" button, and asserts that the app leaves
-/login with a NeOps token in localStorage and that the role claim reached core. Exit code 0 only
+/login with a Neops token in localStorage and that the role claim reached core. Exit code 0 only
 when every assertion held; a failure leaves screenshots and the page HTML beside the clone.
 
 `--create-realm-role` and `--assert-realm-role` skip the browser and only touch the admin API.

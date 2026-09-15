@@ -152,7 +152,7 @@ def keycloak_realm(env: Env, paths: Paths) -> dict:
         "clients": [
             {
                 "clientId": KEYCLOAK_CLIENT_ID,
-                "name": "NeOps",
+                "name": "Neops",
                 "enabled": True,
                 "protocol": "openid-connect",
                 "publicClient": False,

@@ -4,7 +4,7 @@ Status: implemented 2026-09-15 on branch `release/2.0`; see *Implementation note
 
 ## Goal
 
-A production docker-compose deployment of the NeOps 2.0 stack (neops-core, neops-workflow-engine, monitor app, neops-worker-sdk, neops-web-client) that an operator installs with one command after filling in `.env`, that supports the deployment scenarios we ship to customers as selectable overlays, that keeps every byte of durable state in bind-mounted directories, and that can be changed later without friction through versioned deployment migrations.
+A production docker-compose deployment of the Neops 2.0 stack (neops-core, neops-workflow-engine, monitor app, neops-worker-sdk, neops-web-client) that an operator installs with one command after filling in `.env`, that supports the deployment scenarios we ship to customers as selectable overlays, that keeps every byte of durable state in bind-mounted directories, and that can be changed later without friction through versioned deployment migrations.
 
 Decisions already taken with the user:
 

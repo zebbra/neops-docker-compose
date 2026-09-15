@@ -99,7 +99,7 @@ def test_admin_credentials_are_confined_to_cms_init():
 
 
 def test_cms_init_seeds_the_admin_role():
-    """A Django superuser holding no NeOps role can log in and then read and write nothing, so
+    """A Django superuser holding no Neops role can log in and then read and write nothing, so
     the role seed belongs to the install rather than to an operator's first manual step."""
     init = load(REPO / "compose.yaml")["services"]["cms-init"]
     assert (REPO / "cms" / "bootstrap_admin_role.py").is_file()

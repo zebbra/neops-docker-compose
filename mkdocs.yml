@@ -73,7 +73,7 @@ plugins:
     glob:
     - superpowers/*
 repo_url: https://github.com/zebbra/neops-docker-compose
-site_name: NeOps docker-compose
+site_name: Neops docker-compose
 theme:
   custom_dir: docs/override
   favicon: assets/favicon.png
