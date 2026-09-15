@@ -180,3 +180,21 @@ def test_render_error_when_docker_created_a_directory_at_a_generated_path(tmp_re
 
     with pytest.raises(RenderError, match="sudo rm -rf"):
         render(env, Scenario.from_env(env), paths)
+
+
+def test_optional_core_keys_are_omitted_when_blank(tmp_repo):
+    """An empty EMAIL_URL is not "use the default": django-environ rejects it as a schema."""
+    _, paths = run(tmp_repo, HOSTS)
+    cms = envfile(paths.generated / "cms.env")
+    assert "EMAIL_URL" not in cms
+    assert "SENTRY_DSN" not in cms
+    assert "SENTRY_ENVIRONMENT" not in cms
+
+
+def test_optional_core_keys_are_passed_through_when_set(tmp_repo):
+    _, paths = run(
+        tmp_repo, HOSTS + "EMAIL_URL=smtp://user:pw@mail.example.com:587\nSENTRY_DSN=https://k@o.io/1\n"
+    )
+    cms = envfile(paths.generated / "cms.env")
+    assert cms["EMAIL_URL"] == "smtp://user:pw@mail.example.com:587"
+    assert cms["SENTRY_DSN"] == "https://k@o.io/1"

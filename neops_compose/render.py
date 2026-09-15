@@ -13,6 +13,9 @@ from neops_compose.urls import PublicUrl
 KEYCLOAK_REALM = "neops"
 KEYCLOAK_CLIENT_ID = "neops-auth"
 KEYCLOAK_PROVIDER_ID = "keycloak"
+# Core reads these with a default that only applies when the variable is ABSENT:
+# an empty EMAIL_URL is an invalid email schema, not "use consolemail://".
+OPTIONAL_CORE_KEYS = ("SENTRY_DSN", "SENTRY_ENVIRONMENT", "EMAIL_URL")
 
 
 class MissingSecret(Exception):
@@ -97,6 +100,7 @@ def cms_env(env: Env, scenario: Scenario) -> str:
         # plain http (evaluation scenarios only; every TLS overlay leaves these unset).
         lines.append("SESSION_COOKIE_SECURE=False")
         lines.append("CSRF_COOKIE_SECURE=False")
+    lines += [f"{key}={env.get(key)}" for key in OPTIONAL_CORE_KEYS if env.is_set(key)]
     return "\n".join(lines) + "\n"
 
 

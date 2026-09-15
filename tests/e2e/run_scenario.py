@@ -23,6 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
+from neops_compose.backup import ARCHIVE_NAME  # noqa: E402
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import NAME_WIDTH, Http, login  # noqa: E402
 from neops_compose.scenario import OVERRIDE_FILE, Scenario  # noqa: E402
@@ -263,8 +264,11 @@ def assert_idempotent(report: Report, clone: Path, expose: bool) -> None:
 
 
 def assert_backup(report: Report, clone: Path) -> None:
+    """backups/ also holds migrate's pre-migrate snapshots; only ARCHIVE_NAME names a backup."""
     neops(clone, "backup")
-    archives = sorted(p for p in (clone / "backups").iterdir() if p.is_dir())
+    archives = sorted(
+        p for p in (clone / "backups").iterdir() if p.is_dir() and ARCHIVE_NAME.fullmatch(p.name)
+    )
     if not report.add(len(archives) == 1, f"backup created one archive ({len(archives)})"):
         return
     cms_dump = archives[0] / "cms.dump"
