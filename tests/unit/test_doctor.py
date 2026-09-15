@@ -77,6 +77,30 @@ def test_login_separates_bad_credentials_from_the_rate_limit():
     assert doctor.login(cms, good, "n", "p").token == "t"
 
 
+def test_a_cms_that_cannot_reach_its_database_fails_both_login_probes():
+    """Core answers `internal error` while Postgres is gone, as a 200 carrying a GraphQL error.
+    Without this it reads as an ordinary refused login and doctor goes green on a deployment
+    that cannot serve a single request."""
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    engine = PublicUrl.parse("https://engine.neops.example.com")
+    down = '{"errors":[{"message":"internal error"}],"data":{"login":null}}'
+
+    probe = doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, down)}))
+    assert not probe.ok and probe.detail == doctor.DB_UNREACHABLE
+
+    admin = doctor.login(cms, FakeHttp({"/graphql": (200, down)}), "neops", "pw")
+    assert admin.db_down and admin.token is None
+    worker = doctor.worker_probe(engine, FakeHttp({}), admin)
+    assert not worker.ok and worker.detail == doctor.DB_UNREACHABLE
+
+
+def test_bad_credentials_are_not_mistaken_for_a_database_outage():
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    refused = '{"errors":[{"message":"Please enter valid credentials"}]}'
+    assert doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, refused)})).ok
+    assert not doctor.login(cms, FakeHttp({"/graphql": (200, refused)}), "n", "p").db_down
+
+
 def test_worker_probe_names_the_rate_limit():
     engine = PublicUrl.parse("https://engine.neops.example.com")
     p = doctor.worker_probe(engine, FakeHttp({}), doctor.Login(rate_limited=True, error="429: Too many"))

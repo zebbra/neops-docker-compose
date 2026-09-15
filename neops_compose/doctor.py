@@ -15,6 +15,7 @@ ONE_SHOTS = {"cms-init"}
 NAME_WIDTH = 28
 LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
 WORKER_PROBE = "worker registered"
+DB_UNREACHABLE = "the CMS cannot reach its database (login answered: internal error)"
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,14 @@ class Login:
     token: str | None = None
     error: str = ""
     rate_limited: bool = False
+    db_down: bool = False
+
+
+def cms_database_is_down(text: str) -> bool:
+    """Core answers the login mutation with a bare "internal error" while its database is
+    unreachable. A wrong password answers a credentials message instead, so this is the one
+    login response that says nothing about the credentials and everything about the CMS."""
+    return "internal error" in text.lower()
 
 
 class Http:
@@ -66,6 +75,30 @@ class Http:
         )
         return conn
 
+    def fetch(
+        self,
+        url: PublicUrl,
+        path: str,
+        method: str = "GET",
+        body: str | None = None,
+        headers: dict[str, str] | None = None,
+        content_type: str = "application/json",
+    ) -> tuple[int, http.client.HTTPMessage, str]:
+        conn = self._open(url)
+        hdrs = {
+            "Host": url.host if url.is_default_port else f"{url.host}:{url.port}",
+            "User-Agent": "neops-doctor",
+        }
+        if body is not None:
+            hdrs["Content-Type"] = content_type
+        hdrs.update(headers or {})
+        try:
+            conn.request(method, url.path + path, body=body, headers=hdrs)
+            resp = conn.getresponse()
+            return resp.status, resp.headers, resp.read().decode(errors="replace")
+        finally:
+            conn.close()
+
     def request(
         self,
         url: PublicUrl,
@@ -74,20 +107,8 @@ class Http:
         body: str | None = None,
         headers: dict[str, str] | None = None,
     ) -> tuple[int, str]:
-        conn = self._open(url)
-        hdrs = {
-            "Host": url.host if url.is_default_port else f"{url.host}:{url.port}",
-            "User-Agent": "neops-doctor",
-        }
-        if body is not None:
-            hdrs["Content-Type"] = "application/json"
-        hdrs.update(headers or {})
-        try:
-            conn.request(method, url.path + path, body=body, headers=hdrs)
-            resp = conn.getresponse()
-            return resp.status, resp.read().decode(errors="replace")
-        finally:
-            conn.close()
+        status, _, text = self.fetch(url, path, method, body, headers)
+        return status, text
 
     def cert_days_left(self, url: PublicUrl) -> int | None:
         if url.scheme != "https":
@@ -196,6 +217,8 @@ def bad_login_probe(cms: PublicUrl, http: Http) -> Probe:
             f"login mutation answered {status}: {text[:160]} (behind an external proxy this "
             "usually means RATELIMIT_IP_META_KEY is set but X-Real-IP is not)",
         )
+    if cms_database_is_down(text):
+        return Probe("cms login path", False, DB_UNREACHABLE)
     return Probe("cms login path", True, f"bad credentials answered {status} (no server error)")
 
 
@@ -208,10 +231,16 @@ def login(cms: PublicUrl, http: Http, username: str, password: str) -> Login:
     try:
         return Login(token=json.loads(text)["data"]["login"]["accessToken"])
     except Exception:
-        return Login(error=f"{status}: {text[:160]}", rate_limited=status == 429 or "Too many" in text)
+        return Login(
+            error=f"{status}: {text[:160]}",
+            rate_limited=status == 429 or "Too many" in text,
+            db_down=cms_database_is_down(text),
+        )
 
 
 def worker_probe(engine: PublicUrl, http: Http, admin: Login) -> Probe:
+    if admin.db_down:
+        return Probe(WORKER_PROBE, False, DB_UNREACHABLE)
     if admin.rate_limited:
         return Probe(WORKER_PROBE, False, "admin login refused (rate limit, 5/min): retry in a minute")
     if not admin.token:
