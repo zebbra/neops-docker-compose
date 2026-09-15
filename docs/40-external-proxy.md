@@ -20,7 +20,7 @@ own reverse proxy at them:
 | Grafana, if used | 3000 | `NEOPS_GRAFANA_PORT` |
 
 Route each `NEOPS_*_URL` hostname to the matching port. Whatever proxy you use, it must satisfy
-three rules or the deployment misbehaves in ways that are easy to misdiagnose.
+four rules or the deployment misbehaves in ways that are easy to misdiagnose.
 
 ## 1. Overwrite `X-Forwarded-Proto` and `X-Real-IP`
 
@@ -59,9 +59,22 @@ engine.
 Set at least a 200 MB body-size limit on the CMS's hostname: reports and file uploads exceed the
 usual default.
 
+## 4. Forward WebSocket upgrades to the CMS
+
+Core serves GraphQL subscriptions over WebSocket on `/graphql`, the same path as the query
+endpoint, and accepts only the `graphql-ws` subprotocol. Caddy forwards an upgrade without being
+asked. nginx does not: it speaks HTTP/1.0 upstream and drops the hop-by-hop `Upgrade` and
+`Connection` headers, so the handshake arrives at core as an ordinary GET and comes back `400`
+with nothing in any log to say why. The snippet below carries the three lines that fix it.
+
 ## nginx
 
 ```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 map $request_method $engine_deny {
     default 0;
     POST    1;
@@ -84,6 +97,9 @@ server {
     client_max_body_size 200m;
     location / {
         proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -125,7 +141,10 @@ server {
 
 ```caddyfile
 neops.example.com {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
 }
 
 cms.neops.example.com {
@@ -163,6 +182,10 @@ workflows.neops.example.com {
 ```bash
 ./neops doctor
 ```
+
+`tests/e2e/caddy/Caddyfile` is the Caddy snippet above with the e2e harness's hostnames and
+ports, and `tests/e2e/external_proxy_check.py` runs it in front of a live external-proxy stack
+and asserts all four rules. Keep the two in step: that script is what proves the snippet works.
 
 `doctor` always sends a `POST /blackboard/job` to the public engine URL and fails the
 `engine worker API denied` probe if the response is not `403`. This is enforced in every
