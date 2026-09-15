@@ -2,6 +2,10 @@
 title: NeOps docker-compose
 description: Production docker-compose deployment of the NeOps 2.0 stack, operated with the ./neops CLI.
 tags: [overview, concept]
+# NOTE for whoever wires this repo's docs/ into the neops-documentation umbrella as a submodule:
+# only this repo's mkdocs_custom.yml `nav` fragment is spliced into the umbrella build, not its
+# `plugins.exclude` block, so docs/superpowers/* (this repo's own plans and specs, not operator
+# content) needs excluding again on the umbrella side or it renders as stray public pages.
 ---
 
 # NeOps docker-compose
@@ -26,7 +30,7 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 |---|---|---|
 | `postgres-cms` | `postgres:16-alpine` | database for the CMS (`neops`/`neops`) |
 | `postgres-engine` | `postgres:16-alpine` | database for the workflow engine (`postgres`/`neops-workflow`) |
-| `postgres-keycloak` | `postgres:16-alpine` | database for Keycloak — keycloak overlay only |
+| `postgres-keycloak` | `postgres:16-alpine` | database for Keycloak (keycloak overlay only) |
 | `redis` | `redis:7-alpine` | Celery broker, Django cache, channel layer; ephemeral by design |
 | `elasticsearch` | `elasticsearch:8.9.2` | search index behind the CMS device/interface views |
 | `cms-init` | `neops-core` | one-shot: Django migrations, create the Elasticsearch indices, create the superuser |
@@ -37,12 +41,12 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `monitor` | `neops-monitor-app` | the workflow manager UI (temporary, being folded into the web client) |
 | `worker` | `neops-worker-sdk` | polls the engine's blackboard and drives devices; base function blocks only |
 | `web` | `neops-web-client` | the production Angular web client |
-| `keycloak` | `keycloak:26.5.2` | bundled identity provider — keycloak overlay only |
-| `traefik` | `traefik:v3.6.25` | bundled reverse proxy and TLS termination — traefik overlay only |
-| VictoriaMetrics, vmalert, Grafana, exporters | — | metrics overlay only |
+| `keycloak` | `keycloak:26.5.2` | bundled identity provider (keycloak overlay only) |
+| `traefik` | `traefik:v3.6.25` | bundled reverse proxy and TLS termination (traefik overlay only) |
+| VictoriaMetrics, vmalert, Grafana, exporters | n/a | metrics overlay only |
 
 Every service shares one Docker network; the base `compose.yaml` publishes no ports. Which ports
-reach the host depends on the routing overlay you pick — see [Scenarios](20-scenarios.md).
+reach the host depends on the routing overlay you pick. See [Scenarios](20-scenarios.md).
 
 ## Durable state
 
@@ -74,5 +78,6 @@ under `generated/` is hand-edited; a stopped-and-restarted `./neops up` rebuilds
 
 Redis is the only stateful service with no directory of its own, on purpose: it holds Celery's
 work queue and Django's cache, and losing it on a wipe costs at most the tasks in flight.
-Elasticsearch is derived data; it is not part of `./neops backup` and is rebuilt with
-`manage.py elastic_index --create --populate` after a restore.
+Elasticsearch is derived data; it is not part of `./neops backup` and is rebuilt after a restore
+with `manage.py elastic_index --create`, then `manage.py elastic_index --populate` (see
+[Operations](30-operations.md#restore): the two are separate commands, not combinable flags).

@@ -54,7 +54,7 @@ Overlays combine: edit `COMPOSE_FILE` in `.env`; `./neops check` tells you if a 
 | `./neops doctor` | health through the public URLs |
 | `./neops status` | pinned vs running images, migrations |
 | `./neops backup --keep 14` | logical dumps + `.env` + secrets + certs into `backups/<timestamp>/` |
-| `./neops rotate <what>` | `db-password --which cms|engine|keycloak`, `admin-password`, `secret-key`, `jwt`, `tls`, `token`, `keycloak-client` |
+| `./neops rotate <what>` | `db-password --which cms\|engine\|keycloak`, `admin-password`, `secret-key`, `jwt`, `tls`, `token`, `keycloak-client` |
 | `./neops logs cms engine` | follow logs |
 | `./neops down` | stop (data kept) |
 | `./neops purge --confirm <data dir>` | delete the installation |

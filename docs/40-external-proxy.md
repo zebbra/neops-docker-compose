@@ -26,14 +26,14 @@ three rules or the deployment misbehaves in ways that are easy to misdiagnose.
 
 Core hardcodes `SECURE_PROXY_SSL_HEADER` to read `X-Forwarded-Proto`, and (once you enable
 `RATELIMIT_IP_META_KEY=HTTP_X_REAL_IP`, see below) its login rate limiter reads `X-Real-IP`. Both
-headers must be **overwritten**, not appended to — a proxy that appends lets a client set its own
+headers must be **overwritten**, not appended to. A proxy that appends lets a client set its own
 `X-Real-IP` and forge its way around the per-address login limit, and a client that sets
 `X-Forwarded-Proto` itself can make core believe an insecure request was HTTPS. Terminate TLS at
 the proxy and set both headers explicitly rather than trusting whatever the client sent.
 
 ## 2. Deny the engine's worker routes
 
-The workflow engine's blackboard API is unauthenticated by design — it is meant to be reached
+The workflow engine's blackboard API is unauthenticated by design: it is meant to be reached
 only from workers on the private compose network, not from a browser. The routes below must
 return `403` (or otherwise never reach the engine) from the public engine URL. They are listed in
 `neops_compose/routes.py` alongside a comment naming their source in the engine's controllers, all
@@ -49,13 +49,14 @@ built on Express, matches them):
 /function-blocks/register
 ```
 
-Everything else on the engine's hostname must reach it normally — the monitor app needs
-`GET /workers`, `GET /function-blocks` and `GET /blackboard/jobs`, all of which are
-permission-guarded, so the deny list has to be exact rather than a wholesale block of the engine.
+Everything else on the engine's hostname must reach it normally. The monitor app needs
+`GET /workers`, `GET /function-blocks/registrations/list` and `GET /blackboard/jobs`, all of which
+are permission-guarded, so the deny list has to be exact rather than a wholesale block of the
+engine.
 
 ## 3. Allow large request bodies to the CMS
 
-Set at least a 200 MB body-size limit on the CMS's hostname — reports and file uploads exceed the
+Set at least a 200 MB body-size limit on the CMS's hostname: reports and file uploads exceed the
 usual default.
 
 ## nginx
@@ -160,13 +161,29 @@ workflows.neops.example.com {
 ## Verify it
 
 ```bash
+./neops doctor
+```
+
+`doctor` always sends a `POST /blackboard/job` to the public engine URL and fails the
+`engine worker API denied` probe if the response is not `403`. This is enforced in every
+scenario, including external-proxy mode, so a reachable worker route fails `doctor` outright.
+
+The rate-limit probe needs a different order, because it only tests anything once
+`RATELIMIT_IP_META_KEY` is set: while that key is unset, core rate-limits on the raw TCP source
+address rather than `X-Real-IP`, so `--probe-ratelimit` passes trivially regardless of what your
+proxy does with the header.
+
+```bash
+# 1. Set it and apply it.
+echo 'RATELIMIT_IP_META_KEY=HTTP_X_REAL_IP' >> .env
+./neops up
+
+# 2. Now the probe means something.
 ./neops doctor --probe-ratelimit
 ```
 
-`doctor` always sends a `POST /blackboard/job` to the public engine URL and warns in its report if
-the response is not `403` — in external-proxy mode this cannot fail the overall check (compose
-does not control your proxy), so read the report, not just its exit code. `--probe-ratelimit` adds
-six login attempts with six different forged `X-Real-IP` values: if none of them is rate-limited,
-your proxy is appending to the header instead of overwriting it. Only set
-`RATELIMIT_IP_META_KEY=HTTP_X_REAL_IP` in `.env` once this probe passes — with it set but the
-header not actually overwritten by your proxy, *every* login fails with a 500.
+`--probe-ratelimit` sends six login attempts with six different forged `X-Real-IP` values: if none
+of them is rate-limited, your proxy is not overwriting the header (appending to it, or passing the
+client's own value through). If the probe fails, unset `RATELIMIT_IP_META_KEY` again and fix the
+proxy first. Leaving the key set with a proxy that does not reliably overwrite the header is what
+turns every login into a 500 (see [Troubleshooting](50-troubleshooting.md#500-on-login-ratelimit_ip_meta_key)).

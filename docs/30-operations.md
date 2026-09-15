@@ -6,7 +6,7 @@ tags: [howto, reference]
 
 # Operations
 
-Every command below runs from the repo root, against the `.env` in place there — there is no
+Every command below runs from the repo root, against the `.env` in place there. There is no
 `--env` flag, so a host running more than one deployment needs one checkout per deployment.
 
 ## Commands
@@ -14,7 +14,7 @@ Every command below runs from the repo root, against the `.env` in place there �
 | Command | What it does |
 |---|---|
 | `./neops up [--allow-downgrade]` | migrate, render, pull, start every service, doctor. Run this after every `git pull` or `.env` edit. |
-| `./neops down [--all]` | stop the stack; data is kept. `--all` also stops the one-shot `cms-init`. |
+| `./neops down` | stop and remove every container (`docker compose down --remove-orphans`); data is kept |
 | `./neops ps` | container status |
 | `./neops logs [service ...]` | follow logs, no services means all |
 | `./neops restart <service ...>` | restart specific services |
@@ -38,10 +38,10 @@ Every command below runs from the repo root, against the `.env` in place there �
 
 Writes `backups/<UTC timestamp>/`, mode 0700 with every file inside 0600:
 
-- `cms.dump`, `engine.dump`, `keycloak.dump` — a `pg_dump -Fc` of each database whose Postgres
+- `cms.dump`, `engine.dump`, `keycloak.dump`: a `pg_dump -Fc` of each database whose Postgres
   container is currently running (the keycloak dump only when that overlay is in use);
 - `.env`, a copy of `data/secrets/`, `certs/`, and `cust-cert/`;
-- `manifest.json` — the CLI version, every pinned image, applied and faked migrations, and which
+- `manifest.json`: the CLI version, every pinned image, applied and faked migrations, and which
   compose files made up the scenario at backup time.
 
 **A backup archive is a credential.** It contains the JWT signing key, the engine's CMS API key,
@@ -49,7 +49,7 @@ the Keycloak client secret, and (via `.env`) every database and admin password. 
 you would store those secrets directly.
 
 `--keep N` prunes older archives after writing the new one, keeping the newest `N`. Elasticsearch
-is never included — it holds derived data, rebuilt after a restore (see below).
+is never included: it holds derived data, rebuilt after a restore (see below).
 
 A plain file copy of `data/` is a valid backup only while every container is stopped; while the
 stack is running, `./neops backup`'s logical dumps are the only sanctioned way to get a consistent
@@ -64,32 +64,32 @@ judgment about which secrets to keep:
 # 1. Put the deployment's .env back (or reconcile it with the current one) and prepare data/.
 cp backups/<timestamp>/.env .env
 ./neops migrate                                    # creates data/ if this is a fresh host
-cp -r backups/<timestamp>/secrets/. data/secrets/
-cp -r backups/<timestamp>/certs/. certs/            # if the scenario uses certs/
-cp -r backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
+cp -a backups/<timestamp>/secrets/. data/secrets/
+cp -a backups/<timestamp>/certs/. certs/            # if the scenario uses certs/
+cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 
 # 2. Start only the databases and load the dumps.
 ./neops render
-docker compose up -d postgres-cms postgres-engine   # + postgres-keycloak, if used
-docker compose exec -T postgres-cms pg_restore -U neops -d neops --clean \
+./neops compose -- up -d postgres-cms postgres-engine   # + postgres-keycloak, if used
+./neops compose -- exec -T postgres-cms pg_restore -U neops -d neops --clean \
   < backups/<timestamp>/cms.dump
-docker compose exec -T postgres-engine pg_restore -U postgres -d neops-workflow --clean \
+./neops compose -- exec -T postgres-engine pg_restore -U postgres -d neops-workflow --clean \
   < backups/<timestamp>/engine.dump
 # keycloak, if used:
-docker compose exec -T postgres-keycloak pg_restore -U keycloak -d keycloak --clean \
+./neops compose -- exec -T postgres-keycloak pg_restore -U keycloak -d keycloak --clean \
   < backups/<timestamp>/keycloak.dump
 
 # 3. Bring up the rest and rebuild the search index (not part of the backup).
 ./neops up
-docker compose exec cms python manage.py elastic_index --create
-docker compose exec cms python manage.py elastic_index --populate --models core.Device core.Interface
+./neops compose -- exec cms python manage.py elastic_index --create
+./neops compose -- exec cms python manage.py elastic_index --populate --models core.Device core.Interface
 
 # 4. Confirm.
 ./neops doctor
 ```
 
 Restoring onto a host whose `neops-core` image is *older* than the one the backup was taken with
-is not supported — Django migrations do not run backwards. Restore onto the same or a newer core
+is not supported: Django migrations do not run backwards. Restore onto the same or a newer core
 version.
 
 ## Rotating secrets
@@ -102,30 +102,30 @@ names that mismatch on the next run rather than letting it fail obscurely later.
 |---|---|---|---|
 | `db-password --which cms\|engine\|keycloak` | `ALTER ROLE` in that Postgres container with a fresh random password, then updates `.env` | nothing session-visible | the services that connect to that database |
 | `admin-password [--password P]` | sets a new password for `NEOPS_ADMIN_USER` via `manage.py`, then updates `.env` | the previous password | none |
-| `secret-key` | rotates `DJANGO_SECRET_KEY` | **every session and every static API key** — they are signed with it, including the engine's own token | all four core services, then re-mints the engine's token automatically |
+| `secret-key` | rotates `DJANGO_SECRET_KEY` | **every session and every static API key** (they are signed with it, including the engine's own token) | all four core services, then re-mints the engine's token automatically |
 | `jwt` | replaces the RSA keypair the CMS signs and the engine verifies with | **every user session** | `cms`, `cms-worker`, `cms-beat`, `engine` |
-| `tls` | re-issues the self-signed certificate for the hostnames currently in `.env` | nothing; refuses if you are not using `NEOPS_TLS_SELF_SIGNED=true` — replace files under `certs/` by hand otherwise | `traefik` |
+| `tls` | re-issues the self-signed certificate for the hostnames currently in `.env` | nothing; refuses if you are not using `NEOPS_TLS_SELF_SIGNED=true` (replace files under `certs/` by hand otherwise) | `traefik` |
 | `token` | mints a new engine CMS API key and revokes the previous one (best-effort; a failed revoke is logged, not fatal) | the previous engine token | `engine` |
 | `keycloak-client` | generates a new client secret, sets it on the `neops-auth` client in Keycloak, re-renders `generated/providers.json`, and re-seeds the CMS's OIDC provider config | the previous client secret | none (config is reloaded, not restarted) |
 
-`secret-key` and `jwt` are the two that end every active login — plan them like a maintenance
+`secret-key` and `jwt` are the two that end every active login. Plan them like a maintenance
 window.
 
 ## Migrations
 
 `migrations/NNNN_<slug>.py`, applied once each, in numeric order, recorded in
 `data/.neops/state.json`. These are deployment-*layout* migrations (moving a data directory,
-renaming an `.env` key, a Postgres major-version upgrade) — not the CMS's or the engine's own
+renaming an `.env` key, a Postgres major-version upgrade), not the CMS's or the engine's own
 application migrations, which each container still runs on its own boot. `0001_initial_layout` is
 the only one today: it creates the `data/` tree and the state file, on both a fresh install and an
 upgrade.
 
 `./neops migrate` applies every pending migration; `--dry-run` prints what would run without
-changing anything; `--fake NAME` records one migration as applied without running it — you are
-asked to retype the full name to confirm, because `status` and `doctor` will flag the deployment
-as hand-patched afterwards. Before applying anything, a snapshot of `.env` and the state file is
-written to `backups/pre-migrate-<timestamp>/`. `up` and `install` both run `migrate` as their
-first real step, so a pending migration is never silently skipped.
+changing anything; `--fake NAME` records one migration as applied without running it. You are
+asked to retype the full name to confirm, because `./neops status` will flag the deployment as
+hand-patched (a `FAKED` migration in its output) afterwards. Before applying anything, a snapshot
+of `.env` and the state file is written to `backups/pre-migrate-<timestamp>/`. `up` and `install`
+both run `migrate` as their first real step, so a pending migration is never silently skipped.
 
 ## Upgrades
 
@@ -135,7 +135,7 @@ git pull        # or: git checkout <next release tag>
 ```
 
 `up` refuses to proceed if the pinned `neops-core` image would move to an *older* tag than the
-last successful `up` recorded — Django migrations are not reversible, so a downgrade is refused
+last successful `up` recorded: Django migrations are not reversible, so a downgrade is refused
 rather than run and corrupted. Restore a backup instead, or pass `--allow-downgrade` only if you
 are certain the target schema is compatible.
 
@@ -147,6 +147,6 @@ are certain the target schema is compatible.
 
 Stops every container, then deletes `data/` and `generated/`. `.env`, `certs/`, `cust-cert/` and
 `backups/` are kept. The `--confirm` argument must repeat the data directory path exactly, printed
-by the command itself if you omit it — there is no separate "are you sure" prompt beyond that.
+by the command itself if you omit it. There is no separate "are you sure" prompt beyond that.
 This is the only sanctioned way to wipe an installation; `docker system prune -a --volumes` on its
 own removes containers and images but never touches the bind-mounted `data/`.
