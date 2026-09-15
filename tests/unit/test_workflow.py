@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from neops_compose import workflow
+from neops_compose import secrets, workflow
 from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.paths import Paths
@@ -61,15 +61,15 @@ class FakeCompose:
         self.calls.append("up")
 
 
-def make_ctx(tmp_path) -> Ctx:
-    (tmp_path / ".env").write_text("COMPOSE_FILE=compose.yaml\n")
+def make_ctx(tmp_path, env_text="COMPOSE_FILE=compose.yaml\n", compose=None) -> Ctx:
+    (tmp_path / ".env").write_text(env_text)
     env = Env(tmp_path / ".env")
     return Ctx(
         repo=tmp_path,
         env=env,
         paths=Paths.for_repo(tmp_path, env),
         scenario=Scenario.from_env(env),
-        compose=FakeCompose(),
+        compose=compose or FakeCompose(),
         state=State(),
         log=lambda m: None,
     )
@@ -129,6 +129,115 @@ def test_install_checks_images_only_after_render(tmp_path, monkeypatch):
 
     assert order[0] == "check(images=False)"
     assert order.index("render") < order.index("check_images")
+
+
+def _stub_up(monkeypatch, order: list[str], minted: bool = False) -> None:
+    monkeypatch.setattr(
+        workflow, "check", lambda c, check_images=True: order.append(f"check(images={check_images})")
+    )
+    monkeypatch.setattr(workflow, "migrate_all", lambda c: order.append("migrate"))
+    monkeypatch.setattr(workflow, "keys", lambda c: order.append("keys"))
+    monkeypatch.setattr(workflow, "render", lambda *a: order.append("render"))
+    monkeypatch.setattr(workflow, "_finish", lambda *a: order.append("finish"))
+    monkeypatch.setattr(workflow.token, "ensure_engine_token", lambda ctx: minted)
+
+
+def test_up_checks_without_images_and_guards_before_it_changes_anything(tmp_path, monkeypatch):
+    """The downgrade guard has to run before migrate and render, because both write to the
+    deployment: refusing afterwards leaves the operator half-moved to a release we refused."""
+    order: list[str] = []
+    _stub_up(monkeypatch, order)
+    ctx = make_ctx(tmp_path, compose=FakeCompose("quay.io/zebbra/neops-core:2.0.9"))
+    ctx.state.record_up({"cms": "quay.io/zebbra/neops-core:2.1.0"}, doctor_ok=True)
+
+    with pytest.raises(workflow.Downgrade, match="neops-core"):
+        workflow.up(ctx)
+
+    assert order == ["check(images=False)"]
+    assert ctx.compose.calls == []
+
+
+def test_up_pulls_and_starts_once_when_the_engine_token_is_already_valid(tmp_path, monkeypatch):
+    order: list[str] = []
+    _stub_up(monkeypatch, order, minted=False)
+    ctx = make_ctx(tmp_path)
+    workflow.up(ctx)
+    assert order == ["check(images=False)", "migrate", "keys", "render", "finish"]
+    assert ctx.compose.calls == ["pull", "up"]
+
+
+def test_up_starts_a_second_time_when_a_token_was_minted(tmp_path, monkeypatch):
+    """The engine reads its CMS token from an env file at container start, so a token minted
+    after the first `up` only reaches it through a second one."""
+    ctx = make_ctx(tmp_path)
+    _stub_up(monkeypatch, [], minted=True)
+    workflow.up(ctx)
+    assert ctx.compose.calls == ["pull", "up", "up"]
+
+
+def test_up_never_reaches_the_images_check_that_needs_a_rendered_generated_tree(tmp_path, monkeypatch):
+    """`up` leaves image resolution to `check`: repeating it here would make every start
+    depend on the registry."""
+    calls: list[str] = []
+    monkeypatch.setattr(workflow, "check_images", lambda c: calls.append("check_images"))
+    _stub_up(monkeypatch, [])
+    workflow.up(make_ctx(tmp_path))
+    assert calls == []
+
+
+def _selfsigned_env(host: str) -> str:
+    return (
+        "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml\n"
+        "NEOPS_TLS_SELF_SIGNED=true\n"
+        f"NEOPS_WEB_URL=https://{host}\n"
+        f"NEOPS_CMS_URL=https://cms.{host}\n"
+        f"NEOPS_ENGINE_URL=https://engine.{host}\n"
+        f"NEOPS_WORKFLOWS_URL=https://workflows.{host}\n"
+    )
+
+
+def test_keys_mints_a_self_signed_certificate_for_every_public_host(tmp_path):
+    ctx = make_ctx(tmp_path, _selfsigned_env("neops.example.com"))
+    workflow.keys(ctx)
+    assert secrets.selfsigned_sans(ctx.paths.tls_dir / "cert.pem") == {
+        "neops.example.com",
+        "cms.neops.example.com",
+        "engine.neops.example.com",
+        "workflows.neops.example.com",
+    }
+    assert (ctx.paths.jwt_dir / "private.pem").exists()
+
+
+def test_keys_blocks_on_a_certificate_that_no_longer_covers_the_hostnames(tmp_path):
+    """Renaming a host in .env makes the existing certificate wrong for it. Silently reusing
+    it means Traefik serves a name the certificate does not carry, which only the browser
+    tells you about; rotating it behind the operator's back throws away a CA they may have
+    already distributed."""
+    ctx = make_ctx(tmp_path, _selfsigned_env("neops.example.com"))
+    workflow.keys(ctx)
+    moved = make_ctx(tmp_path, _selfsigned_env("neops.example.org"))
+    with pytest.raises(workflow.Blocked, match="rotate tls"):
+        workflow.keys(moved)
+
+
+def test_status_reports_the_scenario_images_and_migration_counts(tmp_path):
+    ctx = make_ctx(tmp_path, "COMPOSE_FILE=compose.yaml:compose.expose.yaml\n")
+    ctx.state.record_applied("0001_initial_layout")
+    ctx.state.record_up({"cms": "quay.io/zebbra/neops-core:2.1.0"}, doctor_ok=True)
+    text = workflow.status(ctx)
+    assert "scenario: compose.yaml : compose.expose.yaml" in text
+    assert f"data: {ctx.paths.data}" in text
+    assert "  cms: quay.io/zebbra/neops-core:2.1.0" in text
+    assert "migrations: 1 applied, 0 pending" in text
+    assert "doctor ok" in text
+    assert "FAKED" not in text
+
+
+def test_status_names_a_faked_migration(tmp_path):
+    """A faked migration means the deployment was hand-patched; status has to keep saying so."""
+    ctx = make_ctx(tmp_path)
+    ctx.state.record_faked("0002_grafana_data_owner")
+    assert "1 FAKED (0002_grafana_data_owner)" in workflow.status(ctx)
 
 
 def _purge_ctx(tmp_path, log):

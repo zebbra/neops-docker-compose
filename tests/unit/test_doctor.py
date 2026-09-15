@@ -1,4 +1,12 @@
-from neops_compose import doctor
+import contextlib
+import json
+import ssl
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from neops_compose import doctor, secrets
 from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.paths import Paths
@@ -193,3 +201,94 @@ def test_worker_probe_names_the_rate_limit():
     engine = PublicUrl.parse("https://engine.neops.example.com")
     p = doctor.worker_probe(engine, FakeHttp({}), doctor.Login(rate_limited=True, error="429: Too many"))
     assert not p.ok and "rate limit" in p.detail and "retry in a minute" in p.detail
+
+
+class EchoHandler(BaseHTTPRequestHandler):
+    """Answers with the Host header it received, which is what the connect override changes."""
+
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self) -> None:
+        body = json.dumps({"host": self.headers["Host"], "path": self.path}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Neops-Probe", "answered")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args) -> None:
+        pass
+
+
+class QuietServer(ThreadingHTTPServer):
+    """cert_days_left opens a connection and reads the certificate without sending a request,
+    which the default server reports on stderr as a broken client."""
+
+    def handle_error(self, request, client_address) -> None:
+        pass
+
+
+@contextlib.contextmanager
+def serving(tls_dir=None):
+    try:
+        httpd = QuietServer(("127.0.0.1", 0), EchoHandler)
+    except OSError as exc:  # a sandbox that forbids listening sockets
+        pytest.skip(f"cannot bind a local socket here: {exc}")
+    if tls_dir is not None:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(tls_dir / "cert.pem", tls_dir / "key.pem")
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield httpd.server_address[1]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
+def selfsigned(tmp_path, host: str):
+    tls_dir = tmp_path / "tls"
+    secrets.ensure_selfsigned(tls_dir, [host])
+    return tls_dir
+
+
+def test_http_connects_to_one_address_while_sending_another_host():
+    """Boxes without DNS for the public hostnames resolve nothing, so doctor dials --connect
+    and still has to present the public name, or the proxy routes the request nowhere."""
+    with serving() as port:
+        url = PublicUrl.parse(f"http://neops.example.com:{port}")
+        status, headers, text = doctor.Http(connect="127.0.0.1").fetch(url, "/health")
+    assert status == 200
+    assert headers["X-Neops-Probe"] == "answered"
+    assert json.loads(text) == {"host": f"neops.example.com:{port}", "path": "/health"}
+
+
+def test_https_reaches_a_self_signed_server_and_reads_its_certificate(tmp_path):
+    tls_dir = selfsigned(tmp_path, "neops.example.com")
+    with serving(tls_dir) as port:
+        url = PublicUrl.parse(f"https://neops.example.com:{port}")
+        http = doctor.Http(connect="127.0.0.1", insecure=True)
+        status, _, text = http.fetch(url, "/")
+        days = http.cert_days_left(url)
+    assert status == 200 and json.loads(text)["host"] == f"neops.example.com:{port}"
+    assert 395 <= days <= 397, days
+
+
+def test_a_certificate_close_to_expiry_fails_the_tls_probe(tmp_path):
+    tls_dir = tmp_path / "tls"
+    secrets.ensure_selfsigned(tls_dir, ["neops.example.com"], days=10)
+    with serving(tls_dir) as port:
+        url = PublicUrl.parse(f"https://neops.example.com:{port}")
+        http = doctor.Http(connect="127.0.0.1", insecure=True)
+        probe = doctor._tls_probe(http, url)
+        assert not probe.ok and "9 days" in probe.detail
+        secrets.ensure_selfsigned(tls_dir, ["neops.example.com"], rotate=True)
+    assert doctor._tls_probe(http, PublicUrl.parse("http://neops.example.com")).ok is False
+
+
+def test_cert_days_left_is_none_over_plain_http():
+    with serving() as port:
+        assert doctor.Http(connect="127.0.0.1").cert_days_left(PublicUrl.parse(f"http://x:{port}")) is None

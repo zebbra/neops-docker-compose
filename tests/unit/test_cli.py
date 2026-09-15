@@ -1,13 +1,30 @@
+import argparse
+import ast
+import importlib
+import inspect
+import pkgutil
 import subprocess
 import sys
 
+import pytest
+
+import neops_compose
+from neops_compose import cli
 from neops_compose.cli import build_parser
 
 
+def registered_commands() -> set[str]:
+    return set(build_parser()._subparsers._group_actions[0].choices)
+
+
+def dispatch_match() -> ast.Match:
+    tree = ast.parse(inspect.getsource(cli.dispatch))
+    return next(node for node in ast.walk(tree) if isinstance(node, ast.Match))
+
+
 def test_every_command_is_wired():
-    parser = build_parser()
-    subs = parser._subparsers._group_actions[0].choices
-    assert set(subs) >= {
+    subs = registered_commands()
+    assert subs >= {
         "install",
         "up",
         "down",
@@ -27,6 +44,46 @@ def test_every_command_is_wired():
         "purge",
         "version",
     }
+
+
+def test_dispatch_handles_every_command_the_parser_accepts():
+    """`version` is answered in main() before a Ctx is built, because it must work without
+    a .env; every other subcommand has to reach a case here or it silently exits 0."""
+    handled = {
+        case.pattern.value.value
+        for case in dispatch_match().cases
+        if isinstance(case.pattern, ast.MatchValue) and isinstance(case.pattern.value, ast.Constant)
+    }
+    assert handled == registered_commands() - {"version"}
+
+
+def test_an_unhandled_command_is_loud():
+    """Without the wildcard, a subcommand added to the parser and forgotten here returns 0
+    having done nothing at all."""
+    wildcard = [case for case in dispatch_match().cases if isinstance(case.pattern, ast.MatchAs)]
+    assert wildcard and wildcard[0].pattern.pattern is None
+    with pytest.raises(SystemExit, match="unhandled command invented"):
+        cli.dispatch(argparse.Namespace(command="invented"), argparse.Namespace(compose=None))
+
+
+def package_exceptions() -> set[type]:
+    found = set()
+    for module in pkgutil.iter_modules(neops_compose.__path__):
+        namespace = importlib.import_module(f"neops_compose.{module.name}")
+        found.update(
+            obj
+            for obj in vars(namespace).values()
+            if isinstance(obj, type)
+            and issubclass(obj, Exception)
+            and obj.__module__.startswith("neops_compose.")
+        )
+    return found
+
+
+def test_every_exception_this_package_defines_is_reported_as_an_error():
+    """These all name an operator error or a state their deployment is in. One missing from
+    ERRORS reaches the terminal as a traceback, which reads as a bug in the CLI."""
+    assert package_exceptions() == set(cli.ERRORS)
 
 
 def test_module_runs():

@@ -11,8 +11,12 @@ from neops_compose.context import Ctx
 from neops_compose.env import MissingEnv
 from neops_compose.ownership import OwnershipError
 from neops_compose.render import MissingSecret, RenderError, render
+from neops_compose.rules import BadPorts
+from neops_compose.urls import BadUrl
 
 REPO = Path(__file__).resolve().parent.parent
+# Every exception this package defines: each one names something the operator did or a
+# state their deployment is in, so all of them belong in `error: ...` rather than a traceback.
 ERRORS = (
     workflow.Blocked,
     workflow.Downgrade,
@@ -25,6 +29,8 @@ ERRORS = (
     rotate.RotateError,
     state.StateError,
     token.TokenCheckUnavailable,
+    BadPorts,
+    BadUrl,
 )
 
 
@@ -144,6 +150,8 @@ def dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
             _rotate(args, ctx)
         case "purge":
             workflow.purge(ctx, args.confirm)
+        case _:
+            raise SystemExit(f"unhandled command {args.command}")
     return 0
 
 
