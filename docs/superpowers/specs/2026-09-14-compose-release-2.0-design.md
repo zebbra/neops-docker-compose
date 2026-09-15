@@ -1,6 +1,6 @@
 # neops-docker-compose 2.0 — design
 
-Status: approved 2026-09-14 after the design-challenge round. Branch `release/2.0`.
+Status: implemented 2026-09-15 on branch `release/2.0`; see *Implementation notes* at the end for what changed during the build.
 
 ## Goal
 
@@ -48,16 +48,11 @@ Verified in the sibling repos (charts, Dockerfiles, settings, git tags) on 2026-
 ```
 neops-docker-compose/
 ├── neops                        # bash wrapper: exec uv run --project "$(dirname "$0")" --quiet neops "$@"
-├── pyproject.toml               # uv project "neops-compose": deps jinja2, cryptography, python-dotenv; dev: pytest, ruff
+├── pyproject.toml               # uv project "neops-compose": deps cryptography, python-dotenv, packaging; dev: pytest, ruff, pyyaml
 ├── uv.lock
 ├── neops_compose/               # the CLI package (one module per concern, see below)
 ├── migrations/                  # deployment-layout migrations: 0001_initial_layout.py, ...
-├── templates/                   # jinja2 templates rendered by `neops render`
-│   ├── traefik/traefik.yml.j2   # static config (entrypoints, providers, resolvers)
-│   ├── traefik/dynamic.yml.j2   # routers, services, middlewares, tls
-│   ├── cms.env.j2  keycloak.env.j2
-│   ├── providers.json.j2
-│   └── keycloak/realm.json.j2
+├── cms/bootstrap_admin_role.py  # seeds the first superuser's admin role (run by cms-init)
 ├── compose.yaml                 # base stack; x-versions block holds the tested image pins
 ├── compose.expose.yaml          # 127.0.0.1-bound host ports (external reverse proxy)
 ├── compose.traefik.yaml         # bundled Traefik v3 (file provider), one hostname per service
@@ -192,7 +187,7 @@ Overlays compose freely (`oidc-keycloak` with `tls-acme`, `metrics` with `extern
 `compose.traefik.yaml` runs `traefik:v3.6.25` with the **file provider only** (no Docker socket), a fixed command (`--configFile=/etc/traefik/traefik.yml`), host ports `${NEOPS_HTTP_PORT:-80}:80` and `${NEOPS_HTTPS_PORT:-443}:443`, dashboard off, access log on. Both Traefik files are rendered by the CLI from the public URLs, so overlays never have to restate the command:
 
 - `generated/traefik/traefik.yml` (static): entrypoints `web` (:80) and `websecure` (:443); `monitor` (:8443 in-container, host `${NEOPS_MONITOR_PORT:-8443}`) only in shared-host mode; the ACME resolver only in acme mode; HTTP→HTTPS redirection on `web` whenever TLS is on (the ACME challenge path is exempted by Traefik itself).
-- `generated/traefik/dynamic.yml`: each URL → `(host, path, port)`; entrypoint by scheme and port; router rule `Host(\`h\`)` plus `PathPrefix(\`p\`)` when the URL has a path, priority by rule length; `StripPrefix` for engine, keycloak-free paths and grafana when they carry one (Keycloak keeps its prefix, it serves it natively via `KC_HTTP_RELATIVE_PATH`); services point at compose DNS names (`http://web:8080`, `http://cms:8000`, `http://engine:3030`, `http://monitor:80`, `http://keycloak:8080`, `http://grafana:3000`); TLS: `tls.certificates` **and** `tls.stores.default.defaultCertificate` from `/etc/traefik/certs/{cert,key}.pem` (tls-files) or `certResolver: letsencrypt` on every https router (tls-acme).
+- `generated/traefik/dynamic.yml`: each URL → `(host, path, port)`; entrypoint by scheme and port; router rule `Host(\`h\`)` plus `PathPrefix(\`p\`)` when the URL has a path, priority by rule length; `StripPrefix` only for the engine when it carries a prefix (Keycloak serves its prefix natively via `KC_HTTP_RELATIVE_PATH`, Grafana via its sub-path setting); the HTTP→HTTPS redirection is entrypoint-level and carries a non-default HTTPS port as `to: ":<port>"`; services point at compose DNS names (`http://web:8080`, `http://cms:8000`, `http://engine:3030`, `http://monitor:80`, `http://keycloak:8080`, `http://grafana:3000`); TLS: `tls.certificates` **and** `tls.stores.default.defaultCertificate` from `/etc/traefik/certs/{cert,key}.pem` (tls-files) or `certResolver: letsencrypt` on every https router (tls-acme).
 - **The engine's worker routes are denied at the edge.** The monitor app itself needs `GET /workers`, `GET /function-blocks` and `GET /blackboard/jobs` (all permission-guarded), so the deny cannot be prefix-wide. It mirrors the engine's `@Public()` worker routes exactly, all `POST`: `/blackboard/job`, `/blackboard/job/result`, `/blackboard/job/log`, `/workers/register`, `/workers/{uuid}/ping`, `/workers/{uuid}/unregister`, `/function-blocks/register`. A higher-priority router with a `Method(\`POST\`)` and path rule for those ends in an `ipAllowList` middleware with an unroutable range (TEST-NET), which Traefik answers with 403; everything else on the engine hostname reaches the engine, where `NEOPS_AUTHZ_MODE=enforce` guards it. The worker talks to `http://engine:3030` on the compose network and never uses the public route. The list lives in `neops_compose/routes.py` next to the core prefixes, with a comment naming the engine controllers as its source; a new `@Public()` worker route in the engine is a two-repo change.
 - `compose.traefik.yaml` sets `RATELIMIT_IP_META_KEY=HTTP_X_REAL_IP` on the core services, because Traefik is known to set and overwrite that header.
 - Shared-host mode adds, on the web client's hostname and above the web catch-all, one router per core prefix (`/graphql`, `/graphiql`, `/admin`, `/djstatic`, `/.well-known`, `/accounts`, `/auth/oidc-login`, `/auth/oidc-complete`, `/auth/oidc-logout`, `/webhook`) to `cms`, unstripped. The list lives in one place, `neops_compose/routes.py`, with a comment naming `neopsapp/urls.py` as its source; adding a core URL prefix is a two-repo change. The monitor is served at the root of the `monitor` entrypoint.
@@ -220,7 +215,7 @@ uv project, `requires-python >= 3.12`, `[project.scripts] neops = "neops_compose
 | `scenario.py` | the overlay model: which files are in `COMPOSE_FILE`, consistency rules used by `check` |
 | `routes.py` | the core URL prefixes routed in shared-host mode, and the reserved web-client paths |
 | `compose.py` | subprocess wrapper around `docker compose`; **always runs with cwd = repo root** (relative `COMPOSE_FILE` entries resolve against the cwd), `up --wait`, `exec`, `ps --format json` |
-| `render.py` | jinja2 rendering of `generated/` from env + scenario; deterministic output, `--diff` flag |
+| `render.py` | writes `generated/` from Python data (env files, provider seed, realm, Traefik config as JSON, which Traefik's YAML reader accepts); in-place writes so a bind-mounted file keeps its inode; deterministic; `--diff` flag |
 | `secrets.py` | RSA keypair, self-signed CA + server cert (SANs from URLs), random client secret; idempotent, 0600; `keys` compares an existing self-signed cert's SANs with the URLs and refuses to proceed with a stale one unless rotated |
 | `token.py` | idempotent: if `data/secrets/engine.env` exists and the key still authenticates against the CMS, do nothing; otherwise mint via `compose exec cms manage.py generate_api_key`, record the issued row id in `state.json`, write the env file, then `up -d --force-recreate engine` explicitly. Rotation deletes the previously issued row. |
 | `rotate.py` | the sanctioned secret rotations, each doing the whole job: `db-password <cms|engine|keycloak>` (`ALTER ROLE` in the container, then rewrite `.env`), `admin-password` (`manage.py changepassword`, then rewrite `.env`), `secret-key` (rewrite `.env`, restart core, then re-mint the engine token), `jwt` (new keypair, restart cms and engine; all sessions end), `tls` (self-signed only), `token`, `keycloak-client` |
@@ -303,3 +298,24 @@ Release dependency, **in scope of this work**: fix the engine's `publish-monitor
 Defects found during the challenge round, filed upstream (this repo works around them, they do not block the release): neops-core [#2269](https://github.com/zebbra/neops-core/issues/2269) `init.sh` exits 1 on a fresh database's success path, [#2270](https://github.com/zebbra/neops-core/issues/2270) no CORS allow-list and middleware ordered last, [#2271](https://github.com/zebbra/neops-core/issues/2271) `generate_api_key` has no lookup, reuse or revoke path, [#2272](https://github.com/zebbra/neops-core/issues/2272) no health endpoint; neops-workflow-engine [#290](https://github.com/zebbra/neops-workflow-engine/issues/290) the worker API relies on network privacy (an authenticated worker would let the deny-list go).
 
 Not in this release: pgbouncer overlay; secure-gateway overlay; `restore` command; a `.env` wizard; a Postgres major-version upgrade migration; publishing the docs to docs.neops.io (core's `docs/deployments/docker-compose/` mirrors the 1.0 layout and will need replacing).
+
+## Implementation notes (2026-09-15)
+
+What the build changed relative to the text above, each after a review finding or a live run:
+
+- **No templating library.** `generated/` is built from Python data; the Traefik files are JSON inside `.yml` (valid YAML). `render` writes files in place and removes only stale ones, because a bind-mounted file keeps its inode and a recreated one is invisible to the running container. `generated/keycloak/realm.json` is 0644 (Keycloak runs as uid 1000); everything else stays 0600 in a 0700 directory.
+- **Engine deny rule** is one case-insensitive, slash-tolerant `PathRegexp` matching the seven `POST` worker routes (Express matches case-insensitively and with an optional trailing slash; Traefik's `Path` does not). Verified against Traefik v3.6.25 and the engine's own router.
+- **CORS**: `CORS_ORIGIN_ALLOW_ALL=True` whenever web and CMS origins differ; core has no allow-list.
+- **`cms-init`** runs `migrate`, `elastic_index --create` (tolerating "already exists") and the superuser step itself, never the image's `init.sh` (exits 1 on a fresh database, neops-core #2269). It then seeds the superuser's role: `admin` with full permission on the image-seeded `Global` scope plus `grant_workflow_permissions --profile admin` (`cms/bootstrap_admin_role.py`, idempotent). Without it a fresh install could log in and do nothing.
+- **Derived env files** (`generated/cms.env`, `generated/keycloak.env`) are container-only; nothing in a compose file interpolates them. `cms.env` also carries the optional core keys (`EMAIL_URL`, `SENTRY_*`, `RATELIMIT_IP_META_KEY`) so that an unset key stays absent (django-environ treats an empty string as a value, and an empty `EMAIL_URL` crashed core at import). `DJANGO_ALLOWED_HOSTS` includes `cms`, `localhost` and `127.0.0.1`. Over plain http `SESSION_COOKIE_SECURE`/`CSRF_COOKIE_SECURE` are set to `False`.
+- **Ports**: 443 is published only by the TLS overlays; every healthcheck addresses `127.0.0.1` (`localhost` resolves to `::1` first in the images). `neops_compose/ports.py` holds the defaults.
+- **Secrets never enter argv**: `Compose.exec` passes `-e KEY` with the value in the subprocess environment; rotations route new passwords the same way.
+- **Doctor**: the deny probe fails on anything but 403 in every mode; the admin login runs before the bad-credentials probe (core allows 5 logins/min per IP); a `login failed: internal error` answer is reported as a CMS that cannot reach its database; the forged-`X-Real-IP` check is the opt-in `doctor --probe-ratelimit`.
+- **CLI surface** differs from the table above in naming only: rotation is `rotate <what>` (`db-password --which cms|engine|keycloak`, `admin-password`, `secret-key`, `jwt`, `tls`, `token`, `keycloak-client`); `keys` never rotates; `purge --confirm <data dir>` reclaims uid-owned data through a throwaway container; `token` is idempotent and revokes the previous key on rotation; `up` refuses a core downgrade before touching anything; `status` shows the last started image set with the doctor verdict.
+- **Migrations**: `0001_initial_layout` plus `0002_grafana_data_owner` (Grafana runs as uid 472). `migrate` snapshots `.env` and the state file first; a failed migration leaves a marker and non-idempotent ones refuse to re-run; `--fake` needs the full name and is recorded separately.
+- **Metrics**: core exposes no `/metrics`; the `neops` scrape job and its alerts were dropped. Grafana, VictoriaMetrics and vmalert have healthchecks.
+- **Docs**: the nginx snippet needs WebSocket upgrade headers on the CMS block; the rate-limit probe is meaningful only after `RATELIMIT_IP_META_KEY` is set.
+
+Verification performed (all on this box, live containers, `tests/e2e/`): `external-proxy` (also fronted by a real Caddy from the documented snippet: deny routes 403, `X-Real-IP` overwritten, 1 MB body, WebSocket upgrade), `traefik-http` (plain-http admin login), `traefik-tls-selfsigned`, `traefik-shared-host-tls-files`, `oidc-keycloak` (Chromium login through Keycloak, role sync, client-secret rotation, realm persistence across down/up), `metrics` (all scrape targets up); chaos: kill/recover of every core service, database outage, engine restart under a polling worker, broken `.env`, every `rotate` variant with the process table sampled for leaked secrets, backup and a literal restore into a fresh clone, synthetic migrations, the downgrade guard, `purge`, and `docker system prune -a --volumes` survival. Not verified: `traefik-acme` (needs public DNS), `oidc-external` (needs an IdP), single logout, `rotate db-password --which keycloak`, restoring `keycloak.dump`, a 200 MB upload.
+
+Upstream: the engine's monitor publish fix is [neops-workflow-engine #291](https://github.com/zebbra/neops-workflow-engine/pull/291); the compose pins `neops-monitor-app` to the engine tag and tests used a locally built image until that tag is published.
