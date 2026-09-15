@@ -9,7 +9,7 @@ from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
 from neops_compose.env import Env
 from neops_compose.render import KEYCLOAK_CLIENT_ID, KEYCLOAK_REALM, keycloak_relative_path, render
 from neops_compose.scenario import Scenario
-from neops_compose.urls import PublicUrl
+from neops_compose.urls import public_urls
 
 CORE_SERVICES = ("cms-init", "cms", "cms-worker", "cms-beat")
 DEPENDANTS = {  # which database, from databases.BY_KEY -> what has to be recreated after it
@@ -91,12 +91,8 @@ def jwt(ctx: Ctx) -> None:
 
 
 def public_hosts(env: Env, scenario: Scenario) -> list[str]:
-    keys = ["NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL"]
-    if scenario.keycloak:
-        keys.append("NEOPS_KEYCLOAK_URL")
-    if scenario.metrics and env.is_set("NEOPS_GRAFANA_URL"):
-        keys.append("NEOPS_GRAFANA_URL")
-    return sorted({PublicUrl.parse(env.require(k)).host for k in keys})
+    """Every hostname the deployment answers on, which is what a certificate has to carry."""
+    return sorted({url.host for url in public_urls(env, scenario).values()})
 
 
 def tls(ctx: Ctx) -> None:

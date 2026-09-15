@@ -6,10 +6,9 @@ from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT
 from neops_compose.routes import CORE_PREFIXES, WEB_RESERVED_PATHS
 from neops_compose.scenario import BASE_FILE, OVERLAYS, Scenario
-from neops_compose.urls import BadUrl, PublicUrl
+from neops_compose.urls import BASE_URLS, BadUrl, PublicUrl
 
 PLACEHOLDERS = {"changeme", "change_me", "unsafe", "password", "secret", "xxx"}
-BASE_URLS = ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
 BASE_SECRETS = (
     "NEOPS_CMS_DB_PASSWORD",
     "NEOPS_ENGINE_DB_PASSWORD",

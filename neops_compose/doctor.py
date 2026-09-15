@@ -7,9 +7,7 @@ import ssl
 from dataclasses import dataclass
 
 from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
-from neops_compose.env import Env
-from neops_compose.scenario import Scenario
-from neops_compose.urls import PublicUrl
+from neops_compose.urls import BASE_URLS, PublicUrl, public_urls
 
 ONE_SHOTS = {"cms-init"}
 NAME_WIDTH = 28
@@ -174,9 +172,7 @@ def _deny_probe(engine: PublicUrl, http: Http, severity: str = "fail") -> Probe:
 
 
 def _specs(urls: dict[str, PublicUrl]) -> list[ProbeSpec]:
-    web, cms, engine, monitor = (
-        urls[k] for k in ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
-    )
+    web, cms, engine, monitor = (urls[k] for k in BASE_URLS)
     specs = [
         ProbeSpec("web client", web, "/", contains="app-root"),
         ProbeSpec("cms admin", cms, "/admin/login/"),
@@ -294,16 +290,6 @@ def ratelimit_probe(cms: PublicUrl, http: Http) -> Probe:
     )
 
 
-def _public_urls(env: Env, scenario: Scenario) -> dict[str, PublicUrl]:
-    keys = ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
-    urls = {k: PublicUrl.parse(env.require(k)) for k in keys}
-    if scenario.keycloak:
-        urls["NEOPS_KEYCLOAK_URL"] = PublicUrl.parse(env.require("NEOPS_KEYCLOAK_URL"))
-    if scenario.metrics and env.is_set("NEOPS_GRAFANA_URL"):
-        urls["NEOPS_GRAFANA_URL"] = PublicUrl.parse(env.get("NEOPS_GRAFANA_URL"))
-    return urls
-
-
 def _login_probes(ctx: Ctx, cms: PublicUrl, engine: PublicUrl, http: Http) -> list[Probe]:
     """The admin login goes first: core allows five logins a minute from one address, and
     the bad-credentials probe spends one of them."""
@@ -327,7 +313,7 @@ def run(
     ctx: Ctx, connect: str | None = None, insecure: bool = False, probe_ratelimit: bool = False
 ) -> list[Probe]:
     probes = container_probes(ctx.compose.ps())
-    urls = _public_urls(ctx.env, ctx.scenario)
+    urls = public_urls(ctx.env, ctx.scenario)
     http = Http(connect=connect, insecure=insecure)
     probes += http_probes(urls, http, "warn" if ctx.scenario.proxy == "expose" else "fail")
     probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http)

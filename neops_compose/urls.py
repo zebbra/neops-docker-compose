@@ -4,11 +4,15 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from neops_compose.env import Env
+from neops_compose.scenario import Scenario
+
 # The monitor app rejects anything outside this set, and the web client writes
 # these values unescaped into a JS literal: keep public URLs plain.
 _HOST_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 _PATH_RE = re.compile(r"^(/[A-Za-z0-9._~-]+)*$")
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+BASE_URLS = ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
 
 
 class BadUrl(ValueError):
@@ -62,3 +66,18 @@ class PublicUrl:
 
     def __str__(self) -> str:
         return self.origin + self.path
+
+
+def public_urls(env: Env, scenario: Scenario) -> dict[str, PublicUrl]:
+    """The browser-facing URLs this scenario has, which is one rule with three readers: the
+    Traefik routers, doctor's probes and the hostnames the self-signed certificate covers.
+
+    Keycloak arrives with its overlay. Grafana only when the operator also routed it: the
+    metrics overlay otherwise leaves it on loopback with no public name at all.
+    """
+    keys = [*BASE_URLS]
+    if scenario.keycloak:
+        keys.append("NEOPS_KEYCLOAK_URL")
+    if scenario.metrics and env.is_set("NEOPS_GRAFANA_URL"):
+        keys.append("NEOPS_GRAFANA_URL")
+    return {key: PublicUrl.parse(env.require(key)) for key in keys}

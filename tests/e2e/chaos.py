@@ -384,15 +384,17 @@ def step_database_outage(report: Report, stack: Stack) -> None:
     its healthcheck fetches the admin login page, which renders without touching Postgres."""
     started = time.monotonic()
     neops(stack.clone, "compose", "--", "stop", "postgres-cms")
-    outage = stack.admin_login()
-    timed(
-        report,
-        outage.token is None,
-        f"the CMS refuses a login while its database is stopped ({outage.error[:120]}), "
-        f"though the container still reports {stack.health_of('cms')}",
-        started,
-    )
-    neops(stack.clone, "compose", "--", "start", "postgres-cms")
+    try:
+        outage = stack.admin_login()
+        timed(
+            report,
+            outage.token is None,
+            f"the CMS refuses a login while its database is stopped ({outage.error[:120]}), "
+            f"though the container still reports {stack.health_of('cms')}",
+            started,
+        )
+    finally:  # a raising assertion must not leave the deployment without its database
+        neops(stack.clone, "compose", "--", "start", "postgres-cms")
     back = wait_for(lambda: stack.health_of("postgres-cms") == "healthy", timeout=300)
     timed(report, back, "the CMS database is healthy again", started)
     admin_can_log_in(report, stack, "once the database returns")

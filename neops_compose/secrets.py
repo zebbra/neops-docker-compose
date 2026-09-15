@@ -93,44 +93,44 @@ def stale_sans(cert_path: Path, hosts: list[str]) -> set[str]:
     return set(hosts) - selfsigned_sans(cert_path)
 
 
-def ensure_selfsigned(tls_dir: Path, hosts: list[str], rotate: bool = False, days: int = 397) -> bool:
-    """A private CA plus one server certificate carrying every public hostname as a SAN.
+CA_COMMON_NAME = "NeOps deployment CA"
+CA_DAYS = 3650
+BACKDATE = dt.timedelta(minutes=5)  # tolerate a few minutes of clock skew on the first start
 
-    days defaults to 397, Apple's limit on publicly-trusted leaf validity; the CA
-    itself is long-lived (10 years) since it never leaves this deployment's trust store.
-    """
-    if not hosts:
-        raise ValueError("ensure_selfsigned requires at least one host")
-    cert_path = tls_dir / "cert.pem"
-    key_path = tls_dir / "key.pem"
-    if cert_path.exists() and key_path.exists() and not rotate:
-        return False
-    now = dt.datetime.now(dt.UTC)
-    ca_key = _rsa_key()
-    ca_public_key = ca_key.public_key()
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "NeOps deployment CA")])
-    ca = (
-        x509.CertificateBuilder()
-        .subject_name(ca_name)
-        .issuer_name(ca_name)
-        .public_key(ca_public_key)
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - dt.timedelta(minutes=5))
-        .not_valid_after(now + dt.timedelta(days=3650))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_public_key), critical=False)
-        .sign(ca_key, hashes.SHA256())
-    )
+
+def _mint_ca(now: dt.datetime) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
+    """Long-lived: this CA never leaves the deployment it was minted for."""
     key = _rsa_key()
     public_key = key.public_key()
-    hosts = sorted(set(hosts))
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, CA_COMMON_NAME)])
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(public_key)
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - BACKDATE)
+        .not_valid_after(now + dt.timedelta(days=CA_DAYS))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    return ca, key
+
+
+def _mint_leaf(
+    hosts: list[str], ca: x509.Certificate, ca_key: rsa.RSAPrivateKey, now: dt.datetime, days: int
+) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
+    """One server certificate carrying every public hostname as a SAN."""
+    key = _rsa_key()
+    public_key = key.public_key()
     cert = (
         x509.CertificateBuilder()
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hosts[0])]))
-        .issuer_name(ca_name)
+        .issuer_name(ca.subject)
         .public_key(public_key)
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - dt.timedelta(minutes=5))
+        .not_valid_before(now - BACKDATE)
         .not_valid_after(now + dt.timedelta(days=days))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName(h) for h in hosts]), critical=False)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
@@ -150,9 +150,25 @@ def ensure_selfsigned(tls_dir: Path, hosts: list[str], rotate: bool = False, day
         )
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
-        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_public_key), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
+    return cert, key
+
+
+def ensure_selfsigned(tls_dir: Path, hosts: list[str], rotate: bool = False, days: int = 397) -> bool:
+    """A private CA plus one server certificate for every public hostname. Never overwrites.
+
+    days defaults to 397, Apple's limit on publicly-trusted leaf validity.
+    """
+    if not hosts:
+        raise ValueError("ensure_selfsigned requires at least one host")
+    cert_path, key_path = tls_dir / "cert.pem", tls_dir / "key.pem"
+    if cert_path.exists() and key_path.exists() and not rotate:
+        return False
+    now = dt.datetime.now(dt.UTC)
+    ca, ca_key = _mint_ca(now)
+    cert, key = _mint_leaf(sorted(set(hosts)), ca, ca_key, now, days)
     pem = serialization.Encoding.PEM
     write_secret(tls_dir / "ca.pem", ca.public_bytes(pem))
     write_secret(key_path, _pem_private(key))
