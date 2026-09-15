@@ -59,8 +59,9 @@ message:
    OIDC provider seed and the Keycloak realm import, all derived from `.env`.
 5. **Pull every image**, then **start the CMS first** (`postgres-cms`, `redis`, `elasticsearch`,
    `cms-init`, `cms`) and wait for it to become healthy. `cms-init` runs the CMS's own Django
-   migrations, creates the Elasticsearch indices, and creates the first superuser from
-   `NEOPS_ADMIN_USER` / `NEOPS_ADMIN_EMAIL` / `NEOPS_ADMIN_PASSWORD`.
+   migrations, creates the Elasticsearch indices, creates the first superuser from
+   `NEOPS_ADMIN_USER` / `NEOPS_ADMIN_EMAIL` / `NEOPS_ADMIN_PASSWORD`, and grants that superuser
+   the role described under [The first user's permissions](#the-first-users-permissions).
 6. **Mint the engine's API key** against the now-running CMS (`manage.py generate_api_key`), and
    write it to `data/secrets/engine.env`. This is why the CMS has to be up first: the engine
    refuses to boot without a valid token.
@@ -80,11 +81,43 @@ Once `doctor` reports every probe `OK`, open `NEOPS_WEB_URL` in a browser and lo
 `NEOPS_ADMIN_USER` with the password from `.env`. That password is applied only when the account
 is created; change it afterwards with `./neops rotate admin-password`, not by editing `.env`.
 
+## The first user's permissions
+
+Being a Django superuser grants nothing in NeOps itself. Core gates every entity read and write
+on a *role*, so an account without one logs in, sees empty tables and gets
+`User is not allowed to create a group.` from every write. `cms-init` therefore also seeds, for
+`NEOPS_ADMIN_USER`:
+
+- a role named by `NEOPS_ADMIN_ROLE` (default `admin`) holding read, execute and write;
+- a scope named `Global` with all five visibility flags on (devices, groups, interfaces,
+  clients, topology), and that role granted read, execute and write on it;
+- the `admin` workflow profile on the same role, which adds the workflow, execution and worker
+  grants (`manage.py grant_workflow_permissions --role <role> --profile admin`).
+
+Every step is idempotent and re-runs on each `./neops up`. It never revokes anything, so widening
+or narrowing that role afterwards in the admin site is safe for the permissions it does not
+mention, but the three grants above are re-applied on every start. Renaming `NEOPS_ADMIN_ROLE`
+seeds a *second* role rather than renaming the first.
+
 ## Adding users
 
-Without an OIDC overlay, create additional accounts and grant permissions from the CMS admin
-site at `<NEOPS_CMS_URL>/admin/`, signed in as the superuser. With `compose.oidc.yaml`, local
-password login is disabled: users authenticate through your identity provider, and with the
-bundled Keycloak overlay you create them in the Keycloak admin console and assign them roles on
-the `neops-auth` client (see [Scenarios](20-scenarios.md#oidc)). Either way, the very first
-account able to manage the deployment is the superuser `install` created.
+Without an OIDC overlay, create additional accounts from the CMS admin site at
+`<NEOPS_CMS_URL>/admin/`, signed in as the superuser. A new account needs the same two things the
+first one was given, both under **Permissions** in the admin site: a role (with its permission
+level and a scope granting the visibility you want), and that role on the user. Workflow rights
+are separate, and are added per role with
+
+```bash
+./neops compose -- exec cms python manage.py grant_workflow_permissions --role <role> \
+  --profile author|operator|admin --yes
+```
+
+Without `--yes` the command prints the diff and changes nothing, which is the safe way to see
+what a profile would add. It is additive: a profile widens a role and never revokes a grant.
+
+With `compose.oidc.yaml`, local password login is disabled: users authenticate through your
+identity provider, and with the bundled Keycloak overlay you create them in the Keycloak admin
+console and assign them roles on the `neops-auth` client (see [Scenarios](20-scenarios.md#oidc)).
+The role names that arrive in the token still have to exist in the CMS with a scope and
+permissions, exactly as above. Either way, the very first account able to manage the deployment
+is the superuser `install` created.

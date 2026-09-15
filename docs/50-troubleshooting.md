@@ -23,8 +23,8 @@ below are keyed to those probe names and the messages `check` prints.
 | `keycloak realm` | the `neops` realm's OIDC discovery document did not come back (Keycloak overlay only) |
 | `grafana` | `/api/health` did not return 200 (metrics overlay only, and only when `NEOPS_GRAFANA_URL` is set) |
 | `engine worker API denied` | a `POST /blackboard/job` from outside reached the engine instead of being refused: see [External proxy](40-external-proxy.md); this fails `doctor` in every scenario, including external-proxy mode, because the route must never be reachable regardless of which proxy sits in front of it |
-| `cms login path` | a deliberately bad login answered 5xx instead of 4xx: see *500 on login* below |
-| `worker registered` | logging in as the admin user and asking the engine for `/workers` did not find an `ONLINE` worker: check the `worker` container's logs; without a permission on the admin account this probe still passes if the request itself was accepted with a 403 |
+| `cms login path` | a deliberately bad login answered 5xx instead of 4xx, or answered `internal error`, which is what core says while its database is unreachable: see *500 on login* below, and check `postgres-cms` |
+| `worker registered` | logging in as the admin user and asking the engine for `/workers` did not find an `ONLINE` worker: check the `worker` container's logs; a 403 from the engine still passes the probe, since the request itself was accepted; `the CMS cannot reach its database` means the login never got far enough to ask, so start with `postgres-cms` |
 | `X-Real-IP trusted from client` (`--probe-ratelimit` only) | six forged `X-Real-IP` values were all accepted as distinct clients: your proxy is not overwriting the header, see [External proxy](40-external-proxy.md) |
 | `tls certificate` (TLS scenarios only) | fewer than 14 days remain before expiry |
 
@@ -77,6 +77,23 @@ Check `docker compose logs engine`. Two causes account for nearly every case:
   `data/secrets/jwt/public.pem`. If `./neops keys` never ran (it is part of `install`/`up`), or the
   file is missing after a manual edit of `data/`, the engine refuses to start. Run `./neops keys`
   (it never overwrites an existing keypair) and restart the engine.
+
+### Logged in, but everything is empty and every write says "User is not allowed"
+
+Core gates entity reads and writes on a NeOps *role*, which is separate from Django's superuser
+flag. An account holding no role signs in normally and then sees empty device, group and
+interface tables, while every write answers `User is not allowed to create a group.` or the
+equivalent for the model it touched.
+
+`cms-init` seeds the `NEOPS_ADMIN_ROLE` role (default `admin`) for `NEOPS_ADMIN_USER` on every
+start, so this should only reach an account you added yourself, or a deployment installed before
+that seed existed. On an older deployment, `./neops up` is enough to fix the admin account:
+`cms-init` re-runs and the seed is idempotent.
+
+For any other account, fix it from the CMS admin site at `<NEOPS_CMS_URL>/admin/` under
+**Permissions**: give the user a role, give the role a permission level and a scope whose
+visibility flags cover what they should see, then add the workflow rights with
+`grant_workflow_permissions`. [Install](10-install.md#adding-users) has the command.
 
 ### Elasticsearch and `vm.max_map_count`
 
