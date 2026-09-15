@@ -111,6 +111,11 @@ names that mismatch on the next run rather than letting it fail obscurely later.
 `secret-key` and `jwt` are the two that end every active login. Plan them like a maintenance
 window.
 
+No rotation puts a secret on a command line of its own: the new value reaches the container
+through the environment, never through `docker compose exec`'s arguments. The one exception is
+yours to avoid — `--password P` is visible in the host's process table to every local user for as
+long as the command runs. Omit the flag and type the password at the prompt on a shared host.
+
 ## Migrations
 
 `migrations/NNNN_<slug>.py`, applied once each, in numeric order, recorded in
