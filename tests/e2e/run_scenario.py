@@ -50,6 +50,18 @@ SECRET_KEYS = (
     "NEOPS_KEYCLOAK_DB_PASSWORD",
     "NEOPS_GRAFANA_ADMIN_PASSWORD",
 )
+METRICS_SERVICES = (
+    "celery-exporter",
+    "redis-exporter",
+    "postgres-exporter-cms",
+    "postgres-exporter-engine",
+    "elasticsearch-exporter",
+    "victoriametrics",
+    "vmalert",
+    "grafana",
+)
+SCRAPE_JOBS = frozenset({"celery", "elasticsearch", "postgres", "redis", "victoriametrics", "vmalert"})
+VM_TARGETS_URL = "http://127.0.0.1:8428/api/v1/targets"
 OVERRIDE_YAML = """# Written by tests/e2e/run_scenario.py: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
 services:
@@ -310,6 +322,66 @@ def assert_shared_host_routing(report: Report, values: dict[str, str], http: Htt
     report.add(status == 200, f"the engine answers under {engine.path}/health ({status})")
 
 
+def assert_metrics_containers(report: Report, clone: Path) -> None:
+    rows = {r.get("Service"): r for r in Compose(clone).ps()}
+    for name in METRICS_SERVICES:
+        row = rows.get(name, {})
+        state, health = row.get("State", "absent"), row.get("Health", "")
+        ok = state == "running" and health in ("", "healthy")
+        report.add(ok, f"{name} is running ({' '.join(filter(None, (state, health)))})")
+
+
+def assert_grafana_health(report: Report, values: dict[str, str], http: Http) -> None:
+    grafana = PublicUrl.parse(values["NEOPS_GRAFANA_URL"])
+    try:
+        status, text = http.request(grafana, "/api/health")
+        database = json.loads(text).get("database")
+    except Exception as exc:
+        report.add(False, f"grafana {grafana}/api/health: {exc}")
+        return
+    report.add(
+        status == 200 and database == "ok", f"grafana answers /api/health ({status}, database {database})"
+    )
+
+
+def scrape_targets(clone: Path, timeout: float = 120.0) -> list[dict]:
+    """VictoriaMetrics publishes no host port, so it is asked from inside its own container.
+
+    The first scrape of a target is up to one interval away, so a fresh stack reports
+    targets with no verdict yet; wait for one rather than calling that a failure.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        out = Compose(clone).exec("victoriametrics", "wget", "-qO-", VM_TARGETS_URL)
+        targets = json.loads(out)["data"]["activeTargets"]
+        decided = targets and all(t.get("health") in ("up", "down") for t in targets)
+        if decided or time.monotonic() > deadline:
+            return targets
+        time.sleep(5)
+
+
+def assert_scrape_targets(report: Report, clone: Path) -> None:
+    try:
+        targets = scrape_targets(clone)
+    except Exception as exc:
+        report.add(False, f"victoriametrics {VM_TARGETS_URL}: {exc}")
+        return
+    jobs = {t["labels"].get("job") for t in targets}
+    report.add(jobs == SCRAPE_JOBS, f"every scrape job is configured (missing {sorted(SCRAPE_JOBS - jobs)})")
+    down = [
+        f"{t['labels'].get('job')} {t.get('scrapeUrl')}: {t.get('lastError') or t.get('health')}"
+        for t in targets
+        if t.get("health") != "up"
+    ]
+    report.add(not down, f"all {len(targets)} scrape targets are up ({'; '.join(down) or 'none down'})")
+
+
+def assert_metrics(report: Report, clone: Path, values: dict[str, str], http: Http) -> None:
+    assert_metrics_containers(report, clone)
+    assert_grafana_health(report, values, http)
+    assert_scrape_targets(report, clone)
+
+
 def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario: Scenario) -> None:
     http = Http(connect=CONNECT, insecure=True)
     if scenario.oidc:
@@ -318,6 +390,8 @@ def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario
         assert_admin_login(report, values, http)
     if scenario.shared_host:
         assert_shared_host_routing(report, values, http)
+    if scenario.metrics:
+        assert_metrics(report, clone, values, http)
     assert_worker(report, clone)
     assert_backup(report, clone)
     assert_idempotent(report, clone, scenario.proxy == "expose")

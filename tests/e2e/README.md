@@ -26,8 +26,13 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 | the OIDC providers are seeded and visible in `appSettings` | OIDC scenarios |
 | core's admin, `/djstatic/` and the engine's `/engine/health` answer on the one hostname | shared-host |
 | the worker container runs and its log shows function blocks registering | all |
+| every exporter, VictoriaMetrics, vmalert and Grafana run; Grafana answers `/api/health` on its public URL; every scrape target reports `up` | metrics |
 | `./neops backup` writes `cms.dump` and `engine.dump` | all |
 | a second `install` mints no second API key | all |
+
+VictoriaMetrics publishes no host port, so the scrape-target assertion asks it over
+`wget` inside its own container and waits for every target to have been scraped once
+(the interval is 30 s).
 
 In expose mode there is no proxy in front of the stack, so the engine's public worker routes
 really are reachable and doctor says so. That is the documented contract of
