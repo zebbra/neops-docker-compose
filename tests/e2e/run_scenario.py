@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -19,6 +20,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlencode
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
@@ -238,9 +240,9 @@ def prepare_clone(work: Path, values: dict[str, str]) -> Path:
     return clone
 
 
-def failing_probe_names(clone: Path) -> list[str]:
+def failing_probe_names(clone: Path, *extra: str) -> list[str]:
     """doctor prints `FAIL <name padded to NAME_WIDTH> <detail>`."""
-    out = neops(clone, "doctor", "--connect", CONNECT, "--insecure", check=False, capture=True)
+    out = neops(clone, "doctor", "--connect", CONNECT, "--insecure", *extra, check=False, capture=True)
     print(out.stdout + out.stderr, flush=True)
     start = len("FAIL ")
     return [
@@ -312,6 +314,50 @@ def assert_admin_manages_entities(report: Report, values: dict[str, str], http: 
         report.add(left == [], f"the admin deletes it again ({left})")
     except Exception as exc:
         report.add(False, f"the admin creates, reads and deletes a device group ({exc})")
+
+
+def assert_plain_http_admin(report: Report, values: dict[str, str], http: Http) -> None:
+    """Core defaults both cookie flags to True outside DEBUG, which makes the admin site
+    unusable over plain http: the browser drops the cookies and the login is rejected.
+    The http scenarios turn them off in generated/cms.env and nothing else exercises that."""
+    cms = PublicUrl.parse(values["NEOPS_CMS_URL"])
+    status, headers, body = http.fetch(cms, "/admin/login/")
+    report.add(status == 200, f"the admin login page answers over http ({status})")
+    hsts = headers.get("Strict-Transport-Security")
+    report.add(hsts is None, f"no HSTS header is sent over http ({hsts!r})")
+    cookies = headers.get_all("Set-Cookie") or []
+    csrf = next((c for c in cookies if c.startswith("csrftoken=")), None)
+    ok = csrf is not None and "Secure" not in csrf
+    if not report.add(ok, f"the csrftoken cookie is set and is not Secure ({cookies})"):
+        return
+    field = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', body)
+    if not report.add(field is not None, "the login form carries a csrfmiddlewaretoken"):
+        return
+    form = urlencode(
+        {
+            "csrfmiddlewaretoken": field.group(1),
+            "username": values.get("NEOPS_ADMIN_USER", "neops"),
+            "password": values["NEOPS_ADMIN_PASSWORD"],
+            "next": "/admin/",
+        }
+    )
+    status, headers, _ = http.fetch(
+        cms,
+        "/admin/login/",
+        method="POST",
+        body=form,
+        headers={"Cookie": csrf.split(";", 1)[0]},
+        content_type="application/x-www-form-urlencoded",
+    )
+    location = headers.get("Location") or ""
+    report.add(
+        status == 302 and location.endswith("/admin/"),
+        f"the admin login form is accepted over http ({status} -> {location})",
+    )
+    session = next((c for c in headers.get_all("Set-Cookie") or [] if c.startswith("sessionid=")), None)
+    report.add(
+        session is not None and "Secure" not in session, f"the session cookie is not Secure ({session})"
+    )
 
 
 def assert_oidc_seeded(report: Report, values: dict[str, str], http: Http) -> None:
@@ -438,6 +484,8 @@ def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario
         token = assert_admin_login(report, values, http)
         if token:
             assert_admin_manages_entities(report, values, http, token)
+        if PublicUrl.parse(values["NEOPS_CMS_URL"]).scheme == "http":
+            assert_plain_http_admin(report, values, http)
     if scenario.shared_host:
         assert_shared_host_routing(report, values, http)
     if scenario.metrics:

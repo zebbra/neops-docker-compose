@@ -23,6 +23,7 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 | `install` completes and doctor is green | all except expose mode |
 | the worker API deny probe is doctor's **only** failure | expose mode (`compose.expose.yaml`) |
 | the admin user can log in and gets an access token | password-login scenarios |
+| the Django admin works over plain http: no HSTS, neither cookie is `Secure`, and the login form POST is accepted | `http://` scenarios |
 | the admin creates a device group over GraphQL, reads it back and deletes it, which is what the seeded admin role buys | password-login scenarios |
 | the OIDC providers are seeded and visible in `appSettings` | OIDC scenarios |
 | core's admin, `/djstatic/` and the engine's `/engine/health` answer on the one hostname | shared-host |
