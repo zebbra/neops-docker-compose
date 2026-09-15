@@ -16,13 +16,16 @@ LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p)
 DENY_PROBE = "engine worker API denied"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 LOOPBACK_ONLY = (
-    "skipped: the engine is published on the loopback address only, "
-    "so nothing beyond this host reaches these routes"
+    "not applicable: no reverse proxy in this scenario, and the engine listens on 127.0.0.1 only, "
+    "so these routes are reachable from this host and from nowhere else"
 )
 WORKER_PROBE = "worker registered"
 WORKER_POLL_SECONDS = 5
 DB_UNREACHABLE = "the CMS cannot reach its database (login answered: internal error)"
-EXTERNAL_PROXY_DENY_HINT = "verify that your reverse proxy denies these routes (docs/40-external-proxy.md)"
+EXTERNAL_PROXY_DENY_HINT = (
+    "the worker API answered over the public URL. Expected until your reverse proxy is up; "
+    "once it is, it must deny these routes (docs/40-external-proxy.md)"
+)
 
 
 @dataclass(frozen=True)
