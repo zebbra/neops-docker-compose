@@ -111,6 +111,51 @@ re-import the realm over what the admin console holds.
 Chromium resolves `*.localhost` to 127.0.0.1 natively, and the wait for the token tolerates a
 `SecurityError` while the main frame is still an opaque mid-navigation document.
 
+## Chaos runs
+
+`chaos.py` takes the clone a `--keep` run left behind and breaks the deployment on purpose.
+
+```bash
+uv run python tests/e2e/run_scenario.py traefik-tls-selfsigned --port-base 19000 \
+  --workdir /tmp/neops-e2e/chaos --keep --extra-env NEOPS_ES_HEAP=512m
+uv run python tests/e2e/chaos.py /tmp/neops-e2e/chaos/repo
+```
+
+| Step | Assertion |
+|---|---|
+| kill `cms`, `engine`, `redis`, `postgres-cms`, `worker`, `traefik` in turn | `compose up -d --wait` brings each back and doctor is green again |
+| `./neops down` then `./neops up` | the admin still logs in, `data/secrets/engine.env` is byte-identical and `state.json` still holds one API key |
+| three corrupted `.env` files | `./neops check` exits 1 and names each problem, and passes again once restored |
+| `./neops restart engine` under a polling worker | the engine goes healthy again, the worker container survives and doctor is green |
+| `compose stop postgres-cms` | logins fail while the database is gone and work again when it returns |
+
+A full run takes about 15 minutes, most of it inside `up -d --wait`: killing `redis` or
+`postgres-cms` recreates everything that depends on them and re-runs `cms-init`. Each step
+prints `PASS`/`FAIL` with its own elapsed time, and a step that raises does not stop the ones
+after it, so one run reports everything that is broken.
+
+Three things the run accommodates, each a property of the product rather than a defect:
+
+- **Core rate-limits login to five a minute per address** and every doctor run spends two, so
+  a doctor that fails *only* on the worker probe with a rate-limit message is retried after a
+  minute instead of being believed.
+- **The seeded admin holds no NeOps role.** core's GraphQL writes are role-gated and `install`
+  creates a Django superuser without one, so `deviceUpsert` answers "User is not allowed to
+  create a group." until an operator grants a role from the CMS admin site (see
+  [Install](../../docs/10-install.md)). The restart step therefore shows persistence through
+  the admin account, the minted API key and `state.json` rather than through a device.
+- **An engine restart costs no re-registration.** The engine keeps worker registrations in its
+  own Postgres, so the worker logs nothing across the restart and simply keeps polling.
+
+The `--prune` flag adds `docker system prune -a --volumes` between the stop and the start of
+the restart step. That deletes every unused image, container and volume on the host, KIND's
+and the lab's included, so it is off by default and refuses to run without `CHAOS_PRUNE=yes`
+or a typed confirmation.
+
+`tests/unit/test_chaos.py` holds the three `.env` corruptions against the rules that must
+reject them, so a reworded message cannot turn a chaos assertion into a silent pass. It needs
+no Docker.
+
 ## Not covered here
 
 - `traefik-acme` needs public DNS and port 80 reachable from the internet. The
