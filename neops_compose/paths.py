@@ -34,6 +34,11 @@ class Paths:
         return self.repo / "certs"
 
     @property
+    def cust_certs(self) -> Path:
+        """Certificates the operator wants inside the containers' trust store."""
+        return self.repo / "cust-cert"
+
+    @property
     def migrations(self) -> Path:
         return self.repo / "migrations"
 

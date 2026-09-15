@@ -1,6 +1,17 @@
 from neops_compose import doctor
 from neops_compose.urls import PublicUrl
 
+HOSTS = {
+    "NEOPS_WEB_URL": "https://neops.example.com",
+    "NEOPS_CMS_URL": "https://cms.neops.example.com",
+    "NEOPS_ENGINE_URL": "https://engine.neops.example.com",
+    "NEOPS_WORKFLOWS_URL": "https://workflows.neops.example.com",
+}
+
+
+def urls() -> dict[str, PublicUrl]:
+    return {k: PublicUrl.parse(v) for k, v in HOSTS.items()}
+
 
 class FakeHttp:
     def __init__(self, responses):
@@ -25,15 +36,6 @@ def test_container_probes_treat_completed_init_as_ok():
 
 
 def test_http_probes_hosts_mode():
-    urls = {
-        k: PublicUrl.parse(v)
-        for k, v in {
-            "NEOPS_WEB_URL": "https://neops.example.com",
-            "NEOPS_CMS_URL": "https://cms.neops.example.com",
-            "NEOPS_ENGINE_URL": "https://engine.neops.example.com",
-            "NEOPS_WORKFLOWS_URL": "https://workflows.neops.example.com",
-        }.items()
-    }
     http = FakeHttp(
         {
             "/": (200, "<html><app-root></app-root>"),
@@ -44,22 +46,16 @@ def test_http_probes_hosts_mode():
             "/config.js": (200, 'apiBaseUrl: "https://engine.neops.example.com"'),
         }
     )
-    probes = doctor.http_probes(urls, http, expect_deny=True)
+    probes = doctor.http_probes(urls(), http)
     assert all(p.ok for p in probes), [p for p in probes if not p.ok]
     assert ("https://engine.neops.example.com/blackboard/job", "POST", {}) in http.calls
 
 
-def test_deny_probe_fails_when_worker_api_is_reachable():
-    urls = {
-        "NEOPS_WEB_URL": PublicUrl.parse("https://neops.example.com"),
-        "NEOPS_CMS_URL": PublicUrl.parse("https://cms.neops.example.com"),
-        "NEOPS_ENGINE_URL": PublicUrl.parse("https://engine.neops.example.com"),
-        "NEOPS_WORKFLOWS_URL": PublicUrl.parse("https://workflows.neops.example.com"),
-    }
-    http = FakeHttp({"/blackboard/job": (400, "validation error")})
-    probes = doctor.http_probes(urls, http, expect_deny=True)
-    deny = [p for p in probes if p.name == "engine worker API denied"][0]
-    assert not deny.ok and "reachable" in deny.detail
+def test_deny_probe_fails_whenever_the_worker_api_answers_anything_but_403():
+    for status in (200, 201, 400, 401, 404, 500):
+        http = FakeHttp({"/blackboard/job": (status, "whatever")})
+        deny = [p for p in doctor.http_probes(urls(), http) if p.name == "engine worker API denied"][0]
+        assert not deny.ok and "reachable" in deny.detail, status
 
 
 def test_login_probe_never_accepts_500():
@@ -69,3 +65,19 @@ def test_login_probe_never_accepts_500():
     assert not p.ok and "RATELIMIT" in p.detail
     http = FakeHttp({"/graphql": (200, '{"errors":[{"message":"Please enter valid credentials"}]}')})
     assert doctor.bad_login_probe(cms, http).ok
+
+
+def test_login_separates_bad_credentials_from_the_rate_limit():
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    bad = doctor.login(cms, FakeHttp({"/graphql": (200, '{"errors":[{"message":"invalid"}]}')}), "n", "p")
+    assert bad.token is None and bad.rate_limited is False
+    limited = doctor.login(cms, FakeHttp({"/graphql": (429, "Too many requests")}), "n", "p")
+    assert limited.token is None and limited.rate_limited is True
+    good = FakeHttp({"/graphql": (200, '{"data":{"login":{"accessToken":"t"}}}')})
+    assert doctor.login(cms, good, "n", "p").token == "t"
+
+
+def test_worker_probe_names_the_rate_limit():
+    engine = PublicUrl.parse("https://engine.neops.example.com")
+    p = doctor.worker_probe(engine, FakeHttp({}), doctor.Login(rate_limited=True, error="429: Too many"))
+    assert not p.ok and "rate limit" in p.detail and "retry in a minute" in p.detail

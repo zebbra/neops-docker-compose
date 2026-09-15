@@ -13,6 +13,9 @@ def test_downgrade_detection():
     assert workflow.is_downgrade("2.1.0-beta.5", "2.1.0") is False
     assert workflow.is_downgrade("2.1.0", "2.0.9") is True
     assert workflow.is_downgrade("2.1.0", "cutting-edge") is False  # unparsable: never block
+    assert workflow.is_downgrade("cutting-edge", "2.1.0") is False
+    assert workflow.is_downgrade("2.1.0-beta.2", "2.1.0-rc.1") is False
+    assert workflow.is_downgrade("2.1.0-rc.1", "2.1.0-beta.2") is True
     assert workflow.is_downgrade("2.1.0", "2.1.0") is False
 
 

@@ -6,13 +6,14 @@ import socket
 import ssl
 from dataclasses import dataclass
 
-from neops_compose.compose import Compose
+from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.scenario import Scenario
 from neops_compose.urls import PublicUrl
 
 ONE_SHOTS = {"cms-init"}
 LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
+WORKER_PROBE = "worker registered"
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,24 @@ class Probe:
     name: str
     ok: bool
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class ProbeSpec:
+    name: str
+    url: PublicUrl
+    path: str
+    want: int = 200
+    contains: str = ""
+    method: str = "GET"
+    body: str | None = None
+
+
+@dataclass(frozen=True)
+class Login:
+    token: str | None = None
+    error: str = ""
+    rate_limited: bool = False
 
 
 class Http:
@@ -96,30 +115,20 @@ def container_probes(rows: list[dict], one_shots: set[str] = ONE_SHOTS) -> list[
     return out
 
 
-def _probe_get(
-    out: list[Probe],
-    http: Http,
-    name: str,
-    url: PublicUrl,
-    path: str,
-    want: int,
-    contains: str = "",
-    method: str = "GET",
-    body: str | None = None,
-) -> None:
+def _probe_get(http: Http, spec: ProbeSpec) -> Probe:
     try:
-        status, text = http.request(url, path, method=method, body=body)
+        status, text = http.request(spec.url, spec.path, method=spec.method, body=spec.body)
     except Exception as exc:
-        out.append(Probe(name, False, f"{url}{path}: {exc}"))
-        return
-    ok = status == want and (contains in text)
-    detail = f"{url}{path} -> {status}"
+        return Probe(spec.name, False, f"{spec.url}{spec.path}: {exc}")
+    ok = status == spec.want and (spec.contains in text)
+    detail = f"{spec.url}{spec.path} -> {status}"
     if not ok:
-        detail += f", expected {want}" + (f" containing {contains!r}" if contains else "")
-    out.append(Probe(name, ok, detail))
+        detail += f", expected {spec.want}" + (f" containing {spec.contains!r}" if spec.contains else "")
+    return Probe(spec.name, ok, detail)
 
 
-def _deny_probe(engine: PublicUrl, http: Http, expect_deny: bool) -> Probe:
+def _deny_probe(engine: PublicUrl, http: Http) -> Probe:
+    """The worker API must never answer a request that arrived over the public URL."""
     name = "engine worker API denied"
     try:
         status, _ = http.request(engine, "/blackboard/job", method="POST", body="{}")
@@ -129,46 +138,48 @@ def _deny_probe(engine: PublicUrl, http: Http, expect_deny: bool) -> Probe:
         return Probe(name, True, f"{engine}/blackboard/job -> 403")
     return Probe(
         name,
-        expect_deny is False,
+        False,
         f"{engine}/blackboard/job -> {status}: the worker API is reachable from outside; "
         "your reverse proxy must deny it (see examples/external-proxy.env)",
     )
 
 
-def http_probes(urls: dict[str, PublicUrl], http: Http, expect_deny: bool) -> list[Probe]:
+def _specs(urls: dict[str, PublicUrl]) -> list[ProbeSpec]:
     web, cms, engine, monitor = (
         urls[k] for k in ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
     )
-    out: list[Probe] = []
-    _probe_get(out, http, "web client", web, "/", 200, "app-root")
-    _probe_get(out, http, "cms admin", cms, "/admin/login/", 200)
-    _probe_get(
-        out,
-        http,
-        "cms graphql",
-        cms,
-        "/graphql",
-        200,
-        "__typename",
-        method="POST",
-        body='{"query":"{__typename}"}',
-    )
-    _probe_get(out, http, "engine health", engine, "/health", 200)
-    _probe_get(out, http, "monitor config", monitor, "/config.js", 200, str(engine))
+    specs = [
+        ProbeSpec("web client", web, "/", contains="app-root"),
+        ProbeSpec("cms admin", cms, "/admin/login/"),
+        ProbeSpec(
+            "cms graphql",
+            cms,
+            "/graphql",
+            contains="__typename",
+            method="POST",
+            body='{"query":"{__typename}"}',
+        ),
+        ProbeSpec("engine health", engine, "/health"),
+        ProbeSpec("monitor config", monitor, "/config.js", contains=str(engine)),
+    ]
     if "NEOPS_KEYCLOAK_URL" in urls:
-        _probe_get(
-            out,
-            http,
-            "keycloak realm",
-            urls["NEOPS_KEYCLOAK_URL"],
-            "/realms/neops/.well-known/openid-configuration",
-            200,
-            "authorization_endpoint",
+        specs.append(
+            ProbeSpec(
+                "keycloak realm",
+                urls["NEOPS_KEYCLOAK_URL"],
+                "/realms/neops/.well-known/openid-configuration",
+                contains="authorization_endpoint",
+            )
         )
     if "NEOPS_GRAFANA_URL" in urls:
-        _probe_get(out, http, "grafana", urls["NEOPS_GRAFANA_URL"], "/api/health", 200)
-    out.append(_deny_probe(engine, http, expect_deny))
-    return out
+        specs.append(ProbeSpec("grafana", urls["NEOPS_GRAFANA_URL"], "/api/health"))
+    return specs
+
+
+def http_probes(urls: dict[str, PublicUrl], http: Http) -> list[Probe]:
+    probes = [_probe_get(http, spec) for spec in _specs(urls)]
+    probes.append(_deny_probe(urls["NEOPS_ENGINE_URL"], http))
+    return probes
 
 
 def bad_login_probe(cms: PublicUrl, http: Http) -> Probe:
@@ -187,33 +198,40 @@ def bad_login_probe(cms: PublicUrl, http: Http) -> Probe:
     return Probe("cms login path", True, f"bad credentials answered {status} (no server error)")
 
 
-def login(cms: PublicUrl, http: Http, username: str, password: str) -> str | None:
+def login(cms: PublicUrl, http: Http, username: str, password: str) -> Login:
     body = json.dumps({"query": LOGIN_MUTATION, "variables": {"u": username, "p": password}})
-    status, text = http.request(cms, "/graphql", method="POST", body=body)
     try:
-        return json.loads(text)["data"]["login"]["accessToken"]
+        status, text = http.request(cms, "/graphql", method="POST", body=body)
+    except Exception as exc:
+        return Login(error=str(exc))
+    try:
+        return Login(token=json.loads(text)["data"]["login"]["accessToken"])
     except Exception:
-        return None
+        return Login(error=f"{status}: {text[:160]}", rate_limited=status == 429 or "Too many" in text)
 
 
-def worker_probe(engine: PublicUrl, http: Http, token: str | None) -> Probe:
-    name = "worker registered"
-    if not token:
-        return Probe(name, False, "could not log in as the admin user to ask the engine")
-    status, text = http.request(engine, "/workers", headers={"Authorization": f"Bearer {token}"})
+def worker_probe(engine: PublicUrl, http: Http, admin: Login) -> Probe:
+    if admin.rate_limited:
+        return Probe(WORKER_PROBE, False, "admin login refused (rate limit, 5/min): retry in a minute")
+    if not admin.token:
+        detail = "could not log in as the admin user to ask the engine"
+        return Probe(WORKER_PROBE, False, f"{detail}: {admin.error}" if admin.error else detail)
+    status, text = http.request(engine, "/workers", headers={"Authorization": f"Bearer {admin.token}"})
     if status == 403:
         return Probe(
-            name, True, "admin token accepted, no worker:read permission (assign a role to check further)"
+            WORKER_PROBE,
+            True,
+            "admin token accepted, no worker:read permission (assign a role to check further)",
         )
     if status != 200:
-        return Probe(name, False, f"GET /workers -> {status}")
+        return Probe(WORKER_PROBE, False, f"GET /workers -> {status}")
     try:
         workers = json.loads(text)
         items = workers if isinstance(workers, list) else workers.get("items", workers.get("data", []))
         online = [w for w in items if str(w.get("status", w.get("state", ""))).upper() == "ONLINE"]
-        return Probe(name, bool(online), f"{len(online)} online of {len(items)} workers")
+        return Probe(WORKER_PROBE, bool(online), f"{len(online)} online of {len(items)} workers")
     except Exception as exc:
-        return Probe(name, False, f"unexpected /workers payload: {exc}")
+        return Probe(WORKER_PROBE, False, f"unexpected /workers payload: {exc}")
 
 
 def ratelimit_probe(cms: PublicUrl, http: Http) -> Probe:
@@ -249,6 +267,16 @@ def _public_urls(env: Env, scenario: Scenario) -> dict[str, PublicUrl]:
     return urls
 
 
+def _login_probes(ctx: Ctx, cms: PublicUrl, engine: PublicUrl, http: Http) -> list[Probe]:
+    """The admin login goes first: core allows five logins a minute from one address, and
+    the bad-credentials probe spends one of them."""
+    if ctx.scenario.oidc:
+        skipped = Probe(WORKER_PROBE, True, "skipped: OIDC deployments cannot mint an admin token")
+        return [bad_login_probe(cms, http), skipped]
+    admin = login(cms, http, ctx.env.get("NEOPS_ADMIN_USER", "neops"), ctx.env.get("NEOPS_ADMIN_PASSWORD"))
+    return [bad_login_probe(cms, http), worker_probe(engine, http, admin)]
+
+
 def _tls_probe(http: Http, web: PublicUrl) -> Probe:
     try:
         days = http.cert_days_left(web)
@@ -258,29 +286,16 @@ def _tls_probe(http: Http, web: PublicUrl) -> Probe:
 
 
 def run(
-    env: Env,
-    scenario: Scenario,
-    compose: Compose,
-    connect: str | None,
-    insecure: bool,
-    probe_ratelimit: bool = False,
+    ctx: Ctx, connect: str | None = None, insecure: bool = False, probe_ratelimit: bool = False
 ) -> list[Probe]:
-    probes = container_probes(compose.ps())
-    urls = _public_urls(env, scenario)
+    probes = container_probes(ctx.compose.ps())
+    urls = _public_urls(ctx.env, ctx.scenario)
     http = Http(connect=connect, insecure=insecure)
-    probes += http_probes(urls, http, expect_deny=scenario.proxy == "traefik")
-    probes.append(bad_login_probe(urls["NEOPS_CMS_URL"], http))
-    if not scenario.oidc:
-        token = login(
-            urls["NEOPS_CMS_URL"],
-            http,
-            env.get("NEOPS_ADMIN_USER", "neops"),
-            env.get("NEOPS_ADMIN_PASSWORD"),
-        )
-        probes.append(worker_probe(urls["NEOPS_ENGINE_URL"], http, token))
+    probes += http_probes(urls, http)
+    probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http)
     if probe_ratelimit:
         probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http))
-    if scenario.tls:
+    if ctx.scenario.tls:
         probes.append(_tls_probe(http, urls["NEOPS_WEB_URL"]))
     return probes
 

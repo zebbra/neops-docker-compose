@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import re
 import shutil
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
+
+from packaging.version import InvalidVersion, Version
 
 from neops_compose import migrate, preflight, secrets, token
 from neops_compose.compose import Compose
+from neops_compose.context import Ctx
 from neops_compose.doctor import all_ok as doctor_ok
 from neops_compose.doctor import format_report as doctor_report
 from neops_compose.doctor import run as run_doctor
-from neops_compose.env import Env
-from neops_compose.paths import Paths
 from neops_compose.render import render
 from neops_compose.rotate import public_hosts
-from neops_compose.scenario import Scenario
-from neops_compose.state import State
 
 CMS_FIRST = ("postgres-cms", "redis", "elasticsearch", "cms-init", "cms")
 
@@ -29,43 +24,16 @@ class Blocked(RuntimeError):
     pass
 
 
-@dataclass
-class Ctx:
-    repo: Path
-    env: Env
-    paths: Paths
-    scenario: Scenario
-    compose: Compose
-    state: State
-    log: Callable[[str], None]
-
-    @classmethod
-    def build(cls, repo: Path, log: Callable[[str], None]) -> Ctx:
-        env = Env(repo / ".env")
-        paths = Paths.for_repo(repo, env)
-        return cls(repo, env, paths, Scenario.from_env(env), Compose(repo), State.load(paths.state_file), log)
-
-    def save_state(self) -> None:
-        self.state.save(self.paths.state_file)
-
-
 def tag_of(image: str) -> str:
     return image.rsplit(":", 1)[1] if ":" in image.rsplit("/", 1)[-1] else ""
 
 
-def _semver(tag: str) -> tuple | None:
-    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z]+)\.(\d+))?$", tag)
-    if not m:
-        return None
-    major, minor, patch, pre, pre_n = m.groups()
-    return (int(major), int(minor), int(patch), 0 if pre is None else -1, int(pre_n or 0))
-
-
 def is_downgrade(previous: str, current: str) -> bool:
-    a, b = _semver(previous), _semver(current)
-    if a is None or b is None:
+    """An unreadable tag on either side is never a downgrade: only refuse what we understand."""
+    try:
+        return Version(current) < Version(previous)
+    except InvalidVersion:
         return False
-    return b < a
 
 
 def guard_downgrade(last_up: dict | None, images: dict[str, str], allow: bool) -> None:
@@ -128,15 +96,16 @@ def migrate_all(ctx: Ctx, dry_run: bool = False) -> list[str]:
 def doctor(
     ctx: Ctx, connect: str | None = None, insecure: bool = False, probe_ratelimit: bool = False
 ) -> bool:
-    probes = run_doctor(ctx.env, ctx.scenario, ctx.compose, connect, insecure, probe_ratelimit)
+    probes = run_doctor(ctx, connect, insecure, probe_ratelimit)
     ctx.log(doctor_report(probes))
     return doctor_ok(probes)
 
 
 def _finish(ctx: Ctx, connect: str | None, insecure: bool) -> None:
-    ctx.state.record_up(images_by_service(ctx.compose))
+    healthy = doctor(ctx, connect, insecure)
+    ctx.state.record_up(images_by_service(ctx.compose), healthy)
     ctx.save_state()
-    if not doctor(ctx, connect, insecure):
+    if not healthy:
         raise Blocked("the stack is up but doctor reports failures")
 
 
@@ -155,14 +124,18 @@ def install(ctx: Ctx, connect: str | None = None, insecure: bool = False) -> Non
     _finish(ctx, connect, insecure)
 
 
+def _guard_downgrade(ctx: Ctx, allow_downgrade: bool) -> None:
+    core_image = next((i for i in ctx.compose.images() if "neops-core" in i), "")
+    guard_downgrade(ctx.state.last_up, {"cms": core_image}, allow_downgrade)
+
+
 def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, insecure: bool = False) -> None:
     check(ctx, check_images=False)
+    _guard_downgrade(ctx, allow_downgrade)
     migrate_all(ctx)
     keys(ctx)
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()
-    core_image = next((i for i in ctx.compose.images() if "neops-core" in i), "")
-    guard_downgrade(ctx.state.last_up, {"cms": core_image}, allow_downgrade)
     ctx.compose.up()
     if token.ensure_engine_token(ctx.compose, ctx.env, ctx.paths, ctx.state, ctx.log):
         ctx.compose.up()
@@ -191,5 +164,6 @@ def status(ctx: Ctx) -> str:
     faked = f", {len(ctx.state.faked)} FAKED ({', '.join(ctx.state.faked_names)})" if ctx.state.faked else ""
     lines.append(f"migrations: {len(ctx.state.applied)} applied, {len(pend)} pending" + faked)
     if ctx.state.last_up:
-        lines.append(f"last successful up: {ctx.state.last_up['at']}")
+        verdict = "doctor ok" if ctx.state.last_up.get("doctor_ok") else "doctor FAILED"
+        lines.append(f"last started: {ctx.state.last_up['at']} ({verdict})")
     return "\n".join(lines)

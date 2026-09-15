@@ -8,10 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from neops_compose import __version__
-from neops_compose.env import Env
-from neops_compose.paths import Paths
-from neops_compose.scenario import Scenario
-from neops_compose.state import State
+from neops_compose.context import Ctx
 
 DATABASES = (  # service, user, db, archive name
     ("postgres-cms", "neops", "neops", "cms.dump"),
@@ -21,6 +18,10 @@ DATABASES = (  # service, user, db, archive name
 RESTORE_NOTE = (
     "Elasticsearch is not backed up: after a restore run manage.py elastic_index --create and --populate"
 )
+
+
+def _stamp() -> str:
+    return dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _private_copy(src: Path, dst: Path) -> None:
@@ -49,38 +50,38 @@ def _dump_databases(compose, target: Path, log: Callable[[str], None]) -> list[s
     return dumped
 
 
-def create(
-    env: Env,
-    scenario: Scenario,
-    paths: Paths,
-    compose,
-    state: State,
-    log: Callable[[str], None],
-    target_root: Path | None = None,
-) -> Path:
-    """Logical dumps of every running Postgres plus everything needed to rebuild: .env, secrets, certs."""
-    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
-    target = (target_root or paths.backups) / stamp
-    target.mkdir(parents=True)
-    dumped = _dump_databases(compose, target, log)
-    _private_copy(paths.env_file, target / ".env")
-    _private_copy(paths.secrets, target / "secrets")
-    _private_copy(paths.certs, target / "certs")
-    _private_copy(paths.repo / "cust-cert", target / "cust-cert")
-    manifest = {
+def _manifest(ctx: Ctx, stamp: str, dumped: list[str]) -> dict:
+    return {
         "created": stamp,
         "cli": __version__,
-        "images": compose.images(),
-        "applied": state.applied_names,
-        "faked": state.faked_names,
+        "images": ctx.compose.images(),
+        "applied": ctx.state.applied_names,
+        "faked": ctx.state.faked_names,
         "dumps": dumped,
-        "compose_file": list(scenario.files),
+        "compose_file": list(ctx.scenario.files),
         "note": RESTORE_NOTE,
     }
-    (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+
+def create(ctx: Ctx, target_root: Path | None = None) -> Path:
+    """Logical dumps of every running Postgres plus everything needed to rebuild: .env, secrets, certs.
+
+    The directory is 0700 from creation, not from _lock_down: the dumps land in it first.
+    """
+    stamp = _stamp()
+    target = (target_root or ctx.paths.backups) / stamp
+    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(target, 0o700)
+    dumped = _dump_databases(ctx.compose, target, ctx.log)
+    _private_copy(ctx.paths.env_file, target / ".env")
+    _private_copy(ctx.paths.secrets, target / "secrets")
+    _private_copy(ctx.paths.certs, target / "certs")
+    _private_copy(ctx.paths.cust_certs, target / "cust-cert")
+    (target / "manifest.json").write_text(json.dumps(_manifest(ctx, stamp, dumped), indent=2) + "\n")
     _lock_down(target)
-    os.chmod(target.parent, 0o700)
-    log(f"backup written to {target} (this archive contains every secret of the deployment)")
+    if target_root is None:
+        os.chmod(ctx.paths.backups, 0o700)
+    ctx.log(f"backup written to {target} (this archive contains every secret of the deployment)")
     return target
 
 

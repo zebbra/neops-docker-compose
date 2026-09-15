@@ -7,6 +7,7 @@ from pathlib import Path
 
 from neops_compose import __version__, backup, migrate, rotate, state, token, workflow
 from neops_compose.compose import ComposeError
+from neops_compose.context import Ctx
 from neops_compose.env import MissingEnv
 from neops_compose.render import MissingSecret, RenderError, render
 
@@ -97,13 +98,16 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
     try:
-        return dispatch(args, workflow.Ctx.build(REPO, log))
+        return dispatch(args, Ctx.build(REPO, log))
+    except FileNotFoundError:
+        print("error: docker is not installed or not on PATH", file=sys.stderr)
+        return 1
     except ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
 
-def dispatch(args: argparse.Namespace, ctx: workflow.Ctx) -> int:
+def dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
     c = ctx.compose
     match args.command:
         case "install":
@@ -144,7 +148,7 @@ def dispatch(args: argparse.Namespace, ctx: workflow.Ctx) -> int:
     return 0
 
 
-def _migrate(args: argparse.Namespace, ctx: workflow.Ctx) -> int:
+def _migrate(args: argparse.Namespace, ctx: Ctx) -> int:
     if not args.fake:
         done = workflow.migrate_all(ctx, dry_run=args.dry_run)
         prefix = "would apply: " if args.dry_run else "applied: "
@@ -161,14 +165,14 @@ def _migrate(args: argparse.Namespace, ctx: workflow.Ctx) -> int:
     return 0
 
 
-def _backup(args: argparse.Namespace, ctx: workflow.Ctx) -> None:
-    target = backup.create(ctx.env, ctx.scenario, ctx.paths, ctx.compose, ctx.state, log, args.dir)
+def _backup(args: argparse.Namespace, ctx: Ctx) -> None:
+    target = backup.create(ctx, args.dir)
     if args.keep:
         for removed in backup.prune(target.parent, args.keep):
             log(f"pruned {removed}")
 
 
-def _render(args: argparse.Namespace, ctx: workflow.Ctx) -> None:
+def _render(args: argparse.Namespace, ctx: Ctx) -> None:
     if args.diff:
         _render_diff(ctx)
         return
@@ -176,7 +180,7 @@ def _render(args: argparse.Namespace, ctx: workflow.Ctx) -> None:
         log(f"wrote {path.relative_to(ctx.repo)}")
 
 
-def _render_diff(ctx: workflow.Ctx) -> None:
+def _render_diff(ctx: Ctx) -> None:
     import difflib
     import shutil
     import tempfile
@@ -209,26 +213,24 @@ def _render_diff(ctx: workflow.Ctx) -> None:
             print(line)
 
 
-def _rotate(args: argparse.Namespace, ctx: workflow.Ctx) -> None:
-    c = ctx.compose
+def _rotate(args: argparse.Namespace, ctx: Ctx) -> None:
     match args.what:
         case "db-password":
             if not args.which:
                 raise workflow.Blocked("rotate db-password needs --which cms|engine|keycloak")
-            rotate.db_password(args.which, ctx.env, c, log)
+            rotate.db_password(ctx, args.which)
         case "admin-password":
-            new = args.password or getpass.getpass("new admin password: ")
-            rotate.admin_password(ctx.env, c, new, log)
+            rotate.admin_password(ctx, args.password or getpass.getpass("new admin password: "))
         case "secret-key":
-            rotate.secret_key(ctx.env, ctx.paths, c, ctx.state, log)
+            rotate.secret_key(ctx)
         case "jwt":
-            rotate.jwt(ctx.paths, c, log)
+            rotate.jwt(ctx)
         case "tls":
-            rotate.tls(ctx.env, ctx.scenario, ctx.paths, c, log)
+            rotate.tls(ctx)
         case "token":
-            token.rotate_engine_token(c, ctx.env, ctx.paths, ctx.state, log)
+            token.rotate_engine_token(ctx.compose, ctx.env, ctx.paths, ctx.state, log)
         case "keycloak-client":
-            rotate.keycloak_client(ctx.env, ctx.scenario, ctx.paths, c, log)
+            rotate.keycloak_client(ctx)
 
 
 if __name__ == "__main__":

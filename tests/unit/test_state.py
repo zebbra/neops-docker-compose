@@ -16,12 +16,13 @@ def test_save_creates_parent_and_is_private(tmp_path):
     s = State.load(p)
     s.record_applied("0001_initial_layout")
     s.record_api_key(7, "workflow")
-    s.record_up({"cms": "quay.io/zebbra/neops-core:2.1.0-beta.5"})
+    s.record_up({"cms": "quay.io/zebbra/neops-core:2.1.0-beta.5"}, doctor_ok=False)
     s.save(p)
     assert stat.S_IMODE(p.stat().st_mode) == 0o600
     again = State.load(p)
     assert again.applied_names == ["0001_initial_layout"]
     assert again.api_keys[0]["id"] == 7 and again.last_up["images"]["cms"].endswith("beta.5")
+    assert again.last_up["doctor_ok"] is False
     assert again.cli == "2.0.0" and again.schema == 1
 
 

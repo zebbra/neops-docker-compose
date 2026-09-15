@@ -104,8 +104,8 @@ class State:
     def record_api_key(self, key_id: int, app: str) -> None:
         self.api_keys.append({"id": key_id, "app": app, "at": _now()})
 
-    def record_up(self, images: dict[str, str]) -> None:
-        self.last_up = {"at": _now(), "images": images}
+    def record_up(self, images: dict[str, str], doctor_ok: bool) -> None:
+        self.last_up = {"at": _now(), "images": images, "doctor_ok": doctor_ok}
 
     def written_by_newer_cli(self) -> bool:
         return _version(self.cli) > _version(__version__)

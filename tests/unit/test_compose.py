@@ -65,6 +65,16 @@ def test_exec_keeps_env_values_out_of_argv(tmp_path, monkeypatch):
     assert kwargs["env"]["PATH"], "the caller's environment must be inherited, not replaced"
 
 
+def test_exec_bytes_keeps_env_values_out_of_argv(tmp_path, monkeypatch):
+    fake = FakeRun()
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
+    Compose(tmp_path).exec_bytes("postgres-cms", "pg_dump", env={"PGPASSWORD": "s3cret"})
+    args, kwargs = fake.calls[-1]
+    assert args == ["docker", "compose", "exec", "-T", "-e", "PGPASSWORD", "postgres-cms", "pg_dump"]
+    assert "s3cret" not in " ".join(args)
+    assert kwargs["env"]["PGPASSWORD"] == "s3cret" and kwargs["capture_output"] is True
+
+
 def test_run_without_env_leaves_the_environment_alone(tmp_path, monkeypatch):
     fake = FakeRun()
     monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
