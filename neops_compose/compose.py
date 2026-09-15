@@ -56,6 +56,24 @@ class Compose:
             flags += ["-e", key]
         return self.run("exec", "-T", *flags, service, *cmd, capture=True, env=env).stdout
 
+    def exec_bytes(self, service: str, *cmd: str, env: dict[str, str] | None = None) -> bytes:
+        """Binary stdout (pg_dump -Fc); `-e KEY` keeps values out of argv, exactly as exec() does."""
+        flags: list[str] = []
+        for key in env or {}:
+            flags += ["-e", key]
+        result = subprocess.run(
+            ["docker", "compose", "exec", "-T", *flags, service, *cmd],
+            cwd=self.repo,
+            capture_output=True,
+            env=(os.environ | env) if env else None,
+        )
+        if result.returncode != 0:
+            raise ComposeError(
+                f"docker compose exec {service} {cmd[0]} failed: "
+                f"{result.stderr.decode(errors='replace').strip()}"
+            )
+        return result.stdout
+
     def ps(self) -> list[dict]:
         out = self.run("ps", "-a", "--format", "json", capture=True).stdout.strip()
         if not out:
