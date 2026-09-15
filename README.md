@@ -43,6 +43,7 @@ Log in at `NEOPS_WEB_URL` as `NEOPS_ADMIN_USER`.
 | `examples/traefik-acme.env` | bundled Traefik, Let's Encrypt |
 | `examples/traefik-shared-host-tls-files.env` | everything on one hostname |
 | `examples/oidc-external.env` | login through your identity provider |
+| `examples/oidc-external-shared-host.env` | the same on one hostname with paths instead of subdomains |
 | `examples/oidc-keycloak.env` | login through a bundled Keycloak |
 | `examples/metrics.env` | + VictoriaMetrics, Grafana, exporters |
 

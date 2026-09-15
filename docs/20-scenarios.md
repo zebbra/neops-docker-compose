@@ -152,6 +152,10 @@ Register this redirect URI at the provider:
 <NEOPS_CMS_URL>/accounts/oidc/<NEOPS_OIDC_PROVIDER_ID>/login/callback/
 ```
 
+In shared-hostname mode `NEOPS_CMS_URL` is the web client's origin, so the callback lives on the
+one hostname too: `examples/oidc-external-shared-host.env` is the same scenario with paths
+instead of subdomains.
+
 Core reads roles out of the token's `resource_access.<client_id>.roles` claim, so the
 provider's client needs to put that claim on the ID token or userinfo response, exactly what the
 bundled Keycloak overlay configures automatically (see below). Without it, users can log in but
