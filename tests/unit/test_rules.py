@@ -229,6 +229,42 @@ def test_short_secret_is_flagged(tmp_repo):
     assert any("NEOPS_ADMIN_PASSWORD" in p and "too short" in p for p in out)
 
 
+RELAXED = GOOD + "NEOPS_DISABLE_SECURITY_CHECKS=true\n"
+ADMIN_WEAK = "NEOPS_ADMIN_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f8"
+
+
+def test_weak_secrets_are_accepted_once_the_checks_are_disabled(tmp_repo):
+    """examples/local.env wants a login an operator can remember. cms-init sets that password
+    with set_password(), which never runs Django's validators, so `neops` genuinely works."""
+    text = RELAXED.replace(ADMIN_WEAK, "NEOPS_ADMIN_PASSWORD=neops").replace(
+        "NEOPS_CMS_DB_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f6", "NEOPS_CMS_DB_PASSWORD=neops"
+    )
+    env, sc = make(tmp_repo, text)
+    assert problems(env, sc, tmp_repo) == []
+
+
+def test_weak_secrets_are_still_flagged_without_the_flag(tmp_repo):
+    """The flag is the only thing standing between `neops` and a pasted example."""
+    env, sc = make(tmp_repo, GOOD.replace(ADMIN_WEAK, "NEOPS_ADMIN_PASSWORD=neops"))
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_ADMIN_PASSWORD" in p and "too short" in p for p in out)
+
+
+def test_disabling_the_checks_does_not_excuse_a_missing_secret(tmp_repo):
+    """An absent secret is not a weak one: it reaches the container as an empty string, and
+    `./neops secrets` would have filled it with a strong value instead."""
+    env, sc = make(tmp_repo, RELAXED.replace("NEOPS_CMS_DB_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f6\n", ""))
+    out = problems(env, sc, tmp_repo)
+    assert any("NEOPS_CMS_DB_PASSWORD" in p and "required" in p for p in out)
+
+
+def test_disabling_the_checks_leaves_every_non_secret_rule_alone(tmp_repo):
+    env, sc = make(
+        tmp_repo, RELAXED.replace("NEOPS_CMS_URL=https://cms.neops.example.com", "NEOPS_CMS_URL=not a url")
+    )
+    assert any("NEOPS_CMS_URL" in p for p in problems(env, sc, tmp_repo))
+
+
 def test_oidc_client_secret_from_external_idp_has_no_length_minimum(tmp_repo):
     text = (
         GOOD.replace("compose.tls-files.yaml", "compose.tls-files.yaml:compose.oidc.yaml")

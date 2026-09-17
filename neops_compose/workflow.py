@@ -16,6 +16,7 @@ from neops_compose.doctor import run as run_doctor
 from neops_compose.ownership import chown_via_container
 from neops_compose.render import render
 from neops_compose.rotate import public_hosts
+from neops_compose.rules import DISABLE_SECURITY_CHECKS
 
 CMS_FIRST = ("postgres-cms", "redis", "elasticsearch", "cms-init", "cms")
 WORKER_GRACE_SECONDS = 90  # the worker registers ~26 function blocks, one request each, after a start
@@ -64,6 +65,8 @@ def images_by_service(compose: Compose) -> dict[str, str]:
 def check(ctx: Ctx, check_images: bool = True) -> None:
     checks = preflight.run_checks(ctx.env, ctx.scenario, ctx.repo, ctx.paths.data, ctx.compose, check_images)
     ctx.log(preflight.format_report(checks))
+    if ctx.env.flag(DISABLE_SECURITY_CHECKS):
+        ctx.log(f"WARNING: {DISABLE_SECURITY_CHECKS} is on: .env secrets are not checked for strength")
     if not preflight.all_ok(checks):
         raise Blocked("preflight failed; fix the FAIL lines above")
     if ctx.state.written_by_newer_cli():

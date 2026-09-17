@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from neops_compose import secrets, workflow
+from neops_compose import preflight, secrets, workflow
 from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.paths import Paths
@@ -108,6 +108,29 @@ def test_status_separates_a_missing_verdict_from_a_failed_one():
     assert workflow._verdict({"at": "x", "images": {}}) == "doctor: not recorded"
     assert workflow._verdict({"at": "x", "doctor_ok": False}) == "doctor FAILED"
     assert workflow._verdict({"at": "x", "doctor_ok": True}) == "doctor ok"
+
+
+def check_with(tmp_path, monkeypatch, env_text: str) -> list[str]:
+    """`check` is the one path `check`, `install` and `up` all take, so its log is where a
+    deployment-wide warning has to appear to be seen by any of them."""
+    logged: list[str] = []
+    ctx = make_ctx(tmp_path, env_text)
+    ctx.log = logged.append
+    monkeypatch.setattr(preflight, "run_checks", lambda *a, **k: [preflight.Check("stub", True)])
+    workflow.check(ctx, check_images=False)
+    return logged
+
+
+def test_check_warns_when_the_security_checks_are_disabled(tmp_path, monkeypatch):
+    logged = check_with(
+        tmp_path, monkeypatch, "COMPOSE_FILE=compose.yaml\nNEOPS_DISABLE_SECURITY_CHECKS=true\n"
+    )
+    assert any("NEOPS_DISABLE_SECURITY_CHECKS" in line for line in logged)
+
+
+def test_check_says_nothing_about_the_flag_when_it_is_off(tmp_path, monkeypatch):
+    logged = check_with(tmp_path, monkeypatch, "COMPOSE_FILE=compose.yaml\n")
+    assert logged and not any("NEOPS_DISABLE_SECURITY_CHECKS" in line for line in logged)
 
 
 def test_install_checks_images_only_after_render(tmp_path, monkeypatch):

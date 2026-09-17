@@ -17,6 +17,9 @@ from neops_compose.urls import (
 )
 
 PLACEHOLDERS = {"changeme", "change_me", "unsafe", "password", "secret", "xxx"}
+# Relaxes the strength rules below, never the presence ones. A local deployment wants a login
+# an operator can remember; `./neops check`, install and up all warn while it is on.
+DISABLE_SECURITY_CHECKS = "NEOPS_DISABLE_SECURITY_CHECKS"
 BASE_SECRETS = (
     "NEOPS_CMS_DB_PASSWORD",
     "NEOPS_ENGINE_DB_PASSWORD",
@@ -161,13 +164,20 @@ def _required(
     min_length: int | None = None,
     hint: str = SECRET_HINT,
 ) -> list[str]:
+    """NEOPS_DISABLE_SECURITY_CHECKS drops the strength rules, never the presence ones: an unset
+    secret reaches a container empty, while `./neops secrets` would have filled it properly."""
+    relax = secret and env.flag(DISABLE_SECURITY_CHECKS)
     out = []
     for key in keys:
         if not env.is_set(key):
             out.append(f"{key} is required" + (f" ({hint})" if secret else ""))
-        elif secret and env.get(key).strip().lower() in PLACEHOLDERS:
+            continue
+        if not secret or relax:
+            continue
+        value = env.get(key).strip()
+        if value.lower() in PLACEHOLDERS:
             out.append(f"{key} is a placeholder value ({hint})")
-        elif secret and min_length is not None and len(env.get(key).strip()) < min_length:
+        elif min_length is not None and len(value) < min_length:
             out.append(f"{key} is too short (min {min_length}) ({hint})")
     return out
 

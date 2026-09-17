@@ -25,8 +25,14 @@ def test_every_example_validates_once_secrets_are_filled(tmp_path):
         assert problems(env, Scenario.from_env(env), REPO) == [], example.name
 
 
-def test_examples_ship_no_secrets():
+def test_examples_ship_no_secrets_unless_they_declare_themselves_insecure():
+    """A secret spelled out in an example is a known secret the moment someone copies the file,
+    which is why they ship blank. The single exception is an example that also turns the
+    strength rules off: examples/local.env ships `neops:neops` on purpose, and saying so with
+    NEOPS_DISABLE_SECURITY_CHECKS is what keeps that exception from spreading unnoticed."""
     for example in [REPO / ".env.example", *(REPO / "examples").glob("*.env")]:
+        if Env(example).flag("NEOPS_DISABLE_SECURITY_CHECKS"):
+            continue
         for line in example.read_text().splitlines():
             for key in ALL_SECRET_KEYS:
                 if line.startswith(key + "="):
