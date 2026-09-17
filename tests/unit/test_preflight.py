@@ -237,3 +237,67 @@ def test_a_missing_docker_binary_fails_the_check_instead_of_raising(monkeypatch,
     assert not daemon_ok and not compose_ok
     assert all(not c.ok for c in checks)
     assert all("not installed or not on PATH" in c.detail for c in checks)
+
+
+GIB = 2**30
+
+
+def env_with(tmp_path, text: str = "") -> Env:
+    (tmp_path / ".env").write_text(text)
+    return Env(tmp_path / ".env")
+
+
+def test_parse_es_size():
+    assert preflight.parse_es_size("5GB") == 5 * GIB
+    assert preflight.parse_es_size("150gb") == 150 * GIB
+    assert preflight.parse_es_size("512m") == 512 * 2**20
+    assert preflight.parse_es_size("1T") == 2**40
+    for bad in ("", "plenty", "5XB", "GB"):
+        assert preflight.parse_es_size(bad) is None, bad
+
+
+def test_es_free_space_needed_is_ten_percent_until_the_headroom_caps_it(tmp_path):
+    """A percentage watermark makes the demand proportional to the filesystem, which says nothing
+    about what this stack needs; NEOPS_ES_HEADROOM caps it at an absolute size."""
+    total = 812 * GIB
+    assert preflight.es_free_space_needed(env_with(tmp_path), total) == round(0.10 * total)
+    capped = preflight.es_free_space_needed(env_with(tmp_path, "NEOPS_ES_HEADROOM=5GB\n"), total)
+    assert capped == 5 * GIB
+
+
+def test_es_free_space_needed_lets_the_percentage_bind_on_a_small_filesystem(tmp_path):
+    """Below the cap it is the watermark, not NEOPS_ES_HEADROOM, that decides."""
+    assert preflight.es_free_space_needed(env_with(tmp_path), 100 * GIB) == 10 * GIB
+
+
+def test_es_free_space_needed_rejects_a_headroom_that_is_not_a_byte_size(tmp_path):
+    assert preflight.es_free_space_needed(env_with(tmp_path, "NEOPS_ES_HEADROOM=plenty\n"), 812 * GIB) is None
+
+
+def test_disk_check_fails_when_the_default_demand_is_unmet(tmp_path):
+    """The failure that made cms-init time out: 22 GiB free on an 812 GiB filesystem, where the
+    uncapped 90% watermark demands 81 GiB and Elasticsearch then refuses every shard."""
+    check = preflight.disk_check(env_with(tmp_path), total=812 * GIB, free=22 * GIB)
+    assert not check.ok
+    assert check.name == "disk"
+    assert "81.2 GiB" in check.detail and "22.0 GiB" in check.detail
+
+
+def test_disk_check_passes_once_the_headroom_caps_the_demand(tmp_path):
+    check = preflight.disk_check(
+        env_with(tmp_path, "NEOPS_ES_HEADROOM=5GB\n"), total=812 * GIB, free=22 * GIB
+    )
+    assert check.ok
+    assert "5.0 GiB" in check.detail
+
+
+def test_disk_check_still_fails_under_the_capped_demand(tmp_path):
+    check = preflight.disk_check(env_with(tmp_path, "NEOPS_ES_HEADROOM=5GB\n"), total=812 * GIB, free=2 * GIB)
+    assert not check.ok
+    assert "5.0 GiB" in check.detail and "2.0 GiB" in check.detail
+
+
+def test_disk_check_names_a_headroom_it_cannot_parse(tmp_path):
+    check = preflight.disk_check(env_with(tmp_path, "NEOPS_ES_HEADROOM=plenty\n"), 812 * GIB, 22 * GIB)
+    assert not check.ok
+    assert "NEOPS_ES_HEADROOM" in check.detail and "plenty" in check.detail

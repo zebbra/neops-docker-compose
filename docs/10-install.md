@@ -17,7 +17,9 @@ tags: [howto]
   Encrypt, or none at all if you generate a self-signed certificate or run behind your own proxy.
 - `vm.max_map_count` at or above `262144`, Elasticsearch's own minimum. `./neops check` reports
   the current value and the exact `sysctl` line to fix it.
-- At least 20 GiB free under the data directory. `./neops check` refuses to proceed below that.
+- Free space for Elasticsearch: it refuses every shard while the filesystem is above its high
+  watermark, which on a default install is 10% of the whole disk. `./neops check` prints the
+  figure; `NEOPS_ES_HEADROOM` caps it on a large shared filesystem (see `examples/local.env`).
 
 ## Choose a scenario
 

@@ -134,6 +134,24 @@ def test_compose_documents_the_same_admin_user_the_cli_falls_back_to():
     assert f"NEOPS_ADMIN_USER={DEFAULT_ADMIN_USER}\n" in (REPO / ".env.example").read_text()
 
 
+def test_disk_preflight_predicts_the_watermarks_the_container_actually_gets():
+    """`./neops check` predicts the free space Elasticsearch demands before it will allocate a
+    shard. The prediction is worth having only while it agrees with the settings in the compose
+    file, which the CLI cannot read at runtime (no YAML parser in its dependencies)."""
+    from neops_compose.preflight import ES_DEFAULT_HEADROOM, ES_HIGH_WATERMARK, parse_es_size
+
+    settings = dict(
+        entry.split("=", 1)
+        for entry in load(REPO / "compose.yaml")["services"]["elasticsearch"]["environment"]
+    )
+    watermark = settings["cluster.routing.allocation.disk.watermark.high"]
+    assert ES_HIGH_WATERMARK == float(watermark.rstrip("%")) / 100
+
+    headroom = settings["cluster.routing.allocation.disk.watermark.high.max_headroom"]
+    default = VAR_RE.search(headroom)["default"]
+    assert parse_es_size(default) == ES_DEFAULT_HEADROOM
+
+
 def test_no_healthcheck_addresses_localhost():
     """localhost resolves to ::1 first in these images and the servers bind IPv4 only, so a
     healthcheck against it never passes (the monitor app's nginx is the one that bit us)."""

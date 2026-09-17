@@ -35,7 +35,7 @@ below are keyed to those probe names and the messages `check` prints.
 | `docker daemon` | start Docker |
 | `docker compose` | upgrade to Compose v2 ≥ 2.24 |
 | `.env` | the message names the exact key or rule: see [Scenarios](20-scenarios.md) for the overlay and URL rules |
-| `disk` | free at least 20 GiB under the data directory |
+| `disk` | Elasticsearch wants free space proportional to the filesystem at its high watermark: free space, or set `NEOPS_ES_HEADROOM` (e.g. `5GB`) to cap what it demands |
 | `vm.max_map_count` | run the `sysctl -w` command the check prints, then persist it in `/etc/sysctl.d/99-neops.conf` (see *Elasticsearch max_map_count* below) |
 | `ports` | something else on the host already holds a port this scenario needs; stop it or change the `NEOPS_*_PORT` |
 | `image` | the pinned image is neither cached locally nor pullable: run `docker login quay.io`, or the tag genuinely does not exist yet |

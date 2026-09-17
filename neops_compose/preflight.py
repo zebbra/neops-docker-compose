@@ -22,9 +22,15 @@ from neops_compose.scenario import Scenario
 from neops_compose.urls import BadUrl, monitor_entrypoint_wanted, public_urls
 
 MIN_COMPOSE = (2, 24)
-MIN_DISK_GIB = 20
 MIN_MAX_MAP_COUNT = 262144
 REGISTRY_WORKERS = 6
+
+# What Elasticsearch demands before it allocates a shard. Mirrored from compose.yaml, which the
+# CLI cannot read at runtime (it ships no YAML parser); test_compose_files holds the two together.
+ES_HIGH_WATERMARK = 0.90
+ES_DEFAULT_HEADROOM = 150 * 2**30  # Elasticsearch's own default for high.max_headroom
+
+_SIZE_UNITS = {"": 1, "K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40, "P": 2**50}
 
 
 @dataclass(frozen=True)
@@ -130,9 +136,55 @@ def _env_checks(env: Env, scenario: Scenario, repo: Path) -> list[Check]:
     return [Check(".env", True, f"{len(scenario.files)} compose files, scenario valid")]
 
 
-def _host_checks(repo: Path, data: Path) -> list[Check]:
-    free_gib = shutil.disk_usage(data if data.exists() else repo).free / 2**30
-    out = [Check("disk", free_gib >= MIN_DISK_GIB, f"{free_gib:.1f} GiB free under {data}")]
+def parse_es_size(raw: str) -> int | None:
+    """An Elasticsearch byte size ("5GB", "512m"); None when the text is not one."""
+    text = raw.strip().upper().removesuffix("B")
+    digits = text.rstrip("KMGTP")
+    unit = text[len(digits) :]
+    if not digits.isdigit() or unit not in _SIZE_UNITS:
+        return None
+    return int(digits) * _SIZE_UNITS[unit]
+
+
+def es_free_space_needed(env: Env, total: int) -> int | None:
+    """The free space Elasticsearch demands before it allocates a shard, or None when
+    NEOPS_ES_HEADROOM is set to something that is not a byte size."""
+    cap = ES_DEFAULT_HEADROOM
+    if env.is_set("NEOPS_ES_HEADROOM"):
+        cap = parse_es_size(env.get("NEOPS_ES_HEADROOM"))
+        if cap is None:
+            return None
+    return min(round((1 - ES_HIGH_WATERMARK) * total), cap)
+
+
+def _gib(n: int) -> str:
+    return f"{n / 2**30:.1f} GiB"
+
+
+def disk_check(env: Env, total: int, free: int) -> Check:
+    """Elasticsearch refuses every shard while the filesystem sits above its high watermark, and
+    the blocked shard surfaces only as cms-init's index creation timing out thirty seconds later."""
+    needed = es_free_space_needed(env, total)
+    if needed is None:
+        raw = env.get("NEOPS_ES_HEADROOM")
+        return Check("disk", False, f"NEOPS_ES_HEADROOM={raw!r} is not a byte size (try 5GB)")
+    detail = f"{_gib(free)} free, Elasticsearch needs {_gib(needed)}"
+    if free >= needed:
+        return Check("disk", True, detail)
+    demand = (
+        f"{1 - ES_HIGH_WATERMARK:.0%} of the {_gib(total)} filesystem "
+        f"at watermark.high={ES_HIGH_WATERMARK:.0%}"
+    )
+    return Check(
+        "disk",
+        False,
+        f"{detail} ({demand}, capped by NEOPS_ES_HEADROOM); free space or lower NEOPS_ES_HEADROOM",
+    )
+
+
+def _host_checks(env: Env, repo: Path, data: Path) -> list[Check]:
+    usage = shutil.disk_usage(data if data.exists() else repo)
+    out = [disk_check(env, usage.total, usage.free)]
     mmc = Path("/proc/sys/vm/max_map_count")
     if not mmc.exists():
         return out
@@ -226,7 +278,7 @@ def run_checks(
         return out
     env_checks = _env_checks(env, scenario, repo)
     out += env_checks
-    out += _host_checks(repo, data)
+    out += _host_checks(env, repo, data)
 
     running: set[str] = set()
     if daemon_ok:
