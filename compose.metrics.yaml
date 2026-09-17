@@ -1,0 +1,121 @@
+# Overlay: VictoriaMetrics + vmalert + Grafana + exporters, ported from the 1.0 layout.
+# Grafana is the only service routed publicly, and only when NEOPS_GRAFANA_URL is set.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  celery-exporter:
+    image: danihodovic/celery-exporter:0.11.3
+    command: ["--broker-url=redis://redis:6379/0"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging: *logging
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    logging: *logging
+    restart: unless-stopped
+
+  postgres-exporter-cms:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_NAME: postgresql://neops:${NEOPS_CMS_DB_PASSWORD}@postgres-cms:5432/neops?sslmode=disable
+    depends_on:
+      postgres-cms:
+        condition: service_healthy
+    logging: *logging
+    restart: unless-stopped
+
+  postgres-exporter-engine:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:${NEOPS_ENGINE_DB_PASSWORD}@postgres-engine:5432/neops-workflow?sslmode=disable
+    depends_on:
+      postgres-engine:
+        condition: service_healthy
+    logging: *logging
+    restart: unless-stopped
+
+  elasticsearch-exporter:
+    image: prometheuscommunity/elasticsearch-exporter:v1.9.0
+    command: ["--es.uri=http://elasticsearch:9200", "--es.all", "--es.indices"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    logging: *logging
+    restart: unless-stopped
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.126.0
+    command:
+      - "--promscrape.config=/etc/victoriametrics/scrape_config.yml"
+      - "--retentionPeriod=${NEOPS_METRICS_RETENTION:-30d}"
+      - "--storageDataPath=/victoria-metrics-data"
+    volumes:
+      - ./metrics/scrape_config.yml:/etc/victoriametrics/scrape_config.yml:ro
+      - ${NEOPS_DATA_DIR:-./data}/metrics/victoria:/victoria-metrics-data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8428/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging: *logging
+    restart: unless-stopped
+
+  vmalert:
+    image: victoriametrics/vmalert:v1.126.0
+    command:
+      - "--datasource.url=http://victoriametrics:8428"
+      - "--remoteWrite.url=http://victoriametrics:8428"
+      - "--remoteRead.url=http://victoriametrics:8428"
+      - "--rule=/etc/vmalert/rules/*.yml"
+      - "--evaluationInterval=1m"
+      - "--notifier.blackhole=true"
+    volumes:
+      - ./metrics/vmalert/rules:/etc/vmalert/rules:ro
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8880/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging: *logging
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${NEOPS_GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${NEOPS_GRAFANA_URL:-http://localhost:3000}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - ./metrics/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Must be owned by uid 472; ./neops migrate (0002_grafana_data_owner) takes care of it.
+      - ${NEOPS_DATA_DIR:-./data}/metrics/grafana:/var/lib/grafana
+    ports:
+      - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+    healthcheck:
+      # First boot runs the whole sqlite migration set and installs plugins before it listens,
+      # so without this `up --wait` returns early and doctor probes a closed port.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+    logging: *logging
+    restart: unless-stopped

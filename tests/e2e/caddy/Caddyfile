@@ -1,0 +1,52 @@
+# The proxy contract of docs/40-external-proxy.md, runnable against the stack
+# tests/e2e/run_scenario.py external-proxy leaves behind. Driven by
+# tests/e2e/external_proxy_check.py, which fills every {$VAR} from the clone's .env.
+#
+# Only the hostnames, ports and `tls internal` differ from the published snippet: keep the
+# two in step, because this file is what proves the snippet works.
+{
+	# The harness runs several stacks at once and this box's 80/443 belong to something
+	# else, so no HTTP-to-HTTPS redirect server and no admin endpoint.
+	auto_https disable_redirects
+	admin off
+}
+
+https://{$NEOPS_WEB_HOST}:{$NEOPS_PROXY_PORT} {
+	tls internal
+	reverse_proxy {$NEOPS_UPSTREAM_HOST}:{$NEOPS_WEB_PORT} {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+https://{$NEOPS_CMS_HOST}:{$NEOPS_PROXY_PORT} {
+	tls internal
+	request_body {
+		max_size 200MB
+	}
+	reverse_proxy {$NEOPS_UPSTREAM_HOST}:{$NEOPS_CMS_PORT} {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+https://{$NEOPS_ENGINE_HOST}:{$NEOPS_PROXY_PORT} {
+	tls internal
+	@worker_api {
+		method POST
+		path_regexp (?i)^/(blackboard/job(/.*)?|workers/register/?|workers/[^/]+/(ping|unregister)/?|function-blocks/register/?)$
+	}
+	respond @worker_api 403
+	reverse_proxy {$NEOPS_UPSTREAM_HOST}:{$NEOPS_ENGINE_PORT} {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+https://{$NEOPS_WORKFLOWS_HOST}:{$NEOPS_PROXY_PORT} {
+	tls internal
+	reverse_proxy {$NEOPS_UPSTREAM_HOST}:{$NEOPS_MONITOR_PORT} {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
