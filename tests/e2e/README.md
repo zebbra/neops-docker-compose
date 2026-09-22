@@ -42,9 +42,10 @@ Core allows five logins a minute per address and every doctor run spends two, so
 install waits until a minute has passed since the last login the harness caused; a run in expose
 mode, where doctor runs twice per install, would otherwise be rate-limited into a failure.
 
-The device for the task assertion needs a platform with a Nornir library key: Nornir's inventory
-skips every other device without a word, and the execution still ends `SUCCESSFUL` with nothing
-written.
+The device for the task assertion is created on the seeded `Linux Generic` platform because
+Nornir's inventory only holds devices whose platform carries a `nornir` library key. Any other
+device is left out (the worker log says `0 hosts selected`), and the execution still ends
+`SUCCESSFUL` with nothing written.
 
 In expose mode there is no proxy in front of the stack, so the engine's public worker routes
 really are reachable and doctor says so. That is the documented contract of
