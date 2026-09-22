@@ -19,7 +19,7 @@ def filled(example: Path, tmp_path: Path) -> Env:
 
 def test_every_example_validates_once_secrets_are_filled(tmp_path):
     examples = sorted((REPO / "examples").glob("*.env"))
-    assert len(examples) == 12
+    assert len(examples) == 13
     for example in examples:
         env = filled(example, tmp_path)
         assert problems(env, Scenario.from_env(env), REPO) == [], example.name

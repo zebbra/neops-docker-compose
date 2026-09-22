@@ -67,6 +67,39 @@ GROUP_NAME = "e2e-admin-writes"
 GROUP_UPSERT = "mutation($n:String!){deviceGroupUpsert(name:$n,title:$n){deviceGroup{id name}}}"
 GROUP_READ = "query($n:String!){groups(name:$n){results{id name}}}"
 GROUP_DELETE = "mutation($id:ID!){deviceGroupDelete(id:$id){deviceGroup{id}}}"
+CMS_TASK_SERVICES = ("cms-worker", "cms-beat")
+LEGACY_DEVICE = "e2e-legacy-task"
+LEGACY_DEVICE_IP = "192.0.2.10"
+LEGACY_TASK = "e2e-static-facts"
+LEGACY_FACTS_KEY = "e2e"
+STATIC_FACTS_PROVIDER = "providers.core.neops.io/generic-static-facts:1"
+STATIC_FACTS_KWARGS = {
+    "facts_key": LEGACY_FACTS_KEY,
+    "run_on": "DEVICE",
+    "merge_overwrite": "OVERWRITE",
+    "mapping_style": "JSON",
+    "mapping_template": '{"source": "e2e", "hostname": "{{ device.hostname }}"}',
+}
+DEVICE_UPSERT = (
+    "mutation($h:String!,$ip:String!,$p:ID){deviceUpsert(hostname:$h,ip:$ip,platform:$p){device{id}}}"
+)
+DEVICE_FACTS = "query($id:Decimal){devices(id:$id){results{facts}}}"
+DEVICE_DELETE = "mutation($id:ID!){deviceDelete(id:$id,hardDelete:true){device{id}}}"
+TASK_UPSERT = (
+    "mutation($n:String!,$p:String!,$k:String!){neopsTaskUpsert("
+    "name:$n,uniquetaskname:$n,providerIdentifier:$p,taskKwargs:$k){neopsTask{id}}}"
+)
+TASK_EXECUTE = (
+    "mutation($id:ID!,$on:[ID]){executeNeopsTask("
+    "neopsTaskId:$id,executeOn:$on,executeOnType:DEVICE,dryRun:false){executions{id}}}"
+)
+TASK_DELETE = "mutation($id:ID!){neopsTaskDelete(id:$id,hardDelete:true){neopsTask{id}}}"
+EXECUTION_STATE = "query($id:Decimal){executions(id:$id){results{state taskLog}}}"
+EXECUTION_SETTLED = frozenset({"SUCCESSFUL", "FAILED", "PARTIAL_FAILED", "ABORTED"})
+EXECUTION_TIMEOUT = 180.0
+LEGACY_PLATFORM = "Linux Generic"
+PLATFORM_READ = "query($n:String!){platforms(name:$n){results{id}}}"
+RATE_LIMIT_WINDOW = 65.0
 VM_TARGETS_URL = "http://127.0.0.1:8428/api/v1/targets"
 OVERRIDE_YAML = """# Written by tests/e2e/run_scenario.py: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
@@ -114,6 +147,26 @@ class Ports:
     @property
     def expose_monitor(self) -> int:
         return self.base + 31
+
+
+class LoginClock:
+    """Core allows five logins a minute per address and every doctor run spends two. The
+    harness marks each login it causes and waits the window out before the next doctor."""
+
+    def __init__(self) -> None:
+        self.last = 0.0
+
+    def mark(self) -> None:
+        self.last = time.monotonic()
+
+    def wait_out(self) -> None:
+        remaining = self.last + RATE_LIMIT_WINDOW - time.monotonic()
+        if remaining > 0:
+            print(f"+ waiting {remaining:.0f}s for the login rate limit window", flush=True)
+            time.sleep(remaining)
+
+
+LOGINS = LoginClock()
 
 
 class Report:
@@ -206,7 +259,7 @@ def use_self_signed_tls(values: dict[str, str], scenario: Scenario) -> None:
 
 
 def scenario_of(values: dict[str, str]) -> Scenario:
-    return Scenario(tuple(f.strip() for f in values["COMPOSE_FILE"].split(":") if f.strip()))
+    return Scenario.from_env(values)
 
 
 def parse_extra_env(assignments: list[str]) -> dict[str, str]:
@@ -265,11 +318,13 @@ def install(report: Report, clone: Path, expose: bool, label: str) -> bool:
     """In expose mode nothing denies the worker routes until the operator's own proxy is in
     front, so doctor warns there instead of failing and the install finishes either way."""
     code = neops(clone, "install", "--connect", CONNECT, "--insecure", check=False).returncode
+    LOGINS.mark()
     if not report.add(code == 0, f"{label} succeeded"):
         return False
     if not expose:
         return True
     warned = probe_names(clone, "WARN")
+    LOGINS.mark()
     return report.add(
         warned == [DENY_PROBE],
         f"{label}: the worker API deny probe is the only warning (got {warned})",
@@ -279,6 +334,7 @@ def install(report: Report, clone: Path, expose: bool, label: str) -> bool:
 def assert_admin_login(report: Report, values: dict[str, str], http: Http) -> str | None:
     cms = PublicUrl.parse(values["NEOPS_CMS_URL"])
     result = login(cms, http, values.get("NEOPS_ADMIN_USER", "neops"), values["NEOPS_ADMIN_PASSWORD"])
+    LOGINS.mark()
     report.add(bool(result.token), f"admin login returns an access token ({result.error})")
     return result.token
 
@@ -359,6 +415,7 @@ def assert_plain_http_admin(report: Report, values: dict[str, str], http: Http) 
         headers={"Cookie": csrf.split(";", 1)[0]},
         content_type="application/x-www-form-urlencoded",
     )
+    LOGINS.mark()
     location = headers.get("Location") or ""
     report.add(
         status == 302 and location.endswith("/admin/"),
@@ -385,6 +442,7 @@ def api_key_count(clone: Path) -> int:
 
 def assert_idempotent(report: Report, clone: Path, expose: bool) -> None:
     before = api_key_count(clone)
+    LOGINS.wait_out()
     install(report, clone, expose, "second install")
     after = api_key_count(clone)
     report.add(before == after == 1, f"one API key before and after the second install ({before} -> {after})")
@@ -412,6 +470,81 @@ def assert_worker(report: Report, clone: Path) -> None:
     report.add(
         "function block" in logs or "registered" in logs, "the worker log shows function blocks registering"
     )
+
+
+def assert_cms_task_containers(report: Report, clone: Path, expected: bool) -> None:
+    """The Celery pair is opt-in: running and healthy under the profile, absent without it."""
+    rows = {row.get("Service"): row for row in Compose(clone).ps()}
+    for name in CMS_TASK_SERVICES:
+        row = rows.get(name)
+        if not expected:
+            report.add(row is None, f"{name} does not exist without the cms-tasks profile")
+            continue
+        state = f"{row.get('State')} {row.get('Health', '')}".strip() if row else "absent"
+        healthy = row is not None and row["State"] == "running" and row.get("Health", "") in ("", "healthy")
+        report.add(healthy, f"{name} runs under the cms-tasks profile ({state})")
+
+
+def wait_for_execution(http: Http, cms: PublicUrl, token: str, execution_id: str) -> tuple[str, str]:
+    """The execution's final state and task log, or its last seen state once the wait runs out."""
+    deadline = time.monotonic() + EXECUTION_TIMEOUT
+    state, log = "?", ""
+    while time.monotonic() < deadline:
+        rows = gql(http, cms, token, EXECUTION_STATE, {"id": execution_id})["executions"]["results"]
+        state, log = (rows[0]["state"], rows[0].get("taskLog") or "") if rows else ("missing", "")
+        if state in EXECUTION_SETTLED:
+            break
+        time.sleep(3)
+    return state, log
+
+
+def device_facts(http: Http, cms: PublicUrl, token: str, device_id: str) -> dict:
+    rows = gql(http, cms, token, DEVICE_FACTS, {"id": device_id})["devices"]["results"]
+    return json.loads(rows[0]["facts"] or "{}") if rows else {}
+
+
+def delete_quietly(http: Http, cms: PublicUrl, token: str, query: str, object_id: str | None) -> None:
+    if object_id is None:
+        return
+    try:
+        gql(http, cms, token, query, {"id": object_id})
+    except Exception as exc:
+        print(f"cleanup failed for {object_id}: {exc}", flush=True)
+
+
+def create_legacy_device(http: Http, cms: PublicUrl, token: str) -> str:
+    """Nornir's inventory holds only devices whose platform carries a nornir library key, so a
+    device without one is silently skipped (0 hosts selected) and the task writes nothing.
+    Core seeds the platforms at install; Linux Generic is one with that key."""
+    platforms = gql(http, cms, token, PLATFORM_READ, {"n": LEGACY_PLATFORM})["platforms"]["results"]
+    if not platforms:
+        raise RuntimeError(f"platform {LEGACY_PLATFORM!r} is not seeded")
+    variables = {"h": LEGACY_DEVICE, "ip": LEGACY_DEVICE_IP, "p": platforms[0]["id"]}
+    return gql(http, cms, token, DEVICE_UPSERT, variables)["deviceUpsert"]["device"]["id"]
+
+
+def assert_legacy_task_updates_facts(report: Report, values: dict[str, str], http: Http, token: str) -> None:
+    """A Neops task run end to end on the 1.0 path: the CMS queues the execution on Redis,
+    cms-worker runs the provider and writes the fact back to the device. Without the profile
+    the execution stays PENDING, which is how the profile's absence would show."""
+    cms = PublicUrl.parse(values["NEOPS_CMS_URL"])
+    device_id = task_id = None
+    try:
+        device_id = create_legacy_device(http, cms, token)
+        task_args = {"n": LEGACY_TASK, "p": STATIC_FACTS_PROVIDER, "k": json.dumps(STATIC_FACTS_KWARGS)}
+        task_id = gql(http, cms, token, TASK_UPSERT, task_args)["neopsTaskUpsert"]["neopsTask"]["id"]
+        started = gql(http, cms, token, TASK_EXECUTE, {"id": task_id, "on": [device_id]})
+        execution_id = started["executeNeopsTask"]["executions"][0]["id"]
+        state, log = wait_for_execution(http, cms, token, execution_id)
+        report.add(state == "SUCCESSFUL", f"cms-worker runs the task to completion ({state}: {log[-300:]!r})")
+        facts = device_facts(http, cms, token, device_id)
+        written = (facts.get(LEGACY_FACTS_KEY) or {}).get("hostname") == LEGACY_DEVICE
+        report.add(written, f"the task wrote its fact on the device ({facts})")
+    except Exception as exc:
+        report.add(False, f"a Neops task updates a device fact through cms-worker ({exc})")
+    finally:
+        delete_quietly(http, cms, token, TASK_DELETE, task_id)
+        delete_quietly(http, cms, token, DEVICE_DELETE, device_id)
 
 
 def assert_bare_admin_redirects(report: Report, values: dict[str, str], http: Http) -> None:
@@ -531,6 +664,8 @@ def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario
         token = assert_admin_login(report, values, http)
         if token:
             assert_admin_manages_entities(report, values, http, token)
+        if token and scenario.cms_tasks:
+            assert_legacy_task_updates_facts(report, values, http, token)
         if PublicUrl.parse(values["NEOPS_CMS_URL"]).scheme == "http":
             assert_plain_http_admin(report, values, http)
     if scenario.proxy == "traefik":
@@ -540,6 +675,7 @@ def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario
     if scenario.metrics:
         assert_metrics(report, clone, values, http)
     assert_worker(report, clone)
+    assert_cms_task_containers(report, clone, scenario.cms_tasks)
     assert_backup(report, clone)
     assert_idempotent(report, clone, scenario.proxy == "expose")
 

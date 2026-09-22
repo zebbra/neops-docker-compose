@@ -28,6 +28,8 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 | the OIDC providers are seeded and visible in `appSettings` | OIDC scenarios |
 | core's admin, `/djstatic/` and the engine's `/engine/health` answer on the one hostname | shared-host |
 | the worker container runs and its log shows function blocks registering | all |
+| `cms-worker` and `cms-beat` run and are healthy under `COMPOSE_PROFILES=cms-tasks`, and do not exist without it | all |
+| a device created by hand on the seeded `Linux Generic` platform, a `generic-static-facts` task executed on it over GraphQL, run by `cms-worker` to `SUCCESSFUL`, and the fact read back from the device | `cms-tasks` profile (`local-legacy`) |
 | every exporter, VictoriaMetrics, vmalert and Grafana run; Grafana answers `/api/health` on its public URL; every scrape target reports `up` | metrics |
 | `./neops backup` writes `cms.dump` and `engine.dump` | all |
 | a second `install` mints no second API key | all |
@@ -35,6 +37,14 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 VictoriaMetrics publishes no host port, so the scrape-target assertion asks it over
 `wget` inside its own container and waits for every target to have been scraped once
 (the interval is 30 s).
+
+Core allows five logins a minute per address and every doctor run spends two, so the second
+install waits until a minute has passed since the last login the harness caused; a run in expose
+mode, where doctor runs twice per install, would otherwise be rate-limited into a failure.
+
+The device for the task assertion needs a platform with a Nornir library key: Nornir's inventory
+skips every other device without a word, and the execution still ends `SUCCESSFUL` with nothing
+written.
 
 In expose mode there is no proxy in front of the stack, so the engine's public worker routes
 really are reachable and doctor says so. That is the documented contract of

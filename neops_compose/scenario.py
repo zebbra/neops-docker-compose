@@ -16,17 +16,24 @@ OVERLAYS: dict[str, str] = {
     "metrics": "compose.metrics.yaml",
 }
 OVERRIDE_FILE = "compose.override.yaml"
+CMS_TASKS_PROFILE = "cms-tasks"
+
+
+def _split(raw: str, sep: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in raw.split(sep) if part.strip())
 
 
 @dataclass(frozen=True)
 class Scenario:
     files: tuple[str, ...]
+    profiles: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: Env) -> Scenario:
         sep = env.get("COMPOSE_PATH_SEPARATOR", ":")
-        raw = env.get("COMPOSE_FILE", BASE_FILE)
-        return cls(tuple(f.strip() for f in raw.split(sep) if f.strip()))
+        files = _split(env.get("COMPOSE_FILE", BASE_FILE), sep)
+        profiles = _split(env.get("COMPOSE_PROFILES", ""), ",")
+        return cls(files, profiles)
 
     def has(self, overlay: str) -> bool:
         return OVERLAYS[overlay] in self.files
@@ -62,6 +69,11 @@ class Scenario:
     @property
     def metrics(self) -> bool:
         return self.has("metrics")
+
+    @property
+    def cms_tasks(self) -> bool:
+        """Core's Celery worker and beat, the 1.0 task path, start only under this profile."""
+        return CMS_TASKS_PROFILE in self.profiles
 
     @property
     def unknown_files(self) -> tuple[str, ...]:

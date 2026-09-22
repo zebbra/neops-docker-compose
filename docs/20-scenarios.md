@@ -30,6 +30,9 @@ default: a 2.0 deployment runs its automation through the engine and the worker 
 indexes Elasticsearch synchronously without them. A deployment that still runs 1.0 tasks or
 cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with the next
 `./neops up`; removing the line and running `./neops down` then `./neops up` stops them again.
+`examples/local-legacy.env` is `examples/local.env` with that line: a task executed from the
+CMS is queued on Redis, `cms-worker` runs its provider and writes the result back, and
+`cms-beat` fires the cron jobs. Without the profile such an execution stays `PENDING` forever.
 
 Overlays combine freely, and `examples/` ships one complete `.env` per combination we test. Put
 anything of your own in `compose.override.yaml` (gitignored) and append it to `COMPOSE_FILE`;
