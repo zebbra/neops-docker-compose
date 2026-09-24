@@ -1,0 +1,34 @@
+[project]
+name = "neops-compose"
+version = "2.0.0"
+description = "Operator CLI for the Neops 2.0 docker-compose deployment"
+requires-python = ">=3.12"
+dependencies = [
+  "cryptography>=43",
+  "packaging>=24",
+  "python-dotenv>=1.0",
+]
+
+[project.scripts]
+neops = "neops_compose.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "pyyaml>=6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["neops_compose"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["docs", ".make_scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]

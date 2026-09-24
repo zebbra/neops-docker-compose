@@ -1,0 +1,18 @@
+# Overlay: no bundled proxy. Publishes each browser-facing service on the host, bound to
+# 127.0.0.1 by default, for a reverse proxy the operator runs on this host.
+# Proxy contract (see README "External reverse proxy"): route by hostname, terminate TLS,
+# OVERWRITE X-Forwarded-Proto and X-Real-IP, deny the engine's public worker routes,
+# allow request bodies of 200 MB towards the CMS.
+services:
+  web:
+    ports:
+      - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_WEB_PORT:-8080}:8080"
+  cms:
+    ports:
+      - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_CMS_PORT:-8000}:8000"
+  engine:
+    ports:
+      - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_ENGINE_PORT:-3030}:3030"
+  monitor:
+    ports:
+      - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_MONITOR_PORT:-3031}:80"
