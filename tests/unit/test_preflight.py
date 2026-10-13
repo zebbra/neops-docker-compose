@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from neops_compose import preflight
@@ -13,18 +15,82 @@ def test_compose_version_parsing():
     assert preflight.version_ok("5.4.0", (2, 24)) is True
 
 
-def test_port_free_detects_a_bound_port():
+# Rows trimmed after the inode column; the parser reads only the first four fields.
+PROC_TCP = """\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1001
+   1: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1002
+   2: 0A01A8C0:1538 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1003
+   3: 0A01A8C0:0016 0B01A8C0:D431 01 00000000:00000000 02:000A7B5C 00000000     0        0 1004
+"""
+PROC_TCP6 = """\
+  sl  local_address                         remote_address                        st tx_queue
+   0: 00000000000000000000000000000000:01BB 00000000000000000000000000000000:0000 0A 00000000:00000000
+   1: 00000000000000000000000001000000:0CB8 00000000000000000000000000000000:0000 0A 00000000:00000000
+"""
+
+
+@pytest.mark.skipif(sys.byteorder != "little", reason="the fixture is a little-endian host's table")
+def test_listeners_are_parsed_from_the_proc_tables():
+    """An established connection (state 01) holds a port only on its own, ephemeral side."""
+    assert preflight.parse_listeners(PROC_TCP) == {
+        ("0.0.0.0", 80),
+        ("127.0.0.1", 8080),
+        ("192.168.1.10", 5432),
+    }
+    assert preflight.parse_listeners(PROC_TCP6) == {("::", 443), ("::1", 3256)}
+
+
+@pytest.mark.parametrize(
+    "address,port,listener,busy",
+    [
+        ("0.0.0.0", 80, ("0.0.0.0", 80), True),
+        ("0.0.0.0", 80, ("192.168.1.10", 80), True),
+        ("0.0.0.0", 443, ("::", 443), True),
+        ("127.0.0.1", 8180, ("0.0.0.0", 8180), True),
+        ("127.0.0.1", 8180, ("127.0.0.1", 8180), True),
+        ("127.0.0.1", 8180, ("10.0.0.5", 8180), False),
+        ("0.0.0.0", 80, ("0.0.0.0", 8080), False),
+    ],
+)
+def test_port_in_use_follows_binds_conflict_rule(address, port, listener, busy):
+    assert preflight.port_in_use(address, port, {listener}) is busy
+
+
+def test_a_privileged_port_nobody_listens_on_is_free(tmp_path, monkeypatch):
+    """The check used to bind the port itself, and an operator who is not root got EACCES on
+    80 and 443, reported as "in use" with nothing listening."""
+    monkeypatch.setattr(preflight, "listening_sockets", lambda: {("127.0.0.1", 5432)})
+    (tmp_path / ".env").write_text("COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml\n")
+    env = Env(tmp_path / ".env")
+    assert preflight._port_checks(env, Scenario.from_env(env), running=set()) == [
+        preflight.Check("ports", True, "0.0.0.0:80"),
+        preflight.Check("ports", True, "0.0.0.0:443"),
+    ]
+
+
+def test_the_kernel_table_shows_a_socket_this_process_listens_on():
     import socket
 
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    s.listen(1)
-    port = s.getsockname()[1]
-    try:
-        assert preflight.port_free("127.0.0.1", port) is False
-    finally:
-        s.close()
-    assert preflight.port_free("127.0.0.1", port) is True
+    if preflight.listening_sockets() is None:
+        pytest.skip("no /proc/net/tcp on this host")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+        assert preflight.port_in_use("127.0.0.1", port, preflight.listening_sockets())
+    assert not preflight.port_in_use("127.0.0.1", port, preflight.listening_sockets())
+
+
+def test_without_proc_a_port_is_busy_when_it_accepts_connections():
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+        assert preflight._accepts_connections("127.0.0.1", port) is True
+    assert preflight._accepts_connections("127.0.0.1", port) is False
 
 
 def ports_for(tmp_path, text: str) -> list[tuple[str, int]]:
