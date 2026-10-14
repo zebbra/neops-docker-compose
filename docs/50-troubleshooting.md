@@ -37,7 +37,7 @@ below are keyed to those probe names and the messages `check` prints.
 | `.env` | the message names the exact key or rule: see [Scenarios](20-scenarios.md) for the overlay and URL rules |
 | `disk` | Elasticsearch wants free space proportional to the filesystem at its high watermark: free space, or set `NEOPS_ES_HEADROOM` (e.g. `5GB`) to cap what it demands |
 | `vm.max_map_count` | run the `sysctl -w` command the check prints, then persist it in `/etc/sysctl.d/99-neops.conf` (see *Elasticsearch max_map_count* below) |
-| `ports` | something else on the host already holds a port this scenario needs; stop it or change the `NEOPS_*_PORT` |
+| `ports` | something on the host is already listening on a port this scenario needs (`ss -ltnp` shows what); stop it or change the `NEOPS_*_PORT`. The check reads the kernel's socket table rather than binding the port, so it works without root, ports 80 and 443 included |
 | `image` | the pinned image is neither cached locally nor pullable: run `docker login quay.io`, or the tag genuinely does not exist yet |
 | `db password` | the value in `.env` no longer matches what the running Postgres accepts: it was edited by hand instead of through `./neops rotate db-password`; restore the old value or rotate properly |
 

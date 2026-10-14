@@ -4,6 +4,7 @@ import concurrent.futures
 import shutil
 import socket
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +33,10 @@ ES_DEFAULT_HEADROOM = 150 * 2**30  # Elasticsearch's own default for high.max_he
 
 _SIZE_UNITS = {"": 1, "K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40, "P": 2**50}
 
+PROC_TCP = (Path("/proc/net/tcp"), Path("/proc/net/tcp6"))
+TCP_LISTEN = "0A"  # include/net/tcp_states.h
+WILDCARDS = frozenset({"0.0.0.0", "::"})
+
 
 @dataclass(frozen=True)
 class Check:
@@ -45,14 +50,48 @@ def version_ok(raw: str, minimum: tuple[int, int]) -> bool:
     return tuple(nums[:2]) >= minimum
 
 
-def port_free(address: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            s.bind((address, port))
-            return True
-        except OSError:
-            return False
+def _proc_address(raw: str) -> str:
+    """/proc/net/tcp prints the address as 32-bit words, each in host byte order."""
+    data = bytes.fromhex(raw)
+    if sys.byteorder == "little":
+        data = b"".join(data[i : i + 4][::-1] for i in range(0, len(data), 4))
+    return socket.inet_ntop(socket.AF_INET if len(data) == 4 else socket.AF_INET6, data)
+
+
+def parse_listeners(text: str) -> set[tuple[str, int]]:
+    """(address, port) of every listening socket in a /proc/net/tcp or tcp6 table."""
+    out = set()
+    for line in text.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 4 or fields[3] != TCP_LISTEN:
+            continue
+        address, port = fields[1].split(":")
+        out.add((_proc_address(address), int(port, 16)))
+    return out
+
+
+def listening_sockets() -> set[tuple[str, int]] | None:
+    """The host's listening TCP sockets, read rather than probed: binding a port to test it
+    needs root below 1024, and the stack never binds as the operator anyway, dockerd does.
+    None off Linux."""
+    if not PROC_TCP[0].exists():
+        return None
+    return set().union(*(parse_listeners(p.read_text()) for p in PROC_TCP if p.exists()))
+
+
+def port_in_use(address: str, port: int, listeners: set[tuple[str, int]]) -> bool:
+    """bind()'s own conflict rule: a wildcard clashes with every address on the port, and a
+    specific address with itself or a wildcard. "::" counts as a wildcard because Docker
+    publishes on both families."""
+    return any(p == port and (address in WILDCARDS or a in WILDCARDS or a == address) for a, p in listeners)
+
+
+def _accepts_connections(address: str, port: int) -> bool:
+    """The fallback without /proc (a macOS checkout): blind to a listener on another interface."""
+    host = "127.0.0.1" if address in WILDCARDS else address
+    with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as s:
+        s.settimeout(1)
+        return s.connect_ex((host, port)) == 0
 
 
 def _monitor_port_published(env: Env, scenario: Scenario) -> bool:
@@ -204,10 +243,14 @@ def _host_checks(env: Env, repo: Path, data: Path) -> list[Check]:
 def _port_checks(env: Env, scenario: Scenario, running: set[str]) -> list[Check]:
     if running:
         return [Check("ports", True, "skipped: the stack is running")]
+    listeners = listening_sockets()
     out = []
     for address, port in required_ports(env, scenario):
-        free = port_free(address, port)
-        out.append(Check("ports", free, f"{address}:{port}" + ("" if free else " is in use")))
+        if listeners is None:
+            busy = _accepts_connections(address, port)
+        else:
+            busy = port_in_use(address, port, listeners)
+        out.append(Check("ports", not busy, f"{address}:{port}" + (" is in use" if busy else "")))
     return out
 
 
