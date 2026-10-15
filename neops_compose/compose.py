@@ -38,9 +38,8 @@ class Compose:
         )
         if check and result.returncode != 0:
             detail = (result.stderr or "").strip() if capture else ""
-            raise ComposeError(
-                f"docker compose {' '.join(args)} failed ({result.returncode}) {detail}".strip()
-            )
+            shown = " ".join("<script>" if "\n" in arg else arg for arg in args)
+            raise ComposeError(f"docker compose {shown} failed ({result.returncode}) {detail}".strip())
         return result
 
     def up(self, *services: str, wait: bool = True, force_recreate: bool = False) -> None:
