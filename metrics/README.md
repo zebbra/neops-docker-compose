@@ -4,25 +4,14 @@ Observability stack for neops: VictoriaMetrics (TSDB), Grafana (dashboards), vma
 
 ## Usage
 
-### Dev
+Add `compose.metrics.yaml` to `COMPOSE_FILE` in `.env` (see `examples/metrics.env`) and run `./neops up`.
+Grafana is reachable on the host at `127.0.0.1:${NEOPS_GRAFANA_PORT:-3000}` and, when
+`NEOPS_GRAFANA_URL` is set with the Traefik overlay, at that public URL. The admin password is
+`NEOPS_GRAFANA_ADMIN_PASSWORD`. Metrics data lives in `data/metrics/` (bind mounts, like everything else).
 
-Included in `docker-compose.yaml` under the `metrics` profile:
-
-```shell
-# base services only
-docker compose up
-
-# base + full observability stack
-docker compose --profile metrics up
-```
-
-### Prod
-
-Add to `COMPOSE_FILE` in your `.env`:
-
-```
-COMPOSE_FILE=neops/docker-compose.neops.prod.yml:neops/docker-compose.neops.prod.metrics.yml
-```
+Core itself exposes no Prometheus `/metrics` endpoint yet (that needs the **neops_metrics**
+enterprise plugin, see *Pairs well with* below), so this overlay covers only Celery, Redis,
+PostgreSQL and Elasticsearch until it does.
 
 ## Services
 
@@ -33,15 +22,16 @@ COMPOSE_FILE=neops/docker-compose.neops.prod.yml:neops/docker-compose.neops.prod
 | vmalert | http://localhost:8880/vmalert | Alert rules & state |
 | celery-exporter | http://localhost:9808/metrics | Raw Celery metrics |
 | redis-exporter | http://localhost:9121/metrics | Raw Redis metrics |
-| postgres-exporter | http://localhost:9187/metrics | Raw PostgreSQL metrics |
+| postgres-exporter-cms | http://postgres-exporter-cms:9187/metrics | Raw PostgreSQL metrics for the CMS database |
+| postgres-exporter-engine | http://postgres-exporter-engine:9187/metrics | Raw PostgreSQL metrics for the engine database |
 | elasticsearch-exporter | http://localhost:9114/metrics | Raw Elasticsearch metrics |
 
 **Exporters:**
 - `celery-exporter` — Celery task/worker metrics ([danihodovic/celery-exporter](https://github.com/danihodovic/celery-exporter))
 - `redis-exporter` — Redis metrics ([oliver006/redis_exporter](https://github.com/oliver006/redis_exporter))
-- `postgres-exporter` — PostgreSQL metrics ([prometheuscommunity/postgres_exporter](https://github.com/prometheus-community/postgres_exporter))
+- `postgres-exporter-cms`, `postgres-exporter-engine` — PostgreSQL metrics, one exporter per database ([prometheuscommunity/postgres_exporter](https://github.com/prometheus-community/postgres_exporter))
 - `elasticsearch-exporter` — Elasticsearch cluster/index metrics ([prometheuscommunity/elasticsearch_exporter](https://github.com/prometheus-community/elasticsearch_exporter))
-- `victoriametrics` — Prometheus-compatible TSDB, scrapes all exporters + neops backend (`/metrics`); also self-scraped for storage/ingestion metrics
+- `victoriametrics` — Prometheus-compatible TSDB, scrapes all exporters; also self-scraped for storage/ingestion metrics
 - `vmalert` — Alert rule evaluation; rules live in `vmalert/rules/`; scraped for rule evaluation health and firing alert counts
 
 ## Grafana dashboards
@@ -58,16 +48,6 @@ bash metrics/fetch-dashboards.sh
 ```
 
 Re-run on a fresh clone before starting Grafana.
-
-## Scraping the local backend (dev)
-
-VictoriaMetrics uses `host.docker.internal` (wired via `extra_hosts: host-gateway`) to reach a backend running on the host at port 8000. Add to Django's env:
-
-```
-DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,host.docker.internal
-```
-
-For prod, switch the neops scrape target in `scrape_config.yml` to `backend:8000`.
 
 ## Pairs well with
 

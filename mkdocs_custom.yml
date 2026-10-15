@@ -1,0 +1,47 @@
+site_name: Neops docker-compose
+
+# Project-only additions on top of the canonical base
+# (zebbra/mkdocs-documentation/assets/mkdocs_base.yml). Everything else (admonitions, tabs,
+# snippets, mermaid, tasklist, abbr, magiclink) is already in the base and applies site-wide.
+# Lists CONCATENATE on merge, so only add what the base does not already carry.
+#
+# Note that no page here links to certs/, cust-cert/, examples/, metrics/, migrations/,
+# neops_compose/ or tests/ for a snippet, so docs/.symlinkignore stops setup_documentation.py
+# from symlinking them into docs/ at all, rather than symlinking them and excluding the pages
+# here. That matters once this repo's docs/ is pulled into the neops-documentation umbrella:
+# only the nav fragment is spliced in there, not this plugins block, so an exclude here alone
+# would not stop those becoming stray public pages the way it does for this repo's own build.
+plugins:
+  - exclude:
+      glob:
+        # Design specs and implementation plans for this repo's own build, not part of the
+        # operator-facing site. See docs/superpowers/*. Unlike the trees above this one is not
+        # a symlink, so .symlinkignore cannot reach it: when this repo's docs/ joins the
+        # umbrella, docs/superpowers/* needs excluding on the umbrella side too (see the note
+        # in docs/index.md's front matter).
+        - superpowers/*
+
+nav:
+  - Home: index.md
+  - Install: 10-install.md
+  - Scenarios: 20-scenarios.md
+  - Operations: 30-operations.md
+  - External proxy: 40-external-proxy.md
+  - Troubleshooting: 50-troubleshooting.md
+
+# --8<-- [start:repo]
+repo_url: https://github.com/zebbra/neops-docker-compose
+edit_uri: edit/release/2.0/docs
+# --8<-- [end:repo]
+
+# --8<-- [start:social]
+extra:
+  social:
+    - icon: fontawesome/solid/house
+      link: https://zebbra.ch
+      name: Zebbra
+# --8<-- [end:social]
+
+# --8<-- [start:copyright]
+copyright: Copyright &copy; Zebbra AG
+# --8<-- [end:copyright]
