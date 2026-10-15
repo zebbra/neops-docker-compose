@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from neops_compose import doctor, secrets
+from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.paths import Paths
@@ -140,10 +141,10 @@ def test_an_unreachable_engine_keeps_the_severity_of_its_mode():
 def test_login_probe_never_accepts_500():
     cms = PublicUrl.parse("https://cms.neops.example.com")
     http = FakeHttp({"/graphql": (500, "ImproperlyConfigured RATELIMIT_IP_META_KEY")})
-    p = doctor.bad_login_probe(cms, http)
+    p = doctor.bad_login_probe(cms, http, oidc=False)
     assert not p.ok and "RATELIMIT" in p.detail
     http = FakeHttp({"/graphql": (200, '{"errors":[{"message":"Please enter valid credentials"}]}')})
-    assert doctor.bad_login_probe(cms, http).ok
+    assert doctor.bad_login_probe(cms, http, oidc=False).ok
 
 
 def test_login_separates_bad_credentials_from_the_rate_limit():
@@ -164,7 +165,7 @@ def test_a_cms_that_cannot_reach_its_database_fails_both_login_probes():
     engine = PublicUrl.parse("https://engine.neops.example.com")
     down = '{"errors":[{"message":"internal error"}],"data":{"login":null}}'
 
-    probe = doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, down)}))
+    probe = doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, down)}), oidc=False)
     assert not probe.ok and probe.detail == doctor.DB_UNREACHABLE
 
     admin = doctor.login(cms, FakeHttp({"/graphql": (200, down)}), "neops", "pw")
@@ -176,7 +177,7 @@ def test_a_cms_that_cannot_reach_its_database_fails_both_login_probes():
 def test_bad_credentials_are_not_mistaken_for_a_database_outage():
     cms = PublicUrl.parse("https://cms.neops.example.com")
     refused = '{"errors":[{"message":"Please enter valid credentials"}]}'
-    assert doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, refused)})).ok
+    assert doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, refused)}), oidc=False).ok
     assert not doctor.login(cms, FakeHttp({"/graphql": (200, refused)}), "n", "p").db_down
 
 
@@ -250,6 +251,123 @@ def test_run_warns_about_the_worker_api_in_expose_mode_and_fails_in_traefik_mode
     traefik = _run_with(tmp_path, monkeypatch, "compose.yaml:compose.traefik.yaml")
     assert deny_probe_of(traefik).severity == "fail"
     assert doctor.all_ok(traefik) is False
+
+
+OIDC = "compose.yaml:compose.traefik.yaml:compose.oidc.yaml"
+
+
+def _oidc_ctx(tmp_path, compose) -> Ctx:
+    ctx = _ctx(tmp_path, OIDC)
+    ctx.compose = compose
+    return ctx
+
+
+class MintingCompose:
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.execs = []
+
+    def ps(self):
+        return []
+
+    def exec(self, service, *cmd, env=None):
+        self.execs.append((service, env))
+        if self.fail:
+            raise ComposeError("no container")
+        return "TOKEN=minted.jwt\n"
+
+
+def test_under_oidc_the_worker_probe_asks_the_engine_with_a_token_minted_in_the_cms(tmp_path, monkeypatch):
+    """Local login is off under OIDC, so the admin cannot log in; the CMS issues the token instead."""
+    http = SequencedHttp(['[{"state":"online"}]'])
+    monkeypatch.setattr(doctor, "Http", lambda **kwargs: http)
+    compose = MintingCompose()
+
+    probes = doctor.run(_oidc_ctx(tmp_path, compose))
+
+    worker = [p for p in probes if p.name == doctor.WORKER_PROBE][0]
+    assert worker.ok and worker.detail == "1 online of 1 workers"
+    bearer = {"Authorization": "Bearer minted.jwt"}
+    assert ("https://engine.neops.example.com/workers", "GET", bearer) in http.calls
+    assert compose.execs == [("cms", {"NEOPS_USERNAME": "neops"})]
+
+
+def test_under_oidc_a_token_that_cannot_be_minted_fails_the_worker_probe(tmp_path, monkeypatch):
+    monkeypatch.setattr(doctor, "Http", lambda **kwargs: healthy())
+    probes = doctor.run(_oidc_ctx(tmp_path, MintingCompose(fail=True)))
+    worker = [p for p in probes if p.name == doctor.WORKER_PROBE][0]
+    assert not worker.ok and "could not mint" in worker.detail
+
+
+class CountingHttp(FakeHttp):
+    def __init__(self, refuse_after: int | None):
+        super().__init__({})
+        self.refuse_after = refuse_after
+        self.bodies = []
+
+    def request(self, url, path, method="GET", body=None, headers=None):
+        self.calls.append((str(url) + path, method, headers or {}))
+        self.bodies.append(body)
+        if self.refuse_after is not None and len(self.bodies) > self.refuse_after:
+            return (200, '{"errors":[{"message":"Too many requests"}]}')
+        return (200, '{"errors":[{"message":"refused"}]}')
+
+
+def test_under_oidc_the_ratelimit_probe_spends_the_oidc_exchange_limit_not_the_disabled_login():
+    """Core refuses `login` before its rate limiter when local login is off, so no number of
+    forged logins could ever be refused: the probe would fail on every correct proxy."""
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    http = CountingHttp(refuse_after=20)
+    probe = doctor.ratelimit_probe(cms, http, oidc=True)
+    assert probe.ok
+    assert len(http.bodies) == 21
+    assert all("exchangeOidcCode" in b and "login(" not in b for b in http.bodies)
+
+
+def test_under_oidc_the_ratelimit_probe_fails_when_no_exchange_is_refused():
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    probe = doctor.ratelimit_probe(cms, CountingHttp(refuse_after=None), oidc=True)
+    assert not probe.ok and "21 forged" in probe.detail
+
+
+class RecordingHttp(FakeHttp):
+    def request(self, url, path, method="GET", body=None, headers=None):
+        self.calls.append(body)
+        return self.responses.get(path, (404, ""))
+
+
+INVALID_CODE = '{"errors":[{"message":"Invalid authorization code"}],"data":{"exchangeOidcCode":null}}'
+
+
+def test_under_oidc_the_cms_auth_path_probe_reaches_the_code_lookup_instead_of_the_disabled_login():
+    """Core refuses `login` under OIDC before its rate limiter and its database, so a bad login
+    proves neither; a well-formed unknown code passes both before it is refused."""
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    http = RecordingHttp({"/graphql": (200, INVALID_CODE)})
+    probe = doctor.bad_login_probe(cms, http, oidc=True)
+    assert probe.ok
+    sent = json.loads(http.calls[0])
+    assert "exchangeOidcCode" in sent["query"] and len(sent["variables"]["c"]) == 64
+
+
+def test_under_oidc_anything_but_an_unknown_code_answer_fails_the_cms_auth_path_probe():
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    db_down = '{"errors":[{"message":"connection to server at \\"postgres-cms\\" failed"}]}'
+    probe = doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, db_down)}), oidc=True)
+    assert not probe.ok and "postgres-cms" in probe.detail
+    meta_key = doctor.bad_login_probe(cms, FakeHttp({"/graphql": (500, "ImproperlyConfigured")}), oidc=True)
+    assert not meta_key.ok and "RATELIMIT_IP_META_KEY" in meta_key.detail
+    limited = '{"errors":[{"message":"Too many requests"}]}'
+    probe = doctor.bad_login_probe(cms, FakeHttp({"/graphql": (200, limited)}), oidc=True)
+    assert not probe.ok and "retry in a minute" in probe.detail
+
+
+def test_without_oidc_the_ratelimit_probe_still_spends_six_logins():
+    cms = PublicUrl.parse("https://cms.neops.example.com")
+    http = CountingHttp(refuse_after=5)
+    assert doctor.ratelimit_probe(cms, http, oidc=False).ok
+    assert len(http.bodies) == 6 and all("login(" in b for b in http.bodies)
+    assert not doctor.ratelimit_probe(cms, CountingHttp(refuse_after=None), oidc=False).ok
 
 
 def test_worker_probe_names_the_rate_limit():

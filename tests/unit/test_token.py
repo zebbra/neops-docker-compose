@@ -157,3 +157,35 @@ def _failing_revoke(compose):
         return original(service, *cmd, env=env)
 
     return exec_
+
+
+class AccessTokenCms:
+    def __init__(self, out: str = "TOKEN=eyJ.access.jwt\n", fail: bool = False):
+        self.out, self.fail = out, fail
+        self.calls = []
+
+    def exec(self, service, *cmd, env=None):
+        self.calls.append((service, cmd, env))
+        if self.fail:
+            raise ComposeError("docker compose exec -T -e NEOPS_USERNAME cms failed (1) no container")
+        return self.out
+
+
+def test_an_access_token_is_minted_for_the_named_user_through_the_cms():
+    cms = AccessTokenCms()
+    assert token.mint_access_token(cms, "operator") == "eyJ.access.jwt"
+    service, cmd, env = cms.calls[0]
+    assert service == "cms" and env == {"NEOPS_USERNAME": "operator"}
+    assert "operator" not in " ".join(cmd)
+    assert "issue_access_token" in cmd[-1]
+
+
+def test_minting_an_access_token_names_each_cause_of_failure():
+    with pytest.raises(RuntimeError, match="no container"):
+        token.mint_access_token(AccessTokenCms(fail=True), "neops")
+    with pytest.raises(RuntimeError, match="has cms-init run"):
+        token.mint_access_token(AccessTokenCms(out="MISSING\n"), "neops")
+    with pytest.raises(RuntimeError, match="'neops' is deactivated"):
+        token.mint_access_token(AccessTokenCms(out="INACTIVE\n"), "neops")
+    with pytest.raises(RuntimeError, match="printed no token.*ImportError"):
+        token.mint_access_token(AccessTokenCms(out="ImportError: get_token_service\n"), "neops")

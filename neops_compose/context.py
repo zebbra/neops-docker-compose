@@ -32,5 +32,9 @@ class Ctx:
         paths = Paths.for_repo(repo, env)
         return cls(repo, env, paths, Scenario.from_env(env), Compose(repo), State.load(paths.state_file), log)
 
+    @property
+    def admin_user(self) -> str:
+        return self.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
+
     def save_state(self) -> None:
         self.state.save(self.paths.state_file)

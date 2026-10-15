@@ -7,12 +7,18 @@ import ssl
 import time
 from dataclasses import dataclass
 
-from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
+from neops_compose.context import Ctx
+from neops_compose.token import mint_access_token
 from neops_compose.urls import BASE_URLS, PublicUrl, public_urls
 
 ONE_SHOTS = {"cms-init"}
 NAME_WIDTH = 28
 LOGIN_MUTATION = "mutation($u:String!,$p:String!){login(username:$u,password:$p){accessToken}}"
+OIDC_EXCHANGE_MUTATION = "mutation($c:String!){exchangeOidcCode(code:$c){accessToken}}"
+# Well-formed (core's 64-character code pattern) and never issued: core rate-limits, then looks it up.
+OIDC_UNKNOWN_CODE = "neops-doctor-" + "0" * 51
+OIDC_UNKNOWN_CODE_ANSWER = "Invalid authorization code"
+AUTH_PATH_PROBE = "cms login path"
 DENY_PROBE = "engine worker API denied"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 LOOPBACK_ONLY = (
@@ -221,22 +227,40 @@ def http_probes(urls: dict[str, PublicUrl], http: Http, deny_severity: str = "fa
     return probes
 
 
-def bad_login_probe(cms: PublicUrl, http: Http) -> Probe:
-    body = json.dumps({"query": LOGIN_MUTATION, "variables": {"u": "neops-doctor", "p": "not-the-password"}})
+def _rejected_credentials_body(oidc: bool) -> str:
+    """Core refuses `login` under OIDC before its rate limiter and its database, so there only
+    the code exchange travels the same path."""
+    if oidc:
+        return json.dumps({"query": OIDC_EXCHANGE_MUTATION, "variables": {"c": OIDC_UNKNOWN_CODE}})
+    return json.dumps({"query": LOGIN_MUTATION, "variables": {"u": "neops-doctor", "p": "not-the-password"}})
+
+
+def _oidc_auth_path_problem(text: str) -> str:
+    if OIDC_UNKNOWN_CODE_ANSWER in text:
+        return ""
+    if "Too many" in text:
+        return "OIDC code exchange refused (rate limit, 20/min): retry in a minute"
+    return f"the CMS could not look up an OIDC code (is postgres-cms up?): {text[:160]}"
+
+
+def bad_login_probe(cms: PublicUrl, http: Http, oidc: bool) -> Probe:
     try:
-        status, text = http.request(cms, "/graphql", method="POST", body=body)
+        status, text = http.request(cms, "/graphql", method="POST", body=_rejected_credentials_body(oidc))
     except Exception as exc:
-        return Probe("cms login path", False, str(exc))
+        return Probe(AUTH_PATH_PROBE, False, str(exc))
     if status >= 500:
         return Probe(
-            "cms login path",
+            AUTH_PATH_PROBE,
             False,
-            f"login mutation answered {status}: {text[:160]} (behind an external proxy this "
+            f"a rejected-credentials request answered {status}: {text[:160]} (behind an external proxy this "
             "usually means RATELIMIT_IP_META_KEY is set but X-Real-IP is not)",
         )
-    if cms_database_is_down(text):
-        return Probe("cms login path", False, DB_UNREACHABLE)
-    return Probe("cms login path", True, f"bad credentials answered {status} (no server error)")
+    problem = (
+        _oidc_auth_path_problem(text) if oidc else (DB_UNREACHABLE if cms_database_is_down(text) else "")
+    )
+    if problem:
+        return Probe(AUTH_PATH_PROBE, False, problem)
+    return Probe(AUTH_PATH_PROBE, True, f"bad credentials answered {status} (no server error)")
 
 
 def login(cms: PublicUrl, http: Http, username: str, password: str) -> Login:
@@ -244,12 +268,12 @@ def login(cms: PublicUrl, http: Http, username: str, password: str) -> Login:
     try:
         status, text = http.request(cms, "/graphql", method="POST", body=body)
     except Exception as exc:
-        return Login(error=str(exc))
+        return Login(error=f"could not log in as the admin user: {exc}")
     try:
         return Login(token=json.loads(text)["data"]["login"]["accessToken"])
     except Exception:
         return Login(
-            error=f"{status}: {text[:160]}",
+            error=f"could not log in as the admin user: {status}: {text[:160]}",
             rate_limited=status == 429 or "Too many" in text,
             db_down=cms_database_is_down(text),
         )
@@ -261,8 +285,7 @@ def worker_probe(engine: PublicUrl, http: Http, admin: Login) -> Probe:
     if admin.rate_limited:
         return Probe(WORKER_PROBE, False, "admin login refused (rate limit, 5/min): retry in a minute")
     if not admin.token:
-        detail = "could not log in as the admin user to ask the engine"
-        return Probe(WORKER_PROBE, False, f"{detail}: {admin.error}" if admin.error else detail)
+        return Probe(WORKER_PROBE, False, admin.error or "no admin token to ask the engine with")
     status, text = http.request(engine, "/workers", headers={"Authorization": f"Bearer {admin.token}"})
     if status == 403:
         return Probe(
@@ -282,15 +305,21 @@ def worker_probe(engine: PublicUrl, http: Http, admin: Login) -> Probe:
         return Probe(WORKER_PROBE, False, f"unexpected /workers payload: {exc}")
 
 
-def ratelimit_probe(cms: PublicUrl, http: Http) -> Probe:
-    """Six bad logins with a different forged X-Real-IP each.
+def _ratelimited_request(oidc: bool) -> tuple[str, int]:
+    """Core limits local login to 5/min per IP and the OIDC code exchange to 20/min. Under OIDC
+    login is refused before its limiter runs, so only the exchange can show the limit."""
+    return _rejected_credentials_body(oidc), 21 if oidc else 6
 
-    Core limits local login to 5/min per IP: if none is refused, the proxy lets clients
-    choose their own IP, because it appends to X-Real-IP instead of overwriting it.
+
+def ratelimit_probe(cms: PublicUrl, http: Http, oidc: bool) -> Probe:
+    """One more rate-limited request than the limit allows, each with a different forged X-Real-IP.
+
+    If none is refused, the proxy lets clients choose their own IP, because it appends to
+    X-Real-IP instead of overwriting it.
     """
-    body = json.dumps({"query": LOGIN_MUTATION, "variables": {"u": "neops-doctor", "p": "not-the-password"}})
+    body, attempts = _ratelimited_request(oidc)
     refused = False
-    for i in range(6):
+    for i in range(attempts):
         status, text = http.request(
             cms, "/graphql", method="POST", body=body, headers={"X-Real-IP": f"203.0.113.{i + 1}"}
         )
@@ -301,7 +330,7 @@ def ratelimit_probe(cms: PublicUrl, http: Http) -> Probe:
         refused,
         "rate limit applied per real address"
         if refused
-        else "6 forged X-Real-IP logins were all accepted: the proxy must OVERWRITE X-Real-IP",
+        else f"{attempts} forged X-Real-IP requests were all accepted: the proxy must OVERWRITE X-Real-IP",
     )
 
 
@@ -319,14 +348,23 @@ def settled_worker_probe(engine: PublicUrl, http: Http, admin: Login, grace: flo
 def _login_probes(
     ctx: Ctx, cms: PublicUrl, engine: PublicUrl, http: Http, worker_grace: float
 ) -> list[Probe]:
-    """The admin login goes first: core allows five logins a minute from one address, and
-    the bad-credentials probe spends one of them."""
-    if ctx.scenario.oidc:
-        skipped = Probe(WORKER_PROBE, True, "skipped: OIDC deployments cannot mint an admin token")
-        return [bad_login_probe(cms, http), skipped]
-    user = ctx.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
-    admin = login(cms, http, user, ctx.env.get("NEOPS_ADMIN_PASSWORD"))
-    return [bad_login_probe(cms, http), settled_worker_probe(engine, http, admin, worker_grace)]
+    """The admin token goes first: without OIDC it is a login, core allows five a minute from
+    one address, and the bad-credentials probe spends one of them."""
+    admin = _admin_token(ctx, cms, http)
+    return [
+        bad_login_probe(cms, http, ctx.scenario.oidc),
+        settled_worker_probe(engine, http, admin, worker_grace),
+    ]
+
+
+def _admin_token(ctx: Ctx, cms: PublicUrl, http: Http) -> Login:
+    """Under OIDC local login is disabled, so the CMS issues the token instead of a password login."""
+    if not ctx.scenario.oidc:
+        return login(cms, http, ctx.admin_user, ctx.env.get("NEOPS_ADMIN_PASSWORD"))
+    try:
+        return Login(token=mint_access_token(ctx.compose, ctx.admin_user))
+    except Exception as exc:
+        return Login(error=f"could not mint an admin token in the CMS: {exc}")
 
 
 def _tls_probe(http: Http, web: PublicUrl) -> Probe:
@@ -367,7 +405,7 @@ def run(
     probes += http_probes(urls, http, deny_severity(ctx, urls["NEOPS_ENGINE_URL"]))
     probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http, worker_grace)
     if probe_ratelimit:
-        probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http))
+        probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http, ctx.scenario.oidc))
     if ctx.scenario.tls:
         probes.append(_tls_probe(http, urls["NEOPS_WEB_URL"]))
     return probes

@@ -4,7 +4,7 @@ import base64
 import json
 
 from neops_compose.compose import ComposeError
-from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
+from neops_compose.context import Ctx
 from neops_compose.paths import Paths
 from neops_compose.secrets import read_env_value, write_secret
 
@@ -25,6 +25,27 @@ _PK_SCRIPT = (
     "import os; from django.contrib.auth import get_user_model; "
     "print('PK=%s' % get_user_model().objects.get(username=os.environ['NEOPS_USERNAME']).pk)"
 )
+_ACCESS_TOKEN_SCRIPT = """
+import os
+from django.contrib.auth import get_user_model
+from neops.core.auth import get_auth, get_permissions, get_token_service
+user = get_user_model().objects.filter(username=os.environ['NEOPS_USERNAME']).first()
+if user is None:
+    print('MISSING')
+elif not user.is_active:
+    print('INACTIVE')
+else:
+    permissions = get_permissions()
+    token = get_token_service().issue_access_token(
+        user_id=user.id,
+        username=user.username,
+        roles=get_auth().get_roles(user),
+        permissions=permissions.get_jwt_permissions(user),
+        auth_provider="neops-doctor",
+        authz_enforced=permissions.authz_enforced,
+    )
+    print('TOKEN=%s' % token)
+"""
 _DELETE_SCRIPT = (
     "from neops.enterprise.auth.static_api_key.models import StaticAPIKey; "
     "StaticAPIKey.objects.filter(id={key_id}).delete()"
@@ -96,6 +117,34 @@ def mint(compose, username: str) -> str:
     return lines[-1]
 
 
+def mint_access_token(compose, username: str) -> str:
+    """A short-lived engine-usable JWT, issued by the CMS itself: under OIDC no password login exists."""
+    try:
+        out = compose.exec(
+            "cms",
+            "python",
+            "manage.py",
+            "shell",
+            "-c",
+            _ACCESS_TOKEN_SCRIPT,
+            env={"NEOPS_USERNAME": username},
+        )
+    except ComposeError as exc:
+        raise RuntimeError(f"could not run the token script in the cms container: {exc}") from exc
+    lines = out.splitlines()
+    access_token = next((line[6:] for line in lines if line.startswith("TOKEN=")), "")
+    if access_token:
+        return access_token
+    if "INACTIVE" in lines:
+        raise RuntimeError(
+            f"NEOPS_ADMIN_USER {username!r} is deactivated in the CMS: reactivate it in the CMS admin "
+            "site; core also refuses the engine's static API key while it is"
+        )
+    if "MISSING" in lines:
+        raise _no_such_user(username)
+    raise RuntimeError(f"the CMS token script printed no token: {out.strip()[-200:]!r}")
+
+
 def revoke(compose, key_id_: int) -> None:
     """int() first: the id is interpolated into a Django shell script, never passed through as text."""
     script = _DELETE_SCRIPT.format(key_id=int(key_id_))
@@ -110,10 +159,6 @@ def _install(ctx: Ctx, token: str) -> None:
     ctx.compose.up("engine", force_recreate=True)
 
 
-def _admin_user(ctx: Ctx) -> str:
-    return ctx.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
-
-
 def ensure_engine_token(ctx: Ctx) -> bool:
     """Mint only when no valid token exists. Returns True when a token was minted.
 
@@ -124,13 +169,13 @@ def ensure_engine_token(ctx: Ctx) -> bool:
         ctx.log("engine CMS token present and valid")
         return False
     ctx.log("minting a CMS API key for the engine")
-    _install(ctx, mint(ctx.compose, _admin_user(ctx)))
+    _install(ctx, mint(ctx.compose, ctx.admin_user))
     return True
 
 
 def rotate_engine_token(ctx: Ctx) -> None:
     old = read_engine_token(ctx.paths)
-    _install(ctx, mint(ctx.compose, _admin_user(ctx)))
+    _install(ctx, mint(ctx.compose, ctx.admin_user))
     if old:
         try:
             revoke(ctx.compose, key_id(old))
