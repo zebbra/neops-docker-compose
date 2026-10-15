@@ -260,7 +260,10 @@ def bad_login_probe(cms: PublicUrl, http: Http, oidc: bool) -> Probe:
     )
     if problem:
         return Probe(AUTH_PATH_PROBE, False, problem)
-    return Probe(AUTH_PATH_PROBE, True, f"bad credentials answered {status} (no server error)")
+    sent = "a made-up OIDC code" if oidc else "a wrong test password"
+    return Probe(
+        AUTH_PATH_PROBE, True, f"doctor sent {sent} on purpose; the CMS rejected it cleanly ({status})"
+    )
 
 
 def login(cms: PublicUrl, http: Http, username: str, password: str) -> Login:
