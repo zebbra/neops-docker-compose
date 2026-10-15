@@ -215,8 +215,11 @@ echo 'RATELIMIT_IP_META_KEY=HTTP_X_REAL_IP' >> .env
 ./neops doctor --probe-ratelimit
 ```
 
-`--probe-ratelimit` sends six login attempts with six different forged `X-Real-IP` values: if none
-of them is rate-limited, your proxy is not overwriting the header (appending to it, or passing the
+`--probe-ratelimit` sends six login attempts with six different forged `X-Real-IP` values (under
+OIDC, where login is refused before its rate limit applies, twenty-one OIDC code exchanges against
+their 20/min limit instead; when the proxy is right, that spends this host's SSO quota, so anyone
+logging in from the same address cannot finish an SSO login for up to a minute): if none of them is
+rate-limited, your proxy is not overwriting the header (appending to it, or passing the
 client's own value through). If the probe fails, unset `RATELIMIT_IP_META_KEY` again and fix the
 proxy first. Leaving the key set with a proxy that does not reliably overwrite the header is what
 turns every login into a 500 (see [Troubleshooting](50-troubleshooting.md#500-on-login-ratelimit_ip_meta_key)).

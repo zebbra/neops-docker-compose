@@ -5,7 +5,7 @@ import secrets as pysecrets
 
 from neops_compose import databases, secrets, token
 from neops_compose.compose import ComposeError
-from neops_compose.context import DEFAULT_ADMIN_USER, Ctx
+from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.render import KEYCLOAK_CLIENT_ID, KEYCLOAK_REALM, keycloak_relative_path, render
 from neops_compose.scenario import Scenario
@@ -67,12 +67,11 @@ def db_password(ctx: Ctx, which: str) -> None:
 
 
 def admin_password(ctx: Ctx, new: str) -> None:
-    user = ctx.env.get("NEOPS_ADMIN_USER", DEFAULT_ADMIN_USER)
     ctx.compose.exec(
-        "cms", "python", "manage.py", "shell", "-c", _SET_PASSWORD_SCRIPT, env={"U": user, "P": new}
+        "cms", "python", "manage.py", "shell", "-c", _SET_PASSWORD_SCRIPT, env={"U": ctx.admin_user, "P": new}
     )
     ctx.env.set("NEOPS_ADMIN_PASSWORD", new)
-    ctx.log(f"password of {user} changed and stored in .env")
+    ctx.log(f"password of {ctx.admin_user} changed and stored in .env")
 
 
 def secret_key(ctx: Ctx) -> None:

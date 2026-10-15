@@ -108,3 +108,13 @@ def test_a_missing_docker_binary_is_a_compose_error(tmp_path, monkeypatch):
         Compose(tmp_path).ps()
     with pytest.raises(ComposeError, match="docker is not installed or not on PATH"):
         Compose(tmp_path).exec_bytes("postgres-cms", "pg_dump")
+
+
+def test_a_failed_exec_names_an_inline_script_instead_of_pasting_it(tmp_path, monkeypatch):
+    fake = FakeRun(returncode=1, stderr="service cms is not running")
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", fake)
+    with pytest.raises(ComposeError) as excinfo:
+        Compose(tmp_path).exec("cms", "python", "manage.py", "shell", "-c", "import os\nprint(1)\n")
+    message = str(excinfo.value)
+    assert "\n" not in message and "import os" not in message
+    assert "shell -c <script> failed (1) service cms is not running" in message
