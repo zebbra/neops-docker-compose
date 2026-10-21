@@ -1,0 +1,42 @@
+name: build-documentation.yml
+on:
+  push:
+    branches:
+      - develop
+      - main
+    tags:
+      - '*'
+  pull_request:
+
+jobs:
+  build-documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Both options below are load-bearing:
+          #   - `fetch-depth: 0` is needed because mkdocs-document-dates and
+          #     the submodule_authors hook resolve authors+dates by running
+          #     `git log`. With the default shallow clone the result is just
+          #     the runner's user and the checkout time.
+          #   - `submodules: recursive` is needed so the hook can git-log
+          #     inside each submodule's working tree.
+          # If this project has private submodules, also pass:
+          #     token: ${{ secrets.SUBMODULES_TOKEN }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image for documentation
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: .make_scripts/mkdocs-documentation/Dockerfile
+          build-contexts: git=.git
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+

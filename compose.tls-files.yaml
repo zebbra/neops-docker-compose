@@ -1,0 +1,10 @@
+# Overlay: TLS from PEM files. Either operator-provided (./certs/cert.pem, ./certs/key.pem, a
+# wildcard or SAN certificate covering every hostname in .env) or self-signed by ./neops keys
+# when NEOPS_TLS_SELF_SIGNED=true (then point the two variables at data/secrets/tls/).
+services:
+  traefik:
+    ports:
+      - "${NEOPS_HTTPS_PORT:-443}:443"
+    volumes:
+      - ${NEOPS_TLS_CERT_FILE:-./certs/cert.pem}:/etc/traefik/certs/cert.pem:ro
+      - ${NEOPS_TLS_KEY_FILE:-./certs/key.pem}:/etc/traefik/certs/key.pem:ro

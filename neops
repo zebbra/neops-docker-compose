@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Operator entrypoint. Needs only uv and docker on the host.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec uv run --project "$here" --quiet neops "$@"
