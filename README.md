@@ -1,3 +1,5 @@
+**Old docker compose files ("Neops 1.0") can be found in the [release/1.0](https://github.com/zebbra/neops-docker-compose/tree/release/1.0) branch**
+
 # neops-docker-compose
 
 Production deployment of the Neops 2.0 stack with Docker Compose: neops-core (CMS), the workflow
