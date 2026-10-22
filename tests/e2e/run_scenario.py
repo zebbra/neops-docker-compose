@@ -291,8 +291,9 @@ def prepare_clone(work: Path, values: dict[str, str]) -> Path:
     clone = work / "repo"
     work.mkdir(parents=True, exist_ok=True)
     if not clone.exists():
+        head = sh(["git", "rev-parse", "HEAD"], cwd=REPO, capture=True).stdout.strip()
         sh(["git", "clone", "-q", str(REPO), str(clone)], cwd=work)
-        sh(["git", "checkout", "-q", "release/2.0"], cwd=clone)
+        sh(["git", "checkout", "-q", "--detach", head], cwd=clone)
     (clone / ".env").write_text("".join(f"{k}={v}\n" for k, v in values.items()))
     (clone / OVERRIDE_FILE).write_text(OVERRIDE_YAML)
     return clone
