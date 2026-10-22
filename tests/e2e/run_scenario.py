@@ -290,10 +290,12 @@ def build_env(example: Path, name: str, ports: Ports, extra: dict[str, str]) -> 
 def prepare_clone(work: Path, values: dict[str, str]) -> Path:
     clone = work / "repo"
     work.mkdir(parents=True, exist_ok=True)
-    if not clone.exists():
-        head = sh(["git", "rev-parse", "HEAD"], cwd=REPO, capture=True).stdout.strip()
+    head = sh(["git", "rev-parse", "HEAD"], cwd=REPO, capture=True).stdout.strip()
+    if clone.exists():
+        sh(["git", "fetch", "-q", str(REPO), head], cwd=clone)
+    else:
         sh(["git", "clone", "-q", str(REPO), str(clone)], cwd=work)
-        sh(["git", "checkout", "-q", "--detach", head], cwd=clone)
+    sh(["git", "checkout", "-q", "--detach", head], cwd=clone)
     (clone / ".env").write_text("".join(f"{k}={v}\n" for k, v in values.items()))
     (clone / OVERRIDE_FILE).write_text(OVERRIDE_YAML)
     return clone
