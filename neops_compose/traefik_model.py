@@ -118,15 +118,16 @@ def _strip_prefix(name: str, url: PublicUrl) -> tuple[dict[str, dict], tuple[str
 CMS_SLASH_MIDDLEWARE = "cms-slash"
 
 
-def cms_slash_middleware() -> dict[str, dict]:
+def cms_slash_middleware(scheme: str) -> dict[str, dict]:
     """Redirect the bare directory prefixes of core to their slashed form (neops-core #2276).
-    redirectRegex sees the whole URL, so the scheme and host are captured and kept."""
+    redirectRegex sees the whole URL, so the host is captured and kept. The scheme is the public
+    one: Traefik builds that URL from its own TLS state, which says http when TLS ends upstream."""
     alternation = "|".join(re.escape(p.lstrip("/")) for p in CORE_DIRECTORY_PREFIXES)
     return {
         CMS_SLASH_MIDDLEWARE: {
             "redirectRegex": {
-                "regex": f"^(https?://[^/]+/(?:{alternation}))$",
-                "replacement": "${1}/",
+                "regex": f"^https?://([^/]+/(?:{alternation}))$",
+                "replacement": f"{scheme}://${{1}}/",
                 "permanent": True,
             }
         }
@@ -187,7 +188,7 @@ def _core_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
     engine, middlewares = _engine_routers(layout)
     monitor, monitor_middlewares = _monitor_router(layout)
     middlewares.update(monitor_middlewares)
-    middlewares.update(cms_slash_middleware())
+    middlewares.update(cms_slash_middleware(layout.urls["NEOPS_CMS_URL"].scheme))
     return [
         layout.router("web", layout.urls["NEOPS_WEB_URL"], "web", 1),
         *_cms_routers(layout),

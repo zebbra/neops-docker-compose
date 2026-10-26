@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from neops_compose.env import Env
-from neops_compose.ports import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_MONITOR_PORT
+from neops_compose.ports import (
+    DEFAULT_HTTP_PORT,
+    DEFAULT_HTTPS_PORT,
+    DEFAULT_MONITOR_PORT,
+    PROXY_BIND_ADDRESS,
+)
 from neops_compose.routes import CORE_PREFIXES, WEB_RESERVED_PATHS
 from neops_compose.scenario import BASE_FILE, OVERLAYS, Scenario
 from neops_compose.urls import (
@@ -104,6 +109,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
                 "the HTTP-01 challenge has no other port"
             )
     out += _trusted_proxy_problems(env, scenario)
+    out += _bind_address_problems(env)
     if scenario.oidc and not scenario.keycloak:
         out += _required(env, OIDC_KEYS, secret=False)
         out += _required(
@@ -226,6 +232,16 @@ def _trusted_proxy_problems(env: Env, scenario: Scenario) -> list[str]:
     return []
 
 
+def _bind_address_problems(env: Env) -> list[str]:
+    bind = env.get(PROXY_BIND_ADDRESS)
+    try:
+        if bind:
+            ipaddress.ip_address(bind)
+    except ValueError:
+        return [f"{PROXY_BIND_ADDRESS}: {bind} is not an IP address (IPv6 without brackets)"]
+    return []
+
+
 def _is_network(entry: str) -> bool:
     try:
         ipaddress.ip_network(entry, strict=False)
@@ -245,17 +261,29 @@ def _url_rules(
 ) -> list[str]:
     out = _cms_rules(urls, scenario) + _path_rules(urls, scenario)
     if behind_proxy:
-        return out + _upstream_proxy_rules(urls, scenario)
+        return out + _upstream_proxy_rules(urls, scenario, ports)
     return out + _traefik_rules(urls, scenario, ports)
 
 
-def _upstream_proxy_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
+def _upstream_proxy_rules(urls: dict[str, PublicUrl], scenario: Scenario, ports: _Ports) -> list[str]:
+    """Scheme and port are the upstream proxy's, but the browser still needs one scheme
+    throughout, and Traefik still publishes NEOPS_HTTP_PORT only."""
+    web_scheme = urls["NEOPS_WEB_URL"].scheme
+    out = [
+        f"{key} must use {web_scheme}:// like NEOPS_WEB_URL"
+        for key, u in urls.items()
+        if u.scheme != web_scheme
+    ]
     if monitor_entrypoint_wanted(urls, scenario):
-        return [
+        out.append(
             "NEOPS_WORKFLOWS_URL must be a path of NEOPS_WEB_URL or its own hostname with "
             "NEOPS_TRUSTED_PROXY_IPS: the upstream proxy forwards to NEOPS_HTTP_PORT only"
-        ]
-    return []
+        )
+    elif ports.monitor_declared:
+        out.append(
+            "NEOPS_MONITOR_PORT is set, but nothing publishes it behind NEOPS_TRUSTED_PROXY_IPS: remove it"
+        )
+    return out
 
 
 def _cms_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:

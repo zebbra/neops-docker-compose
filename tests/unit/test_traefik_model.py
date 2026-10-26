@@ -172,10 +172,10 @@ def test_every_cms_router_redirects_the_bare_directory_prefixes(tmp_path):
         assert cms_routers and all(CMS_SLASH_MIDDLEWARE in r.middlewares for r in cms_routers)
         assert all(CMS_SLASH_MIDDLEWARE not in r.middlewares for r in c.routers if r.service != "cms")
     redirect = c.middlewares[CMS_SLASH_MIDDLEWARE]["redirectRegex"]
-    assert redirect["replacement"] == "${1}/" and redirect["permanent"] is True
+    assert redirect["replacement"] == "https://${1}/" and redirect["permanent"] is True
     pattern = re.compile(redirect["regex"])
-    for url in ("https://neops.example.com/admin", "http://cms.neops.example.com:8080/accounts"):
-        assert pattern.sub(r"\1/", url) == url + "/", url
+    for url in ("https://neops.example.com/admin", "https://cms.neops.example.com:8443/accounts"):
+        assert pattern.sub(r"https://\1/", url) == url + "/", url
     for url in (
         "https://neops.example.com/admin/",
         "https://neops.example.com/admin/login/",
@@ -197,3 +197,18 @@ def test_trusted_proxy_ips_are_trusted_on_every_entrypoint(tmp_path):
 def test_without_trusted_proxy_ips_forwarded_headers_are_left_at_traefiks_default(tmp_path):
     eps = static_config(cfg(tmp_path, SHARED))["entryPoints"]
     assert all("forwardedHeaders" not in ep for ep in eps.values())
+
+
+def test_slash_redirect_keeps_https_when_tls_ends_upstream(tmp_path):
+    """Traefik hands redirectRegex an http:// URL here, whatever X-Forwarded-Proto says."""
+    text = SHARED.replace(":compose.tls-acme.yaml", "") + "NEOPS_TRUSTED_PROXY_IPS=100.111.0.0/16\n"
+    redirect = cfg(tmp_path, text).middlewares[CMS_SLASH_MIDDLEWARE]["redirectRegex"]
+    seen_by_traefik = "http://neops.example.com/admin"
+    location = re.sub(redirect["regex"], redirect["replacement"].replace("${1}", r"\1"), seen_by_traefik)
+    assert location == "https://neops.example.com/admin/"
+
+
+def test_slash_redirect_stays_http_on_a_plain_http_deployment(tmp_path):
+    text = HOSTS.replace(":compose.tls-files.yaml", "").replace("https://", "http://")
+    redirect = cfg(tmp_path, text).middlewares[CMS_SLASH_MIDDLEWARE]["redirectRegex"]
+    assert redirect["replacement"] == "http://${1}/"
