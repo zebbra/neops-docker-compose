@@ -178,8 +178,21 @@ def test_every_publicly_routed_service_has_a_healthcheck():
 VAR_RE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}")
 
 
+INNERMOST_VAR_RE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?P<op>:-|:\+)(?P<word>[^${}]*))?\}")
+
+
+def _substitute(m: re.Match, env) -> str:
+    value = env.get(m["name"], "")
+    if m["op"] == ":+":
+        return m["word"] if value else ""
+    return value or (m["word"] or "")
+
+
 def _resolve(text: str, env) -> str:
-    return VAR_RE.sub(lambda m: env.get(m["name"], m["default"] or ""), text)
+    """Compose interpolation as these files use it: ${X}, ${X:-default} and ${X:+word}, nested."""
+    while (resolved := INNERMOST_VAR_RE.sub(lambda m: _substitute(m, env), text)) != text:
+        text = resolved
+    return text
 
 
 def _binding(mapping: str, env) -> tuple[str, int]:

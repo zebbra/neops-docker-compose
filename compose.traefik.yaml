@@ -11,7 +11,7 @@ services:
     # 443 is published by the TLS overlays: without one there is no websecure entrypoint
     # behind it, and binding it anyway collides with whatever else owns the port.
     ports:
-      - "${NEOPS_HTTP_PORT:-80}:80"
+      - "${NEOPS_PROXY_BIND_ADDRESS:+${NEOPS_PROXY_BIND_ADDRESS}:}${NEOPS_HTTP_PORT:-80}:80"
     volumes:
       - ./generated/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./generated/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro

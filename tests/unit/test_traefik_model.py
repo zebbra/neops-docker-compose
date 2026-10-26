@@ -183,3 +183,17 @@ def test_every_cms_router_redirects_the_bare_directory_prefixes(tmp_path):
         "https://neops.example.com/graphql",
     ):
         assert pattern.search(url) is None, url
+
+
+def test_trusted_proxy_ips_are_trusted_on_every_entrypoint(tmp_path):
+    text = SHARED + "NEOPS_TRUSTED_PROXY_IPS=100.111.0.0/16, 10.0.0.1\n"
+    eps = static_config(cfg(tmp_path, text))["entryPoints"]
+    assert set(eps) == {"web", "websecure", "monitor"}
+    assert all(
+        ep["forwardedHeaders"] == {"trustedIPs": ["100.111.0.0/16", "10.0.0.1"]} for ep in eps.values()
+    )
+
+
+def test_without_trusted_proxy_ips_forwarded_headers_are_left_at_traefiks_default(tmp_path):
+    eps = static_config(cfg(tmp_path, SHARED))["entryPoints"]
+    assert all("forwardedHeaders" not in ep for ep in eps.values())

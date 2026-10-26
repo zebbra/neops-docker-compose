@@ -3,6 +3,6 @@
 services:
   traefik:
     ports:
-      - "${NEOPS_HTTPS_PORT:-443}:443"
+      - "${NEOPS_PROXY_BIND_ADDRESS:+${NEOPS_PROXY_BIND_ADDRESS}:}${NEOPS_HTTPS_PORT:-443}:443"
     volumes:
       - ${NEOPS_DATA_DIR:-./data}/traefik/acme:/acme

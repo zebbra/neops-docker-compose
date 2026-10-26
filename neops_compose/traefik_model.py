@@ -7,7 +7,7 @@ from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTPS_PORT, MONITOR_CONTAINER_PORT
 from neops_compose.routes import CORE_DIRECTORY_PREFIXES, CORE_PREFIXES, ENGINE_PUBLIC_WORKER_ROUTES
 from neops_compose.scenario import Scenario
-from neops_compose.urls import PublicUrl, monitor_entrypoint_wanted, public_urls
+from neops_compose.urls import PublicUrl, monitor_entrypoint_wanted, public_urls, trusted_proxy_ips
 
 SERVICE_URLS = {
     "web": "http://web:8080",
@@ -48,6 +48,7 @@ class TraefikConfig:
     middlewares: dict[str, dict]
     tls_mode: str | None
     acme_email: str = ""
+    trusted_ips: tuple[str, ...] = ()
 
 
 def _host_rule(url: PublicUrl) -> str:
@@ -222,6 +223,7 @@ def build_traefik(env: Env, scenario: Scenario) -> TraefikConfig:
         middlewares=dict(sorted(middlewares.items())),
         tls_mode=tls,
         acme_email=env.get("NEOPS_ACME_EMAIL") if tls == "acme" else "",
+        trusted_ips=trusted_proxy_ips(env),
     )
 
 
@@ -231,6 +233,8 @@ def static_config(cfg: TraefikConfig) -> dict:
         entry: dict = {"address": ep.address}
         if ep.redirect_to:
             entry["http"] = {"redirections": {"entryPoint": {"to": ep.redirect_to, "scheme": "https"}}}
+        if cfg.trusted_ips:
+            entry["forwardedHeaders"] = {"trustedIPs": list(cfg.trusted_ips)}
         eps[ep.name] = entry
     out: dict = {
         "entryPoints": eps,

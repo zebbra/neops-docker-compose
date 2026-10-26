@@ -17,6 +17,7 @@ from neops_compose.ports import (
     DEFAULT_HTTPS_PORT,
     DEFAULT_KEYCLOAK_PORT,
     DEFAULT_MONITOR_PORT,
+    proxy_bind_address,
 )
 from neops_compose.rules import problems
 from neops_compose.scenario import Scenario
@@ -105,11 +106,12 @@ def _monitor_port_published(env: Env, scenario: Scenario) -> bool:
 
 def _proxy_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
     if scenario.proxy == "traefik":
-        ports = [("0.0.0.0", int(env.get("NEOPS_HTTP_PORT", str(DEFAULT_HTTP_PORT))))]
+        bind = proxy_bind_address(env)
+        ports = [(bind, int(env.get("NEOPS_HTTP_PORT", str(DEFAULT_HTTP_PORT))))]
         if scenario.tls:
-            ports.append(("0.0.0.0", int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)))))
+            ports.append((bind, int(env.get("NEOPS_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)))))
         if _monitor_port_published(env, scenario):
-            ports.append(("0.0.0.0", int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT)))))
+            ports.append((bind, int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT)))))
         return ports
     bind = env.get("NEOPS_BIND_ADDRESS", "127.0.0.1")
     return [

@@ -13,6 +13,7 @@ from neops_compose.scenario import Scenario
 _HOST_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 _PATH_RE = re.compile(r"^(/[A-Za-z0-9._~-]+)*$")
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+TRUSTED_PROXY_IPS = "NEOPS_TRUSTED_PROXY_IPS"
 BASE_URLS = ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
 
 
@@ -110,3 +111,8 @@ def monitor_entrypoint_wanted(urls: dict[str, PublicUrl], scenario: Scenario) ->
     """Whether Traefik gets its `monitor` entrypoint and compose publishes NEOPS_MONITOR_PORT:
     one answer for the rendered static config, the compose fragment and the port preflight."""
     return scenario.shared_host and monitor_placement(urls) is MonitorPlacement.WEB_PORT
+
+
+def trusted_proxy_ips(env: Env) -> tuple[str, ...]:
+    """The proxies in front of the bundled Traefik whose X-Forwarded-* headers it keeps."""
+    return tuple(entry.strip() for entry in env.get(TRUSTED_PROXY_IPS).split(",") if entry.strip())
