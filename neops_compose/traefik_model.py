@@ -7,7 +7,7 @@ from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTPS_PORT, MONITOR_CONTAINER_PORT
 from neops_compose.routes import CORE_DIRECTORY_PREFIXES, CORE_PREFIXES, ENGINE_PUBLIC_WORKER_ROUTES
 from neops_compose.scenario import Scenario
-from neops_compose.urls import PublicUrl, monitor_entrypoint_wanted, public_urls
+from neops_compose.urls import PublicUrl, monitor_entrypoint_wanted, public_urls, trusted_proxy_ips
 
 SERVICE_URLS = {
     "web": "http://web:8080",
@@ -48,6 +48,7 @@ class TraefikConfig:
     middlewares: dict[str, dict]
     tls_mode: str | None
     acme_email: str = ""
+    trusted_ips: tuple[str, ...] = ()
 
 
 def _host_rule(url: PublicUrl) -> str:
@@ -117,15 +118,16 @@ def _strip_prefix(name: str, url: PublicUrl) -> tuple[dict[str, dict], tuple[str
 CMS_SLASH_MIDDLEWARE = "cms-slash"
 
 
-def cms_slash_middleware() -> dict[str, dict]:
+def cms_slash_middleware(scheme: str) -> dict[str, dict]:
     """Redirect the bare directory prefixes of core to their slashed form (neops-core #2276).
-    redirectRegex sees the whole URL, so the scheme and host are captured and kept."""
+    redirectRegex sees the whole URL, so the host is captured and kept. The scheme is the public
+    one: Traefik builds that URL from its own TLS state, which says http when TLS ends upstream."""
     alternation = "|".join(re.escape(p.lstrip("/")) for p in CORE_DIRECTORY_PREFIXES)
     return {
         CMS_SLASH_MIDDLEWARE: {
             "redirectRegex": {
-                "regex": f"^(https?://[^/]+/(?:{alternation}))$",
-                "replacement": "${1}/",
+                "regex": f"^https?://([^/]+/(?:{alternation}))$",
+                "replacement": f"{scheme}://${{1}}/",
                 "permanent": True,
             }
         }
@@ -186,7 +188,7 @@ def _core_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
     engine, middlewares = _engine_routers(layout)
     monitor, monitor_middlewares = _monitor_router(layout)
     middlewares.update(monitor_middlewares)
-    middlewares.update(cms_slash_middleware())
+    middlewares.update(cms_slash_middleware(layout.urls["NEOPS_CMS_URL"].scheme))
     return [
         layout.router("web", layout.urls["NEOPS_WEB_URL"], "web", 1),
         *_cms_routers(layout),
@@ -222,6 +224,7 @@ def build_traefik(env: Env, scenario: Scenario) -> TraefikConfig:
         middlewares=dict(sorted(middlewares.items())),
         tls_mode=tls,
         acme_email=env.get("NEOPS_ACME_EMAIL") if tls == "acme" else "",
+        trusted_ips=trusted_proxy_ips(env),
     )
 
 
@@ -231,6 +234,8 @@ def static_config(cfg: TraefikConfig) -> dict:
         entry: dict = {"address": ep.address}
         if ep.redirect_to:
             entry["http"] = {"redirections": {"entryPoint": {"to": ep.redirect_to, "scheme": "https"}}}
+        if cfg.trusted_ips:
+            entry["forwardedHeaders"] = {"trustedIPs": list(cfg.trusted_ips)}
         eps[ep.name] = entry
     out: dict = {
         "entryPoints": eps,

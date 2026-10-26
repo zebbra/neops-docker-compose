@@ -45,6 +45,7 @@ Log in at `NEOPS_WEB_URL` as `NEOPS_ADMIN_USER`.
 | `examples/traefik-tls-selfsigned.env` | bundled Traefik, a self-signed certificate minted by `./neops keys` |
 | `examples/traefik-acme.env` | bundled Traefik, Let's Encrypt |
 | `examples/traefik-shared-host-paths.env` | everything on one hostname and one port: the engine under `/engine`, the monitor under `/workflows` |
+| `examples/traefik-shared-host-upstream-tls.env` | one hostname and one plain-HTTP port behind your own TLS-terminating proxy |
 | `examples/traefik-shared-host-tls-files.env` | one hostname, the monitor on its own port instead of a path |
 | `examples/oidc-external.env` | login through your identity provider |
 | `examples/oidc-external-shared-host.env` | the same on one hostname with paths instead of subdomains |

@@ -4,7 +4,7 @@
 services:
   traefik:
     ports:
-      - "${NEOPS_HTTPS_PORT:-443}:443"
+      - "${NEOPS_PROXY_BIND_ADDRESS:+${NEOPS_PROXY_BIND_ADDRESS}:}${NEOPS_HTTPS_PORT:-443}:443"
     volumes:
       - ${NEOPS_TLS_CERT_FILE:-./certs/cert.pem}:/etc/traefik/certs/cert.pem:ro
       - ${NEOPS_TLS_KEY_FILE:-./certs/key.pem}:/etc/traefik/certs/key.pem:ro

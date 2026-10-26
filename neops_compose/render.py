@@ -5,7 +5,7 @@ from pathlib import Path
 
 from neops_compose.env import Env
 from neops_compose.paths import Paths
-from neops_compose.ports import DEFAULT_MONITOR_PORT, MONITOR_CONTAINER_PORT
+from neops_compose.ports import DEFAULT_MONITOR_PORT, MONITOR_CONTAINER_PORT, proxy_port_mapping
 from neops_compose.scenario import Scenario
 from neops_compose.secrets import private_dir, read_keycloak_client_secret, write_secret
 from neops_compose.traefik_model import build_traefik, dynamic_config, static_config
@@ -125,7 +125,7 @@ def traefik_ports(env: Env, scenario: Scenario) -> dict:
     traefik: dict = {}
     if monitor_entrypoint_wanted(public_urls(env, scenario), scenario):
         port = env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT))
-        traefik["ports"] = [f"{port}:{MONITOR_CONTAINER_PORT}"]
+        traefik["ports"] = [proxy_port_mapping(env, port, MONITOR_CONTAINER_PORT)]
     return {"services": {"traefik": traefik}}
 
 

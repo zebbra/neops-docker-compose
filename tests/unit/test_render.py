@@ -155,6 +155,14 @@ def test_traefik_ports_fragment_publishes_the_monitor_port_only_for_its_own_entr
     assert yaml.safe_load(fragment.read_text()) == {"services": {"traefik": {}}}
 
 
+def test_traefik_ports_fragment_binds_the_monitor_port_to_the_proxy_bind_address(tmp_repo):
+    _, paths = run(tmp_repo, SHARED_PORT + "NEOPS_PROXY_BIND_ADDRESS=127.0.0.1\n")
+    fragment = paths.generated / "traefik" / "ports.yaml"
+    assert yaml.safe_load(fragment.read_text()) == {
+        "services": {"traefik": {"ports": ["127.0.0.1:8443:8443"]}}
+    }
+
+
 def test_traefik_ports_fragment_exists_only_with_the_shared_host_overlay(tmp_repo):
     _, paths = run(tmp_repo, HOSTS)
     assert not (paths.generated / "traefik" / "ports.yaml").exists()

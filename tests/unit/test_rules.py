@@ -397,3 +397,85 @@ def test_shared_host_monitor_port_must_differ_from_http_port_without_tls(tmp_rep
     env, sc = make(tmp_repo, text)
     out = problems(env, sc, tmp_repo)
     assert any("NEOPS_MONITOR_PORT" in p and "NEOPS_HTTP_PORT" in p for p in out)
+
+
+UPSTREAM_TLS = """
+COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.traefik-shared-host.yaml
+COMPOSE_PATH_SEPARATOR=:
+NEOPS_WEB_URL=https://neops.example.com
+NEOPS_CMS_URL=https://neops.example.com
+NEOPS_ENGINE_URL=https://neops.example.com/engine
+NEOPS_WORKFLOWS_URL=https://neops.example.com/workflows
+NEOPS_HTTP_PORT=8080
+NEOPS_TRUSTED_PROXY_IPS=100.111.0.0/16
+NEOPS_CMS_DB_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f6
+NEOPS_ENGINE_DB_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f7
+DJANGO_SECRET_KEY=a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6
+NEOPS_ADMIN_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5f8
+"""
+
+
+def test_upstream_proxy_may_terminate_tls_in_front_of_plain_http_traefik(tmp_repo):
+    env, sc = make(tmp_repo, UPSTREAM_TLS)
+    assert problems(env, sc, tmp_repo) == []
+
+
+def test_without_trusted_proxies_https_still_needs_a_tls_overlay(tmp_repo):
+    env, sc = make(tmp_repo, UPSTREAM_TLS.replace("NEOPS_TRUSTED_PROXY_IPS=100.111.0.0/16\n", ""))
+    assert any("NEOPS_WEB_URL" in p and "http://" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_trusted_proxy_ips_must_be_addresses_or_cidrs(tmp_repo):
+    env, sc = make(tmp_repo, UPSTREAM_TLS.replace("100.111.0.0/16", "100.111.0.0/16,proxy.example.com"))
+    assert any(
+        "NEOPS_TRUSTED_PROXY_IPS" in p and "proxy.example.com" in p for p in problems(env, sc, tmp_repo)
+    )
+
+
+def test_trusted_proxy_ips_need_the_bundled_traefik(tmp_repo):
+    text = UPSTREAM_TLS.replace(
+        "compose.traefik.yaml:compose.traefik-shared-host.yaml", "compose.expose.yaml"
+    )
+    env, sc = make(tmp_repo, text)
+    assert any(
+        "NEOPS_TRUSTED_PROXY_IPS" in p and "compose.traefik.yaml" in p for p in problems(env, sc, tmp_repo)
+    )
+
+
+def test_behind_an_upstream_proxy_the_monitor_cannot_have_its_own_port(tmp_repo):
+    env, sc = make(
+        tmp_repo,
+        UPSTREAM_TLS.replace("https://neops.example.com/workflows", "https://neops.example.com:8443"),
+    )
+    assert any(
+        "NEOPS_WORKFLOWS_URL" in p and "NEOPS_TRUSTED_PROXY_IPS" in p for p in problems(env, sc, tmp_repo)
+    )
+
+
+def test_behind_an_upstream_proxy_every_url_shares_the_web_scheme(tmp_repo):
+    env, sc = make(
+        tmp_repo, UPSTREAM_TLS.replace("https://neops.example.com/engine", "http://neops.example.com/engine")
+    )
+    assert any("NEOPS_ENGINE_URL" in p and "https://" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_behind_an_upstream_proxy_a_monitor_port_is_still_refused(tmp_repo):
+    env, sc = make(tmp_repo, UPSTREAM_TLS + "NEOPS_MONITOR_PORT=8443\n")
+    assert any("NEOPS_MONITOR_PORT" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_trusted_proxies_with_a_tls_overlay_keep_the_strict_url_rules(tmp_repo):
+    env, sc = make(
+        tmp_repo,
+        GOOD.replace("https://cms.neops.example.com", "https://cms.neops.example.com:9443")
+        + "NEOPS_TRUSTED_PROXY_IPS=10.0.0.0/8,fd00::/8\n",
+    )
+    assert any("NEOPS_CMS_URL" in p and "NEOPS_HTTPS_PORT" in p for p in problems(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize(
+    "bind,ok", [("100.111.140.169", True), ("::1", True), ("[::1]", False), ("wt0", False)]
+)
+def test_proxy_bind_address_must_be_a_plain_ip(tmp_repo, bind, ok):
+    env, sc = make(tmp_repo, UPSTREAM_TLS + f"NEOPS_PROXY_BIND_ADDRESS={bind}\n")
+    assert (problems(env, sc, tmp_repo) == []) is ok

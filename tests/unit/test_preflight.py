@@ -107,6 +107,13 @@ def test_required_ports_by_scenario(tmp_path):
     )
     assert traefik == [("0.0.0.0", 8880), ("0.0.0.0", 443), ("0.0.0.0", 8443)]
 
+    bound = ports_for(
+        tmp_path,
+        "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml\n"
+        "NEOPS_PROXY_BIND_ADDRESS=100.111.140.169\n",
+    )
+    assert bound == [("100.111.140.169", 80), ("100.111.140.169", 443)]
+
     expose = ports_for(tmp_path, "COMPOSE_FILE=compose.yaml:compose.expose.yaml\nNEOPS_CMS_PORT=9000\n")
     assert expose == [
         ("127.0.0.1", 8080),

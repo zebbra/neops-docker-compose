@@ -125,6 +125,27 @@ Two shapes are valid for `NEOPS_WORKFLOWS_URL` here:
 
 Setting `NEOPS_MONITOR_PORT` with the path shape is refused: nothing would listen on it.
 
+### Behind a proxy that terminates TLS
+
+When another proxy already terminates TLS for the hostname and forwards plain HTTP to one
+port on this host, run the bundled Traefik without a TLS overlay and name that proxy in
+`NEOPS_TRUSTED_PROXY_IPS` (`examples/traefik-shared-host-upstream-tls.env`):
+
+```
+COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.traefik-shared-host.yaml
+NEOPS_WEB_URL=https://neops.example.com                # the upstream proxy's URLs
+NEOPS_HTTP_PORT=8080                                   # where the upstream proxy forwards to
+NEOPS_PROXY_BIND_ADDRESS=10.0.0.5                      # bind only where the upstream proxy connects
+NEOPS_TRUSTED_PROXY_IPS=10.0.0.0/24                    # the address Traefik sees it connect from
+```
+
+The URLs are then the upstream proxy's: `check` accepts `https` and any port in them, and the
+monitor must sit under a path, because the upstream proxy reaches one port only. Traefik keeps
+the `X-Forwarded-Proto` that proxy sends, so the CMS sees `https` and secure cookies work. It
+also keeps `X-Real-IP`, which core rate-limits by, so the upstream proxy must overwrite it
+with the client's address, or every client shares one limit. Bind `NEOPS_PROXY_BIND_ADDRESS`
+to an address only that proxy can reach: anything else that connects can claim to be it.
+
 Whichever mode you pick, `NEOPS_WORKFLOWS_URL` must never be the bare origin of `NEOPS_WEB_URL`.
 The web client treats a workflow-manager URL equal to its own origin as "no workflow manager"
 and only relays its session token to a monitor on another origin; under a path of its own
