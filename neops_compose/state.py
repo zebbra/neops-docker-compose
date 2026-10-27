@@ -104,8 +104,10 @@ class State:
     def record_api_key(self, key_id: int, app: str) -> None:
         self.api_keys.append({"id": key_id, "app": app, "at": _now()})
 
-    def record_up(self, images: dict[str, str], doctor_ok: bool) -> None:
+    def record_up(self, images: dict[str, str], doctor_ok: bool, search_schema: str | None = None) -> None:
         self.last_up = {"at": _now(), "images": images, "doctor_ok": doctor_ok}
+        if search_schema is not None:
+            self.last_up["search_schema"] = search_schema
 
     def record_doctor(self, ok: bool) -> None:
         if self.last_up is not None:

@@ -16,7 +16,7 @@ ARCHIVE_NAME = re.compile(r"\d{8}T\d{6}Z")
 RESTORE_NOTE = (
     "Elasticsearch is not backed up. cms-init creates the indices on every start, so after a "
     "restore only their contents are missing: manage.py elastic_index --populate --models "
-    "core.Device core.Interface"
+    "core.Device core.Interface, plus --sync-lookups when elastic_index --help lists it"
 )
 
 
