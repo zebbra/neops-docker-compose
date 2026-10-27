@@ -168,7 +168,8 @@ def install(ctx: Ctx, connect: str | None = None, insecure: bool = False) -> Non
     ctx.log("pulling images")
     ctx.compose.pull()
     _start(ctx)
-    _finish(ctx, connect, insecure, search_index.read_schema(ctx))
+    schema = search_index.refresh(ctx, ctx.state.last_up, images_by_service(ctx.compose))
+    _finish(ctx, connect, insecure, schema)
 
 
 def _guard_downgrade(ctx: Ctx, allow_downgrade: bool) -> None:
@@ -188,9 +189,7 @@ def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, inse
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()
     _start(ctx)
-    schema = search_index.read_schema(ctx)
-    if search_index.is_stale(ctx.state.last_up, images_by_service(ctx.compose), schema):
-        search_index.rebuild(ctx)
+    schema = search_index.refresh(ctx, ctx.state.last_up, images_by_service(ctx.compose))
     _finish(ctx, connect, insecure, schema)
 
 
