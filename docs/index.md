@@ -79,7 +79,6 @@ under `generated/` is hand-edited; a stopped-and-restarted `./neops up` rebuilds
 Redis is the only stateful service with no directory of its own, on purpose: it holds Celery's
 work queue and Django's cache, and losing it on a wipe costs at most the tasks in flight.
 Elasticsearch is derived data; it is not part of `./neops backup`. Only its contents have to be
-rebuilt after a restore, with `manage.py elastic_index --populate --models core.Device
-core.Interface` (plus `--sync-lookups` on a core that has it). The indices themselves need nothing: `cms-init` creates them on every start, and
-`--create` afterwards fails with `resource_already_exists_exception` (see
-[Operations](30-operations.md#restore)).
+rebuilt after a restore, with `manage.py elastic_index --rebuild --force`. The indices themselves
+need nothing: `cms-init` creates them on every start, and `--create` afterwards fails with
+`resource_already_exists_exception` (see [Operations](30-operations.md#restore)).

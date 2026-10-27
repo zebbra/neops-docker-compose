@@ -27,7 +27,10 @@ COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml
 
 The Celery worker and beat containers of core's 1.0 task path are not part of any scenario by
 default: a 2.0 deployment runs its automation through the engine and the worker SDK, and the CMS
-indexes Elasticsearch synchronously without them. A deployment that still runs 1.0 tasks or
+writes Elasticsearch on every save without them. What they add is the retry: a lock request
+first re-indexes unlocks whose Elasticsearch write failed, but devices, interfaces, groups and
+clients whose write failed are re-indexed only by a sweep that `cms-beat` runs every minute (by
+hand: `manage.py resync_unsynced_rows`). A deployment that still runs 1.0 tasks or
 cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with the next
 `./neops up`; removing the line and running `./neops down` then `./neops up` stops them again.
 `examples/local-legacy.env` is `examples/local.env` with that line: a task executed from the
