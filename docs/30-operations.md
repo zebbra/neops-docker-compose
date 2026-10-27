@@ -170,8 +170,12 @@ are certain the target schema is compatible.
 
 `up` rebuilds the search index once the stack is healthy when Elasticsearch's image differs from
 the one the last successful `up` ran, or when `neops-core` reports a different index layout
-(`manage.py elastic_index --schema-hash`) than it recorded then. A core upgrade that leaves the
-indices alone costs no rebuild, and a core too old to report its layout never triggers one. The
+(`manage.py elastic_index --schema-hash`) than it recorded then. That hash covers index names,
+mappings and settings, including the `ELASTICSEARCH_DSL_INDEX_*` values in `compose.yaml`'s
+`x-core-env` (shards, replicas, field limit), so changing one of those also rebuilds. It does not
+cover what core writes *into* the indices: a core release that changes indexed content without
+changing the layout rebuilds only if it bumps its own content version, which is part of the hash.
+A core too old to report a hash never triggers a rebuild. The
 rebuild is `manage.py elastic_index --rebuild`, plus `--sync-lookups` on a core that has ES|QL
 lookup indices, and its output streams to your terminal. It deletes the indices before it
 recreates them, so device and interface searches fail with `index_not_found_exception` for a
