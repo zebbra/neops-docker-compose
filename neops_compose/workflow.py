@@ -20,6 +20,7 @@ from neops_compose.rules import DISABLE_SECURITY_CHECKS
 
 CMS_FIRST = ("postgres-cms", "redis", "elasticsearch", "cms-init", "cms")
 WORKER_GRACE_SECONDS = 90  # the worker registers ~26 function blocks, one request each, after a start
+SEARCH_INDEX_OWNERS = ("cms", "elasticsearch")
 
 
 class Downgrade(RuntimeError):
@@ -180,6 +181,26 @@ def _guard_downgrade(ctx: Ctx, allow_downgrade: bool) -> None:
     guard_downgrade(ctx.state.last_up, {"cms": core_image}, allow_downgrade)
 
 
+def search_index_stale(last_up: dict | None, running: dict[str, str]) -> bool:
+    """The indices carry mappings written by one neops-core release into one Elasticsearch
+    version; after either image moves they are rebuilt rather than trusted. A fresh install
+    has nothing to rebuild: cms-init has just created them empty."""
+    if not last_up:
+        return False
+    before = last_up.get("images", {})
+    return any(before.get(service) != running.get(service) for service in SEARCH_INDEX_OWNERS)
+
+
+def rebuild_search_index(ctx: Ctx) -> None:
+    """`--sync-lookups` exists only in a neops-core that has ES|QL lookup indices."""
+    manage = ("python", "manage.py", "elastic_index")
+    flags = ["--rebuild", "--force"]
+    if "--sync-lookups" in ctx.compose.exec("cms", *manage, "--help"):
+        flags.append("--sync-lookups")
+    ctx.log("neops-core or Elasticsearch changed since the last start: rebuilding the search index")
+    ctx.compose.exec("cms", *manage, *flags)
+
+
 def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, insecure: bool = False) -> None:
     check(ctx, check_images=False)
     _guard_downgrade(ctx, allow_downgrade)
@@ -188,6 +209,8 @@ def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, inse
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()
     _start(ctx)
+    if search_index_stale(ctx.state.last_up, images_by_service(ctx.compose)):
+        rebuild_search_index(ctx)
     _finish(ctx, connect, insecure)
 
 

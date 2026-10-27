@@ -32,7 +32,7 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `postgres-engine` | `postgres:16-alpine` | database for the workflow engine (`postgres`/`neops-workflow`) |
 | `postgres-keycloak` | `postgres:16-alpine` | database for Keycloak (keycloak overlay only) |
 | `redis` | `redis:7-alpine` | Celery broker, Django cache, channel layer; ephemeral by design |
-| `elasticsearch` | `elasticsearch:8.9.2` | search index behind the CMS device/interface views |
+| `elasticsearch` | `elasticsearch:8.19.23` | search index behind the CMS device/interface views |
 | `cms-init` | `neops-core` | one-shot: Django migrations, create the Elasticsearch indices, create the superuser |
 | `cms` | `neops-core` | the CMS web process (network CMS + GraphQL API at `/graphql`) |
 | `cms-worker` | `neops-core` | Celery worker for the 1.0 task path; off unless `COMPOSE_PROFILES=cms-tasks` |

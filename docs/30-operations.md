@@ -167,6 +167,20 @@ last successful `up` recorded: Django migrations are not reversible, so a downgr
 rather than run and corrupted. Restore a backup instead, or pass `--allow-downgrade` only if you
 are certain the target schema is compatible.
 
+When the `neops-core` or the Elasticsearch image differs from the one the last successful `up`
+ran, `up` rebuilds the search index once the stack is healthy (`manage.py elastic_index --rebuild`,
+plus `--sync-lookups` on a core that has ES|QL lookup indices). Device and interface search returns
+partial results until it finishes. If the rebuild fails, `up` stops before recording the start, so
+the next `./neops up` tries it again. To run it by hand:
+
+```bash
+./neops compose -- exec cms python manage.py elastic_index --rebuild --force
+```
+
+Elasticsearch upgrades its data directory in place on the first start of a newer image and cannot
+open it with an older one afterwards. Going back to a previous release therefore needs
+`data/elasticsearch` emptied first; it is derived data, and the rebuild above refills it.
+
 ## Purge
 
 ```bash

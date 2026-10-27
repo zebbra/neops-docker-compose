@@ -251,6 +251,78 @@ def test_up_never_reaches_the_images_check_that_needs_a_rendered_generated_tree(
     assert calls == []
 
 
+ES_OLD = "docker.elastic.co/elasticsearch/elasticsearch:8.9.2"
+ES_NEW = "docker.elastic.co/elasticsearch/elasticsearch:8.19.23"
+CORE = "quay.io/zebbra/neops-core:2.1.0"
+
+
+def test_the_search_index_is_stale_when_core_or_elasticsearch_moved():
+    last = {"images": {"cms": CORE, "elasticsearch": ES_OLD, "engine": "engine:1"}}
+    assert workflow.search_index_stale(last, {"cms": CORE, "elasticsearch": ES_NEW, "engine": "engine:1"})
+    assert workflow.search_index_stale(
+        last, {"cms": "quay.io/zebbra/neops-core:2.2.0", "elasticsearch": ES_OLD}
+    )
+    assert not workflow.search_index_stale(last, {"cms": CORE, "elasticsearch": ES_OLD, "engine": "engine:2"})
+    assert not workflow.search_index_stale(None, {"cms": CORE, "elasticsearch": ES_NEW})
+
+
+class IndexedCompose(FakeCompose):
+    def __init__(self, help_text: str):
+        super().__init__(CORE)
+        self.help_text = help_text
+        self.execs: list[tuple[str, ...]] = []
+
+    def ps(self):
+        return super().ps() + [{"Service": "elasticsearch", "Image": ES_NEW, "State": "running"}]
+
+    def exec(self, service, *cmd, env=None):
+        self.execs.append((service, *cmd))
+        return self.help_text if "--help" in cmd else ""
+
+
+def test_up_rebuilds_the_search_index_after_elasticsearch_moved(tmp_path, monkeypatch):
+    order: list[str] = []
+    _stub_up(monkeypatch, order)
+    compose = IndexedCompose("--rebuild --sync-lookups")
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    ctx.state.record_up({"cms": CORE, "elasticsearch": ES_OLD}, doctor_ok=True)
+
+    workflow.up(ctx)
+
+    assert compose.execs[-1] == (
+        "cms",
+        "python",
+        "manage.py",
+        "elastic_index",
+        "--rebuild",
+        "--force",
+        "--sync-lookups",
+    )
+    assert order[-1] == "finish"
+
+
+def test_the_rebuild_leaves_out_lookup_sync_on_a_core_without_it(tmp_path, monkeypatch):
+    _stub_up(monkeypatch, [])
+    compose = IndexedCompose("--rebuild --populate")
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    ctx.state.record_up({"cms": CORE, "elasticsearch": ES_OLD}, doctor_ok=True)
+
+    workflow.up(ctx)
+
+    assert compose.execs[-1] == ("cms", "python", "manage.py", "elastic_index", "--rebuild", "--force")
+
+
+def test_up_leaves_the_search_index_alone_when_nothing_it_depends_on_moved(tmp_path, monkeypatch):
+    _stub_up(monkeypatch, [])
+    compose = IndexedCompose("--rebuild --sync-lookups")
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    ctx.state.record_up({"cms": CORE, "elasticsearch": ES_NEW}, doctor_ok=True)
+
+    workflow.up(ctx)
+
+    assert compose.execs == []
+
+
 def _selfsigned_env(host: str) -> str:
     return (
         "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml\n"
