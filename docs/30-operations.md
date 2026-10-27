@@ -88,6 +88,7 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 
 # 3. Bring up the rest and rebuild the search index (not part of the backup).
 ./neops up
+# On a core whose `elastic_index --help` lists --sync-lookups, add it: only it fills the lookup indices.
 ./neops compose -- exec cms python manage.py elastic_index --populate --models core.Device core.Interface
 
 # 4. Confirm.
@@ -166,6 +167,24 @@ git pull        # or: git checkout <next release tag>
 last successful `up` recorded: Django migrations are not reversible, so a downgrade is refused
 rather than run and corrupted. Restore a backup instead, or pass `--allow-downgrade` only if you
 are certain the target schema is compatible.
+
+`up` rebuilds the search index once the stack is healthy when Elasticsearch's image differs from
+the one the last successful `up` ran, or when `neops-core` reports a different index layout
+(`manage.py elastic_index --schema-hash`) than it recorded then. A core upgrade that leaves the
+indices alone costs no rebuild, and a core too old to report its layout never triggers one. The
+rebuild is `manage.py elastic_index --rebuild`, plus `--sync-lookups` on a core that has ES|QL
+lookup indices, and its output streams to your terminal. It deletes the indices before it
+recreates them, so device and interface searches fail with `index_not_found_exception` for a
+moment and then return partial results until it finishes. If the rebuild fails, `up` stops before
+recording the start, so the next `./neops up` tries it again. To run it by hand:
+
+```bash
+./neops compose -- exec cms python manage.py elastic_index --rebuild --force
+```
+
+Elasticsearch upgrades its data directory in place on the first start of a newer image and cannot
+open it with an older one afterwards. Going back to a previous release therefore needs
+`data/elasticsearch` emptied first; it is derived data, and the rebuild above refills it.
 
 ## Purge
 

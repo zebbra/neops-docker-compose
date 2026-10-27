@@ -32,7 +32,7 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `postgres-engine` | `postgres:16-alpine` | database for the workflow engine (`postgres`/`neops-workflow`) |
 | `postgres-keycloak` | `postgres:16-alpine` | database for Keycloak (keycloak overlay only) |
 | `redis` | `redis:7-alpine` | Celery broker, Django cache, channel layer; ephemeral by design |
-| `elasticsearch` | `elasticsearch:8.9.2` | search index behind the CMS device/interface views |
+| `elasticsearch` | `elasticsearch:8.19.23` | search index behind the CMS device/interface views |
 | `cms-init` | `neops-core` | one-shot: Django migrations, create the Elasticsearch indices, create the superuser |
 | `cms` | `neops-core` | the CMS web process (network CMS + GraphQL API at `/graphql`) |
 | `cms-worker` | `neops-core` | Celery worker for the 1.0 task path; off unless `COMPOSE_PROFILES=cms-tasks` |
@@ -80,6 +80,6 @@ Redis is the only stateful service with no directory of its own, on purpose: it 
 work queue and Django's cache, and losing it on a wipe costs at most the tasks in flight.
 Elasticsearch is derived data; it is not part of `./neops backup`. Only its contents have to be
 rebuilt after a restore, with `manage.py elastic_index --populate --models core.Device
-core.Interface`. The indices themselves need nothing: `cms-init` creates them on every start, and
+core.Interface` (plus `--sync-lookups` on a core that has it). The indices themselves need nothing: `cms-init` creates them on every start, and
 `--create` afterwards fails with `resource_already_exists_exception` (see
 [Operations](30-operations.md#restore)).

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
-from neops_compose import migrate, passwords, preflight, secrets, token
+from neops_compose import migrate, passwords, preflight, search_index, secrets, token
 from neops_compose.compose import Compose
 from neops_compose.context import Ctx
 from neops_compose.doctor import all_ok as doctor_ok
@@ -133,10 +133,10 @@ def doctor(
     return doctor_ok(probes)
 
 
-def _finish(ctx: Ctx, connect: str | None, insecure: bool) -> None:
+def _finish(ctx: Ctx, connect: str | None, insecure: bool, search_schema: str | None) -> None:
     """The images are recorded before doctor runs: whatever doctor does, the next up must
     compare against what is deployed now, not against the release before it."""
-    ctx.state.record_up(images_by_service(ctx.compose), doctor_ok=False)
+    ctx.state.record_up(images_by_service(ctx.compose), doctor_ok=False, search_schema=search_schema)
     ctx.save_state()
     if not doctor(ctx, connect, insecure, worker_grace=WORKER_GRACE_SECONDS):
         raise Blocked("the stack is up but doctor reports failures")
@@ -168,7 +168,7 @@ def install(ctx: Ctx, connect: str | None = None, insecure: bool = False) -> Non
     ctx.log("pulling images")
     ctx.compose.pull()
     _start(ctx)
-    _finish(ctx, connect, insecure)
+    _finish(ctx, connect, insecure, search_index.read_schema(ctx))
 
 
 def _guard_downgrade(ctx: Ctx, allow_downgrade: bool) -> None:
@@ -188,7 +188,10 @@ def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, inse
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()
     _start(ctx)
-    _finish(ctx, connect, insecure)
+    schema = search_index.read_schema(ctx)
+    if search_index.is_stale(ctx.state.last_up, images_by_service(ctx.compose), schema):
+        search_index.rebuild(ctx)
+    _finish(ctx, connect, insecure, schema)
 
 
 def purge(ctx: Ctx, confirmed: str) -> None:
