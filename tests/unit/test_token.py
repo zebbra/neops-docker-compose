@@ -244,7 +244,7 @@ def test_the_access_token_script_works_against_a_core_before_principal_type(caps
     assert "TOKEN=old.jwt" in _run_access_token_script(_TokenService220(), capsys, monkeypatch)
 
 
-def test_the_access_token_script_names_a_service_principal_for_a_core_that_requires_one(capsys, monkeypatch):
+def test_the_access_token_script_names_a_user_principal_for_a_core_that_requires_one(capsys, monkeypatch):
     service = _TokenService221()
     assert "TOKEN=new.jwt" in _run_access_token_script(service, capsys, monkeypatch)
-    assert service.principal_type == "service"
+    assert service.principal_type == "user"

@@ -19,7 +19,7 @@ from neops_compose.rotate import public_hosts
 from neops_compose.rules import DISABLE_SECURITY_CHECKS
 
 CMS_FIRST = ("postgres-cms", "redis", "elasticsearch", "cms-init", "cms")
-WORKER_GRACE_SECONDS = 90  # the worker registers ~26 function blocks, one request each, after a start
+WORKER_GRACE_SECONDS = 90  # the worker registers each of its function blocks with one request after a start
 
 
 class Downgrade(RuntimeError):

@@ -40,7 +40,7 @@ else:
     service = get_token_service()
     # neops-core 2.2.1-beta.4 requires principal_type, earlier cores reject it.
     accepted = inspect.signature(service.issue_access_token).parameters
-    principal = {'principal_type': 'service'} if 'principal_type' in accepted else {}
+    principal = {'principal_type': 'user'} if 'principal_type' in accepted else {}
     token = service.issue_access_token(
         user_id=user.id,
         username=user.username,
