@@ -1,8 +1,8 @@
 """loadgen.py's parsers and pacing, and the harness's accounting of its lines, without Docker or the SDK.
 
-The SDK messages below are copied from neops-worker-sdk-py (neops_worker_sdk/logger/push/pipeline.py,
-delivery.py, utils/retry.py, worker/worker_registration.py, registry/registry.py): loadgen counts
-what the SDK did by them, so a reworded SDK message has to fail here, not pass silently in a run.
+The SDK messages below are samples of what neops-worker-sdk-py logs. They test loadgen's parsing
+only: a reworded SDK message cannot fail here. loadgen's `sdk_refusal` is what reads the SDK, at
+the start of a real run.
 """
 
 import asyncio
@@ -65,6 +65,35 @@ def test_the_sdk_messages_are_counted_into_the_summary():
     assert (summary.worker_id, summary.dropped, summary.unpushed, summary.refused) == (WORKER, 1234, 7, 5)
     assert (summary.lease_refused, summary.retry_statuses, summary.otherwise_lost) == (1, [503], 13)
     assert notices.registered
+
+
+def sdk_sources(**reworded: str) -> dict[str, str]:
+    """Each module's source as the SDK writes the quiet messages, with `reworded` ones replaced."""
+    sources: dict[str, str] = {}
+    for name, message in loadgen.QUIET_NOTICES.items():
+        text = reworded.get(name, "{n}".join(message.pieces))
+        sources[message.module] = sources.get(message.module, "") + f'_log.warning(f"{text}")\n'
+    return sources
+
+
+def test_loadgen_runs_on_an_sdk_that_still_logs_every_quiet_message():
+    assert loadgen.sdk_refusal(sdk_sources().get) is None
+
+
+@pytest.mark.parametrize("name", list(loadgen.QUIET_NOTICES))
+def test_loadgen_refuses_an_sdk_that_reworded_a_message_it_would_count_as_zero(name):
+    reason = loadgen.sdk_refusal(sdk_sources(**{name: "something else {n}"}).get)
+    assert reason and name in reason
+
+
+def test_loadgen_refuses_an_sdk_without_the_module_that_logs_a_message():
+    sources = sdk_sources()
+    del sources[loadgen.QUIET_NOTICES["lease_refused"].module]
+    assert "lease_refused" in loadgen.sdk_refusal(sources.get)
+
+
+def test_a_module_the_sdk_does_not_have_has_no_source():
+    assert loadgen.sdk_source("neops_worker_sdk_that_does_not_exist.push") == ""
 
 
 def test_drops_add_up_across_flushes_and_retries_count_each_status_once():

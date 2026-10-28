@@ -314,8 +314,13 @@ burst is out and the engine answers `/health`, loadgen waits 30 s and sends itse
 SDK's graceful shutdown pushes the rest. It prints `LOADGEN READY`, `LOADGEN BURST` and, at exit,
 `LOADGEN SUMMARY` with the worker id, the lines sent, and what the SDK logged about lines it did
 not deliver: dropped (`dropped N log lines (buffer full)`), unpushed at exit, refused by the
-engine, lease refusals, and the HTTP statuses it retried. Those messages are copied into
-`tests/unit/test_loadgen.py`, so a reworded SDK message fails there.
+engine, lease refusals, and the HTTP statuses it retried. loadgen recognises those messages by
+their wording, and an SDK that rewords one changes the result in one of two ways. A reworded
+registration, retry or drop message fails the run loudly: no `READY`, no retry status, no drop
+warning in the store. A reworded unpushed, refused or lease message would count 0 without a sound,
+so before it starts loadgen reads the installed SDK's source and refuses with exit 2 when one of
+those three (`loadgen.QUIET_NOTICES`) is no longer in it. `tests/unit/test_loadgen.py` only
+tests the parsing against sample messages and cannot notice an SDK change.
 
 The driver refuses any directory but a harness clone, with the same guard as `chaos.py`. The
 accounting reads the loadgen worker's records straight from VictoriaLogs (`process` is the worker

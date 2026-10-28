@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.util
 import json
 import os
 import re
@@ -32,6 +33,7 @@ import time
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 BURST_PACKAGE = "fb.e2e.neops.io"
@@ -55,6 +57,33 @@ ENGINE_HEALTH = "/health"
 # Without a job for this long past the burst's length, the worker stops on its own.
 IDLE_LIMIT_SECONDS = 300.0
 
+
+@dataclass(frozen=True)
+class SdkMessage:
+    """An SDK log message as its f-string's literal pieces, a number between each two."""
+
+    module: str
+    pieces: tuple[str, ...]
+
+    @property
+    def pattern(self) -> re.Pattern[str]:
+        return re.compile("^" + r"(\d+)".join(map(re.escape, self.pieces)))
+
+    def logged_in(self, source: str) -> bool:
+        return all(piece in source for piece in self.pieces)
+
+
+# A reworded one of these would count 0 without a sound, so loadgen checks the SDK still logs them.
+# The rest fail a run loudly: no READY, no retry status, no drop warning in the store.
+QUIET_NOTICES: dict[str, SdkMessage] = {
+    "unpushed": SdkMessage(
+        "neops_worker_sdk.logger.push.pipeline", ("", " log line(s) were not pushed to the engine.")
+    ),
+    "refused": SdkMessage("neops_worker_sdk.logger.push.delivery", ("The engine refused ", " log line(s)")),
+    "lease_refused": SdkMessage(
+        "neops_worker_sdk.logger.push.delivery", ("The engine refuses log lines of job ",)
+    ),
+}
 # What the SDK logs about its own work, read by the observer sink (neops_worker_sdk/logger/push,
 # neops_worker_sdk/worker/worker_registration.py, neops_worker_sdk/registry/registry.py).
 DROPPED_PATTERN = re.compile(r"^dropped (\d+) log lines \(buffer full\)$")
@@ -62,9 +91,7 @@ SDK_NOTICES: dict[str, re.Pattern[str]] = {
     "worker_id": re.compile(r"^Worker registered \(uuid=([0-9a-fA-F-]+)"),
     "registered": re.compile(r"^All \d+ function block\(s\) registered successfully"),
     "dropped": DROPPED_PATTERN,
-    "unpushed": re.compile(r"^(\d+) log line\(s\) were not pushed to the engine\."),
-    "refused": re.compile(r"^The engine refused (\d+) log line\(s\)"),
-    "lease_refused": re.compile(r"^The engine refuses log lines of job "),
+    **{name: message.pattern for name, message in QUIET_NOTICES.items()},
     "retry": re.compile(r"^Log push failed \(\w+: \((\d{3})\)"),
 }
 
@@ -221,6 +248,26 @@ def refusal(environ: Mapping[str, str]) -> str | None:
     return None
 
 
+def sdk_source(module: str) -> str:
+    try:
+        spec = importlib.util.find_spec(module)
+    except ModuleNotFoundError:
+        return ""
+    return Path(spec.origin).read_text() if spec and spec.origin else ""
+
+
+def sdk_refusal(source_of: Callable[[str], str | None]) -> str | None:
+    """Why the installed SDK would make loadgen's counts lie, or None."""
+    gone = [
+        name
+        for name, message in QUIET_NOTICES.items()
+        if not message.logged_in(source_of(message.module) or "")
+    ]
+    if not gone:
+        return None
+    return f"refusing: the SDK no longer logs the {', '.join(gone)} message(s); update loadgen.QUIET_NOTICES"
+
+
 def prepare_environment(environ: MutableMapping[str, str]) -> None:
     """Read by the SDK when it is imported: no function block directory, so the burst block is
     the only one this worker registers, and its own name in the engine's worker list."""
@@ -325,6 +372,9 @@ def main(argv: list[str] | None = None) -> int:
     prepare_environment(os.environ)
     import neops_worker_sdk.cli.neops_worker  # noqa: F401  configures loguru before the observer joins
 
+    if reason := sdk_refusal(sdk_source):
+        print(reason, file=sys.stderr)
+        return 2
     notices = Notices()
     observe_sdk(notices)
     burst = Burst(args.rate, args.seconds)
