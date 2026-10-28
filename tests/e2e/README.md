@@ -9,7 +9,11 @@ run it.
 make e2e SCENARIO=traefik-tls-selfsigned
 uv run python tests/e2e/run_scenario.py external-proxy --port-base 18000
 uv run python tests/e2e/run_scenario.py traefik-tls-selfsigned --keep --workdir /tmp/neops-e2e/tls
+uv run python tests/e2e/run_scenario.py tests/e2e/examples/loki.env --port-base 22500
 ```
+
+The scenario is a name from `examples/`, a name from `tests/e2e/examples/` (test-only
+scenarios such as `loki`), or the path of an `.env` file.
 
 A run takes 5 to 10 minutes once the images are cached; the first one pulls about 3 GB.
 `cms-init` on a cold Elasticsearch takes roughly two minutes and the CMS healthcheck has a
@@ -31,7 +35,8 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 | `cms-worker` and `cms-beat` run and are healthy under `COMPOSE_PROFILES=cms-tasks`, and do not exist without it | all |
 | a device created by hand on the seeded `Linux Generic` platform, a `generic-static-facts` task executed on it over GraphQL, run by `cms-worker` to `SUCCESSFUL`, and the fact read back from the device | `cms-tasks` profile (`local-legacy`) |
 | every exporter, VictoriaMetrics, vmalert and Grafana run; Grafana answers `/api/health` on its public URL; every scrape target reports `up` | metrics |
-| VictoriaLogs runs and answers the engine, the worker container cannot reach it, Grafana provisions the `victorialogs` datasource, the engine's `GET /version` reports `logs.state` `ok`, and the worker's own lines come back from `GET /workers/:uuid/logs` | logs (`logs`, `metrics-logs`) |
+| the log store runs and answers the engine (VictoriaLogs `/health`, Loki `/ready`), the worker container cannot reach it, Grafana provisions the VictoriaLogs datasource, the engine's `GET /version` reports `logs.state` `ok`, a `group_save_fact` run (`workflows.py`) completes and `GET /workflow-execution/:id/logs?includeCore=true` returns its engine, worker and core lock and unlock lines and no other run's, `GET /workers` answers the admin 200, and the worker's own lines come back from `GET /workers/:uuid/logs` | a log store: `logs`, `metrics-logs` (VictoriaLogs), `loki` (Loki, no VictoriaLogs check) |
+| the engine reports no queryable store and a log read answers 503 `LOGS_NOT_CONFIGURED` | no log store |
 | `./neops backup` writes `cms.dump` and `engine.dump` | all |
 | a second `install` mints no second API key | all |
 
@@ -46,8 +51,19 @@ Installs `examples/metrics.env` as the release `FROM` shipped it, with
 clone, as `git pull` would, and runs `./neops up`. It asserts that `./neops check` passes on the
 old `.env` with exactly one `WARNING:` line, that `up` succeeds with doctor green, that migration
 `0003` is recorded, that `.env` names `compose.grafana.yaml` before `compose.metrics.yaml` and
-carries `NEOPS_LOG_RETENTION=90d`, and that Grafana still lists the dashboards it had before. Run it
-on every release branch before tagging.
+carries `NEOPS_LOG_RETENTION=90d` and `NEOPS_LOG_BACKEND=db`, and that Grafana still lists the
+dashboards it had before. Run it on every release branch before tagging.
+
+Any other scenario upgrades the same way: `run_scenario.py local --upgrade-from <ref>` installs the
+`local` shape the live deployment runs, and there `check` must warn about nothing and
+`COMPOSE_FILE` must come out unchanged. The older release's doctor may only know the job-route
+deny probe, so its install warns once, not twice.
+
+`--hold-job` adds chaos C12b to an upgrade run (`upgrade_hook.py`): on the old install it stops
+the worker, starts the e2e workflow and polls its first job on the stopped worker's behalf, through
+the engine container, so the job is held but never reported. After the upgrade a result for it must
+be refused `403 LEASE_MISSING`, and the run must end failed once the engine cleans up the worker
+that vanished. The held job is recorded in `<workdir>/held-job.json`.
 
 VictoriaMetrics publishes no host port, so the scrape-target assertion asks it over
 `wget` inside its own container and waits for every target to have been scraped once
@@ -108,6 +124,53 @@ The harness writes a `compose.override.yaml` into the clone and appends it to `C
 It disables Elasticsearch's disk allocation thresholds, because a host above the 95% flood
 stage turns every index read-only and `cms-init` then fails in a way that has nothing to do
 with the change under test. The file is gitignored and is exactly what it is there for.
+
+A test-only overlay reaches Compose through the same file. `check` refuses any unshipped file
+in `COMPOSE_FILE`, so a scenario names its overlays in the harness-only key `E2E_OVERLAYS`,
+which never reaches the clone's `.env`, and the harness merges them into
+`compose.override.yaml`; their relative paths therefore resolve from the clone root. The Loki
+scenario (`tests/e2e/examples/loki.env`) works this way: `compose.loki-test.yaml` adds
+`grafana/loki` on its own `logs` network, and the scenario's `.env` sets `NEOPS_LOG_BACKEND=loki`
+and `NEOPS_LOG_URL`, the path an operator with their own Loki takes. Loki keeps its default
+`discover_service_name` and `discover_log_levels` on purpose: the engine must drop the
+`service_name` and `detected_level` keys they add, and S12 and the key-set diff prove it does.
+`make compose-config` covers the e2e scenarios too.
+
+## Workflow runs
+
+`workflows.py <deployment dir>` publishes `wf.e2e.neops.io/group_save_fact` (one step,
+`fb.base.neops.io/group_save_fact:0.1.0`, `increment` so a rerun never answers 409), runs it on the
+device group `e2e-log-run` and polls it until it settles. The engine locks and unlocks the group in
+the CMS, so one run carries engine, worker and core lines. Its token is issued by the CMS for
+`NEOPS_ADMIN_USER` through `docker compose exec cms`, which spends no login.
+
+## Smoke suite
+
+```bash
+uv run python tests/e2e/smoke.py --base /path/to/deployment [--connect 127.0.0.1 --insecure] \
+  [--min-dashboards N] [--record-schema ../neops-workflow-engine/schema/LogRecord.schema.json] \
+  [--dump-keys keys.json]
+```
+
+S1-S13 of the logging test plan, one line each, against any installed deployment, live or a
+`--keep` clone. Read-only except S7 (one workflow run) and S9 (a CMS user without any workflow
+grant, created for the check and deleted again). A check that does not apply to the
+deployment's store prints `N/A`; any `FAIL` exits 1. S12 validates the S7 records against the
+engine's `LogRecord.schema.json`, which the engine image does not ship: the default is the
+sibling engine checkout. `--dump-keys` writes the key set of the S7 records, for the
+VictoriaLogs/Loki comparison.
+
+## Image-ID guard
+
+```bash
+uv run python tests/e2e/image_guard.py record <clone> <workdir>/ids-pre.json [--ref IMAGE ...]
+uv run python tests/e2e/image_guard.py verify <clone> <workdir>/ids-pre.json
+```
+
+`up` pulls with `--ignore-pull-failures`, so a local retag under a published name is silently
+replaced the moment that tag is published. `record` stores the id each image reference resolves
+to (every image of the clone's compose config by default); `verify` fails when one moved or a
+container started from a recorded reference runs another id. A run whose guard fails is void.
 
 ## The Keycloak browser login
 
@@ -186,6 +249,37 @@ uv run python tests/e2e/chaos.py /tmp/neops-e2e/chaos/repo
 | three corrupted `.env` files | `env` | `./neops check` exits 1 and names each problem, and passes again once restored |
 | `./neops restart engine` under a polling worker | `engine` | the engine goes healthy again, the worker container survives and doctor is green |
 | `compose stop postgres-cms` | `database` | logins fail while the database is gone and work again when it returns |
+| with the logs overlay, `kill` also kills `victorialogs` and `grafana` (C1) | `kill` | the store runs and `GET /version` reports it `ok` within 30 s; Grafana still has the datasource |
+| `NEOPS_LOG_RETENTION=90` (C4b) | `env` | `check` exits 1 and says the unit is required |
+| the log-store faults C2-C8, C10, C12a, C14, C16 and the C15 report | `c2` … `c16` | see below |
+
+With `compose.logs.yaml` in the clone's `COMPOSE_FILE` the default run adds the log-store steps
+of `chaos_logs.py`, C14 last. They follow the plan's injection rules: an engine fault is written
+into the clone's `compose.override.yaml` (the last file, so it beats `compose.logs.yaml`), the
+engine is recreated alone and every injected value is read back with `printenv` first; recovery
+restarts single services with `--no-deps`, never a bare `up`; assertions read `GET /version`; seq
+holes and duplicates are checked per series (engine and core per process, a worker per job) on the
+records VictoriaLogs holds for the step's window. Traffic "under load" is `workflows.py` runs on
+two to four threads, behind `chaos_kit.make_load()`; `loadgen.py`, which needs the worker SDK's
+push sink, replaces it there. C9, C11 and C13 need that generator or a skewed clock and are not
+implemented.
+
+| Step | Fault | Assertion |
+|---|---|---|
+| `c2` | `compose stop victorialogs` 120 s under load | `open`, outbox rows > 0, then `ok` with the outbox drained, no line dropped, the outage's runs readable, no seq hole or duplicate; prints the replay time |
+| `c3` | the same without traffic | no replay attempt and no row deleted while open; drains afterwards |
+| `c4` | `NEOPS_LOG_URL=http://engine:3030`, confirmed to answer 404 first | `misconfigured`, doctor fails on the log-store probe, the outbox holds the refused lines and replays them once restored |
+| `c4a` | `NEOPS_LOG_URL=http://10.255.255.1:9428` | `open`, not `misconfigured`; doctor passes with a warning |
+| `c5` | the same, then `./neops up` | `up` exits 0, the engine is healthy, the store `open` |
+| `c6` | the engine disconnected from `<project>_logs` 60 s under load | as `c2` |
+| `c7` | `compose restart engine` in the middle of a `c2` outage | outbox rows survive the restart, then as `c2` |
+| `c7b` | `compose kill -s KILL engine` there instead | outbox rows survive, no duplicate seq; the holes of the killed process are printed, not failed |
+| `c8` | `NEOPS_LOG_OUTBOX_MAX_ROWS=2000`, a `c2` outage on four threads | `outbox.dropped` > 0, the engine logs the drop, the newest run's lines are kept |
+| `c10` | `postgres-engine` and `victorialogs` stopped 30 s under load | the engine keeps running, the worker logs a 503 from its pushes, everything recovers |
+| `c12a` | `NEOPS_WORKER_IMAGE=…neops-worker-sdk:0.2.0-beta.5` | the old worker exits and says why; the current one runs again |
+| `c15` | `pkill -f celery.*worker` in `cms-worker` during a run | report only, and only with the `cms-tasks` profile |
+| `c16` | 10 baseline runs, then 10 runs with `victorialogs` paused for 100 s | no run slower than the baseline's worst plus 1 s |
+| `c14` | `victorialogs` paused; the engine swapped to `0.43.0-beta.4` and back | the old engine boots on the new schema and leaves `log_outbox` alone; the rows replay after the re-upgrade |
 
 `--only` runs the named steps in the order given, which is how the prune is driven on its own:
 
