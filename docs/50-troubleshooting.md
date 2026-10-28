@@ -155,9 +155,9 @@ automation that has been dormant since.
 10-minute threshold, and `--json` prints the report on one line. What its messages mean:
 
 - `rows in error`: the last write failed and no sweep has repaired the row in the two minutes a
-  periodic run needs to get to it. Run `resync_unsynced_rows`. If it ends with `Stopped early,
-  Elasticsearch or the database is unavailable: ...`, the error after the colon says which: start
-  with `docker compose logs elasticsearch` or `docker compose logs postgres-cms`. A row that
+  periodic run needs to get to it. Run `resync_unsynced_rows`. If it ends with
+  `Stopped early, Elasticsearch or the database is unavailable: ...`, the error after the colon
+  says which: start with `docker compose logs elasticsearch` or `docker compose logs postgres-cms`. A row that
   fails on every retry for a reason of its own (bad data, a bug) restarts that clock each time,
   so it can sit in the `error` column without a warning: `--list error` names such rows, and
   `docker compose logs cms cms-worker | grep 'Re-indexing'` gives the reason.
@@ -179,7 +179,8 @@ automation that has been dormant since.
 
 Right after an upgrade, rows an older release left pending or in error warn at once: their
 time of change was never recorded, so they count as the oldest. The sweep takes them first, up to
-10,000 a minute with `cms-tasks`; run `./neops doctor` again before acting on them.
+10,000 a minute with `cms-tasks`; run `./neops doctor` again before acting on them. Without
+`cms-tasks`, run `resync_unsynced_rows` once instead.
 
 `periodic sweep last ran` reads `never recorded` without `cms-tasks`, and after Redis restarts
 until the next run; the time lives in Redis only. A run that found Elasticsearch down still
