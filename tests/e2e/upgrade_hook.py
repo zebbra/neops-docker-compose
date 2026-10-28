@@ -51,7 +51,7 @@ def result_body(held: HeldJob) -> str:
             "jobExecutionId": held.job_id,
             "workerId": held.worker_id,
             "leaseToken": ANY_LEASE,
-            "status": "failure",
+            "status": "failed",
             "result": {"success": False, "message": "neops-docker-compose e2e: reported without a lease"},
         }
     )

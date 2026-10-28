@@ -53,6 +53,7 @@ from run_scenario import (  # noqa: E402
     Report,
     grafana_datasource_types,
     neops,
+    shell_compose_refusal,
 )
 
 from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
@@ -70,8 +71,6 @@ CHAOS_GROUP = "e2e-chaos-survivor"
 BASE_STEP_NAMES = ("kill", "restart", "prune", "env", "engine", "database")
 STEP_NAMES = BASE_STEP_NAMES + tuple(LOG_STEPS)
 DEFAULT_STEPS = tuple(name for name in BASE_STEP_NAMES if name != "prune")
-# Docker Compose prefers these from the shell over .env, and Compose.run passes the shell on.
-SHELL_COMPOSE_KEYS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE")
 PRUNE_WARNING = (
     "docker system prune -a --volumes removes every unused image, container and volume on "
     "this host, including other projects' (KIND, the lab)."
@@ -342,9 +341,8 @@ def clone_refusal(clone: Path, environ: Mapping[str, str]) -> str | None:
     """Why chaos must not run against `clone`, or None for a stack run_scenario.py left behind.
     The steps stop, swap and disconnect services, so anything else, the live checkout first of
     all, is refused."""
-    inherited = [key for key in SHELL_COMPOSE_KEYS if key in environ]
-    if inherited:
-        return f"refusing: {', '.join(inherited)} is set in the shell and would win over {clone}/.env"
+    if refusal := shell_compose_refusal(environ, clone):
+        return refusal
     env = Env(clone / ".env")
     if not env.exists:
         return f"{clone} does not look like an installed deployment: no .env"

@@ -196,9 +196,10 @@ def test_a_worker_counts_as_refused_when_it_exited_non_zero_or_restarted(inspect
 
 
 def test_the_refusal_marker_is_the_compatibility_message_and_no_startup_banner():
-    banner = "NEOPS Worker starting... version 0.2.0-beta.5"
+    banner = "NEOPS Worker starting... version 0.2.0-beta.8, engine compatibility check"
     assert chaos_logs.REFUSAL_MARKER not in banner.lower()
-    assert chaos_logs.REFUSAL_MARKER in "Client version incompatible with backend. Please update.".lower()
+    refusal = "Client 0.43.0-beta.8 is not compatible with this engine. Update the SDK."
+    assert chaos_logs.REFUSAL_MARKER in refusal.lower()
 
 
 def test_the_outage_push_is_a_valid_worker_push_so_only_the_outage_can_refuse_it():

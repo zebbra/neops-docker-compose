@@ -49,7 +49,7 @@ def test_the_held_job_is_polled_for_the_same_function_block():
 def test_the_held_result_carries_a_well_formed_lease_the_job_cannot_match():
     held = upgrade_hook.HeldJob("e", "j", "w")
     body = json.loads(upgrade_hook.result_body(held))
-    assert len(body["leaseToken"]) == 64 and body["status"] == "failure"
+    assert len(body["leaseToken"]) == 64 and body["status"] == "failed"
     assert upgrade_hook.refused_for_missing_lease(403, '{"code":"LEASE_MISSING"}')
     assert not upgrade_hook.refused_for_missing_lease(403, '{"code":"LEASE_MISMATCH"}')
     assert not upgrade_hook.refused_for_missing_lease(400, "LEASE_MISSING")

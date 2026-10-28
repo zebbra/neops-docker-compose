@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import os
 import re
 import secrets
 import shutil
@@ -20,7 +21,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
@@ -122,6 +123,8 @@ E2E_EXAMPLES = REPO / "tests" / "e2e" / "examples"
 GRAFANA_AND_LOGS_MIGRATION = "0003_grafana_and_logs_layout"
 NOT_CONFIGURED = "LOGS_NOT_CONFIGURED"
 E2E_PROJECT_PREFIX = "neops-e2e-"
+# Docker Compose prefers these from the shell over .env, and Compose.run passes the shell on.
+SHELL_COMPOSE_KEYS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE")
 OVERRIDE_MARKER = "# Written by tests/e2e/run_scenario.py"
 OVERRIDE_YAML = f"""{OVERRIDE_MARKER}: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
@@ -1036,6 +1039,14 @@ def remove_work(work: Path) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
+def shell_compose_refusal(environ: Mapping[str, str], clone: Path) -> str | None:
+    """Why a compose run from this shell would not act on `clone` alone, or None."""
+    inherited = [key for key in SHELL_COMPOSE_KEYS if key in environ]
+    if not inherited:
+        return None
+    return f"refusing: {', '.join(inherited)} is set in the shell and would win over {clone}/.env"
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("scenario", help="a name from examples/ or tests/e2e/examples/, or an .env path")
@@ -1093,6 +1104,9 @@ def main(argv: list[str] | None = None) -> int:
     name = example.stem
     ports = Ports(args.port_base)
     work = args.workdir or Path(f"/tmp/neops-e2e/{name}-{ports.base}")
+    if refusal := shell_compose_refusal(os.environ, work):
+        print(refusal, file=sys.stderr)
+        return 2
     extra = parse_extra_env(args.extra_env)
     if args.upgrade_from:
         example = old_example(args.upgrade_from, name, work)

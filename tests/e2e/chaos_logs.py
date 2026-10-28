@@ -57,10 +57,12 @@ BLACKHOLE_URL = "http://10.255.255.1:9428"
 OUTBOX_CAP = "2000"
 OUTBOX_CAP_THREADS = 4
 OUTBOX_DROP_MARKER = "dropped its oldest lines"
-OLD_WORKER_IMAGE = "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.5"
+# The newest 0.2 worker: SDKs from 0.2.0-beta.7 ask the engine and exit on an incompatible
+# answer; 0.2.0-beta.5 and beta.6 never ask.
+OLD_WORKER_IMAGE = "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.8"
 OLD_ENGINE_IMAGE = "quay.io/zebbra/neops-workflow-engine:0.43.0-beta.4"
-# What neops_worker.py of 0.2.0-beta.5 logs when it refuses to start, lowercased.
-REFUSAL_MARKER = "client version incompatible with backend"
+# What neops_worker.py of 0.2.0-beta.8 logs when it refuses to start, lowercased.
+REFUSAL_MARKER = "is not compatible with this engine"
 # A seq hole of the engine is expected wherever its store fails: a failed probe takes a seq
 # and is never spooled. The worker's series must stay whole.
 OUTAGE_HOLE_SERVICES = (logrecords.WORKER_SERVICE,)
