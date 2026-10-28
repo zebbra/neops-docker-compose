@@ -189,3 +189,62 @@ def test_minting_an_access_token_names_each_cause_of_failure():
         token.mint_access_token(AccessTokenCms(out="INACTIVE\n"), "neops")
     with pytest.raises(RuntimeError, match="printed no token.*ImportError"):
         token.mint_access_token(AccessTokenCms(out="ImportError: get_token_service\n"), "neops")
+
+
+def _run_access_token_script(service, capsys, monkeypatch) -> str:
+    """The script as the cms container runs it, against a fake user model and token service."""
+    import sys
+    import types
+
+    user = types.SimpleNamespace(id=7, username="neops", is_active=True)
+    manager = types.SimpleNamespace(filter=lambda **_: types.SimpleNamespace(first=lambda: user))
+    auth_mod = types.ModuleType("django.contrib.auth")
+    auth_mod.get_user_model = lambda: types.SimpleNamespace(objects=manager)
+    core_auth = types.ModuleType("neops.core.auth")
+    core_auth.get_token_service = lambda: service
+    core_auth.get_auth = lambda: types.SimpleNamespace(get_roles=lambda _u: ["admin"])
+    core_auth.get_permissions = lambda: types.SimpleNamespace(
+        get_jwt_permissions=lambda _u: [], authz_enforced=True
+    )
+    for name, mod in {
+        "django": types.ModuleType("django"),
+        "django.contrib": types.ModuleType("django.contrib"),
+        "django.contrib.auth": auth_mod,
+        "neops": types.ModuleType("neops"),
+        "neops.core": types.ModuleType("neops.core"),
+        "neops.core.auth": core_auth,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    monkeypatch.setenv("NEOPS_USERNAME", "neops")
+    exec(token._ACCESS_TOKEN_SCRIPT, {})  # noqa: S102 - the script under test
+    return capsys.readouterr().out
+
+
+class _TokenService220:
+    """neops-core <= 2.2.1-beta.3: no principal_type."""
+
+    def issue_access_token(self, user_id, username, roles, permissions, auth_provider, *, authz_enforced):
+        return "old.jwt"
+
+
+class _TokenService221:
+    """neops-core >= 2.2.1-beta.4: principal_type is required and keyword-only."""
+
+    def __init__(self):
+        self.principal_type = None
+
+    def issue_access_token(
+        self, user_id, username, roles, permissions, auth_provider, *, authz_enforced, principal_type
+    ):
+        self.principal_type = principal_type
+        return "new.jwt"
+
+
+def test_the_access_token_script_works_against_a_core_before_principal_type(capsys, monkeypatch):
+    assert "TOKEN=old.jwt" in _run_access_token_script(_TokenService220(), capsys, monkeypatch)
+
+
+def test_the_access_token_script_names_a_user_principal_for_a_core_that_requires_one(capsys, monkeypatch):
+    service = _TokenService221()
+    assert "TOKEN=new.jwt" in _run_access_token_script(service, capsys, monkeypatch)
+    assert service.principal_type == "user"

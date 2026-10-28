@@ -26,6 +26,7 @@ _PK_SCRIPT = (
     "print('PK=%s' % get_user_model().objects.get(username=os.environ['NEOPS_USERNAME']).pk)"
 )
 _ACCESS_TOKEN_SCRIPT = """
+import inspect
 import os
 from django.contrib.auth import get_user_model
 from neops.core.auth import get_auth, get_permissions, get_token_service
@@ -36,13 +37,18 @@ elif not user.is_active:
     print('INACTIVE')
 else:
     permissions = get_permissions()
-    token = get_token_service().issue_access_token(
+    service = get_token_service()
+    # neops-core 2.2.1-beta.4 requires principal_type, earlier cores reject it.
+    accepted = inspect.signature(service.issue_access_token).parameters
+    principal = {'principal_type': 'user'} if 'principal_type' in accepted else {}
+    token = service.issue_access_token(
         user_id=user.id,
         username=user.username,
         roles=get_auth().get_roles(user),
         permissions=permissions.get_jwt_permissions(user),
         auth_provider="neops-doctor",
         authz_enforced=permissions.authz_enforced,
+        **principal,
     )
     print('TOKEN=%s' % token)
 """
