@@ -540,7 +540,20 @@ def test_a_plain_doctor_run_does_not_wait_for_workers(monkeypatch):
 def index_sync_report(**overrides) -> str:
     report = {
         "version": 1,
-        "models": {},
+        "models": {
+            "core.device": {
+                "synced": 12,
+                "pending": 0,
+                "error": 0,
+                "rejected": 0,
+                "permission_pending": 0,
+                "awaiting_sweep": 0,
+                "stale_pending": 0,
+                "stale_error": 0,
+                "oldest_pending_age_seconds": None,
+                "oldest_error_age_seconds": None,
+            }
+        },
         "group_writes": {"count": 0, "awaiting_sweep": 0, "oldest_age_seconds": None},
         "unlocks": {
             "waiting": 0,
