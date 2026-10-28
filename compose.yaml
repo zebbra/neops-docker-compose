@@ -4,6 +4,9 @@
 # Image pins: the tested set for this release. Override per image from .env only in
 # an emergency (NEOPS_CORE_TAG, ...). NEOPS_*_IMAGE replaces the whole reference.
 x-versions:
+  # A core without `elastic_index --rebuild-if-stale` costs a full search index rebuild on every
+  # core upgrade (neops_compose/search_index.py); the flag came with
+  # https://github.com/zebbra/neops-core/pull/2412.
   core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.2.0}}
   engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.43.0-beta.6}}
   monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.43.0-beta.6}}
@@ -163,8 +166,9 @@ services:
       - |
         set -e
         python manage.py migrate --noinput
-        # --create's output is captured, and it waits for a rebuild an interrupted `up` left running.
-        echo "creating the search indices; this waits while a search index rebuild is still running"
+        # --create's output is captured, and on a core with --rebuild-if-stale it waits for a rebuild
+        # an interrupted `up` left running in cms.
+        echo "creating the search indices (a neops-core with --rebuild-if-stale waits here for a rebuild still running in cms; see docs/30-operations.md#upgrades)"
         if ! out=$$(python manage.py elastic_index --create 2>&1); then
           echo "$$out" | grep -q resource_already_exists_exception || { echo "$$out"; exit 1; }
         fi

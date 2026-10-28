@@ -95,6 +95,16 @@ For any other account, fix it from the CMS admin site at `<NEOPS_CMS_URL>/admin/
 visibility flags cover what they should see, then add the workflow rights with
 `grant_workflow_permissions`. [Install](10-install.md#adding-users) has the command.
 
+### `./neops up` stalls after the CMS database is up, or a search index rebuild never ends
+
+`up` rebuilds the search index inside the running `cms` container (see
+[Upgrades](30-operations.md#upgrades)). Interrupting `up` does not stop that rebuild, and on a
+neops-core with `elastic_index --rebuild-if-stale` the next `up` waits for it at `cms-init`
+without printing anything. `./neops logs cms-init` ends with "creating the search indices (...)",
+and `./neops compose -- top cms` lists the `elastic_index` process. Let it finish, or abort it with
+`./neops restart cms` and run `./neops up` again, which rebuilds what the aborted run left
+unfinished.
+
 ### Elasticsearch and `vm.max_map_count`
 
 Elasticsearch refuses to start below `vm.max_map_count = 262144` (the stock Linux default is
