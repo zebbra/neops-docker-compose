@@ -237,15 +237,18 @@ def step_store_down_under_load(report: Report, stack: Stack) -> None:
 
 
 def step_store_down_idle(report: Report, stack: Stack) -> None:
-    """C3: with nothing to push, the open circuit attempts nothing and deletes nothing."""
+    """C3: the circuit opens only on a failed push, so one run opens it; with nothing to push after
+    that, the open circuit attempts nothing and deletes nothing."""
+    target = workflows.prepare(stack.deployment, stack.engine)
     with store_stopped(stack):
+        workflows.run_once(stack.engine, target)
         opened, _ = wait_logs(stack, state_is("open"), STATE_TIMEOUT)
-        report.add(opened, "the engine reports its store open")
+        report.add(opened, "a run's lines open the circuit")
         attempts_before, rows_before = outbox_attempts_and_rows(stack)
         time.sleep(OUTAGE_SECONDS)
         attempts_after, rows_after = outbox_attempts_and_rows(stack)
     report.add(
-        attempts_after == attempts_before == 0 and rows_after >= rows_before,
+        attempts_after == attempts_before == 0 and rows_after >= rows_before > 0,
         f"no replay attempt and no row deleted while open (attempts {attempts_before}->{attempts_after}, "
         f"rows {rows_before}->{rows_after})",
     )
@@ -507,7 +510,7 @@ def step_old_worker(report: Report, stack: Stack) -> None:
             report.add(REFUSAL_MARKER in log, f"its log names the version refusal ({REFUSAL_MARKER!r})")
     finally:
         recreate(stack, "worker")
-    running = wait_for(lambda: stack.health_of("worker") == "running", WORKER_EXIT_TIMEOUT)
+    running = wait_for(lambda: stack.is_up("worker"), WORKER_EXIT_TIMEOUT)
     report.add(running, f"the current worker runs again ({stack.health_of('worker')})")
 
 

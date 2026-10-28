@@ -87,7 +87,8 @@ def check_store_back(report: Report, stack: Stack) -> None:
     back, logs = wait_logs(stack, state_is("ok"), STORE_BACK_TIMEOUT)
     state = stack.health_of(stack.store.service)
     report.add(
-        back and state == "running", f"{stack.store.service} {state}, the engine reports it ok ({logs})"
+        back and stack.is_up(stack.store.service),
+        f"{stack.store.service} {state}, the engine reports it ok ({logs})",
     )
 
 
@@ -284,7 +285,7 @@ def step_engine_restart(report: Report, stack: Stack) -> None:
     healthy = wait_for(lambda: stack.health_of("engine") == "healthy", timeout=300)
     timed(report, healthy, "the engine is healthy again after a restart", started)
     report.add(
-        stack.health_of("worker") == "running",
+        stack.is_up("worker"),
         f"the worker survived the engine restart ({worker_verdict(stack, since)})",
     )
     ok, detail = doctor_green(stack.clone)

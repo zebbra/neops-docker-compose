@@ -145,6 +145,10 @@ class Stack:
             return "absent"
         return row.get("Health") or row.get("State", "")
 
+    def is_up(self, service: str) -> bool:
+        """`running` for a service without a healthcheck, `healthy` for one with."""
+        return self.health_of(service) in ("running", "healthy")
+
     def container(self, service: str) -> str:
         row = self.row(service)
         if row is None:

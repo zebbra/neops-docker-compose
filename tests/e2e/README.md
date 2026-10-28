@@ -276,7 +276,7 @@ C13 needs a skewed worker clock and is deferred (D8).
 | Step | Fault | Assertion |
 |---|---|---|
 | `c2` | `compose stop victorialogs` 120 s under load | `open`, outbox rows > 0, then `ok` with the outbox drained, no line dropped, every burst line stored once (the outage's runs readable, under `--load workflows`), no duplicate seq and no worker seq hole; prints the replay time |
-| `c3` | the same without traffic | no replay attempt and no row deleted while open; drains afterwards |
+| `c3` | one run opens the circuit, then no traffic | the run's lines are held; no replay attempt and no row deleted while open; drains afterwards |
 | `c4` | `NEOPS_LOG_URL=http://engine:3030`, confirmed to answer 404 first | `misconfigured`, doctor fails on the log-store probe, the outbox holds the refused lines and replays them once restored |
 | `c4a` | `NEOPS_LOG_URL=http://10.255.255.1:9428` | `open`, not `misconfigured`; doctor passes with a warning |
 | `c5` | the same, then `./neops up` | `up` exits 0, the engine is healthy, the store `open` |

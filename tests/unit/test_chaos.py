@@ -287,3 +287,10 @@ def test_an_overflow_fails_when_the_counts_disagree(assigned, received, drops_re
 def test_an_overflow_fails_when_the_newest_burst_line_never_reached_the_store():
     failed = overflow(dropped=40, assigned=98, received=58, drops_reported=40, newest_burst=94)
     assert any("newest burst line 99" in message for message in failed), failed
+
+
+@pytest.mark.parametrize(
+    "health, up", [("healthy", True), ("running", True), ("unhealthy", False), ("absent", False)]
+)
+def test_a_service_with_or_without_a_healthcheck_counts_as_up(health, up):
+    assert chaos_kit.Stack.is_up(SimpleNamespace(health_of=lambda _service: health), "worker") is up
