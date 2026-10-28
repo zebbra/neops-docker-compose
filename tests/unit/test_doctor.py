@@ -55,6 +55,7 @@ HEALTHY = {
     "/graphql": (200, '{"data":{"__typename":"Query"}}'),
     "/health": (200, '{"healthy":true}'),
     "/blackboard/job": (403, "Forbidden"),
+    "/workers/00000000-0000-0000-0000-000000000000/logs": (403, "Forbidden"),
     "/config.js": (200, 'apiBaseUrl: "https://engine.neops.example.com"'),
 }
 
@@ -136,6 +137,58 @@ def test_an_unreachable_engine_keeps_the_severity_of_its_mode():
 
     assert deny_probe_of(doctor.http_probes(urls(), Refusing(), "warn")).severity == "warn"
     assert deny_probe_of(doctor.http_probes(urls(), Refusing())).severity == "fail"
+
+
+def test_the_worker_log_route_is_probed_for_the_deny_like_the_job_routes():
+    """POST /workers/:uuid/logs is @Public like register and ping: from outside it would let
+    anyone write worker lines into the store."""
+    http = healthy({"/workers/00000000-0000-0000-0000-000000000000/logs": (202, "")})
+    probes = doctor.http_probes(urls(), http)
+    log_deny = [p for p in probes if p.name == doctor.DENY_LOG_PROBE][0]
+    assert not log_deny.ok and log_deny.severity == "fail"
+    assert "/workers/00000000-0000-0000-0000-000000000000/logs -> 202" in log_deny.detail
+    assert deny_probe_of(probes).ok
+
+
+def version(logs: dict | None) -> FakeHttp:
+    body = {"version": "0.44.0-beta.1"} | ({"logs": logs} if logs is not None else {})
+    return FakeHttp({"/version": (200, json.dumps(body))})
+
+
+OK_LOGS = {"backend": "victorialogs", "queryable": True, "state": "ok", "lastError": None}
+
+
+def test_the_logs_probe_passes_while_the_engine_delivers_to_a_queryable_store():
+    probe = doctor.logs_probe(urls()["NEOPS_ENGINE_URL"], version(OK_LOGS))
+    assert probe.ok and probe.name == doctor.LOGS_PROBE and "victorialogs" in probe.detail
+
+
+@pytest.mark.parametrize(
+    "logs",
+    [
+        OK_LOGS | {"state": "misconfigured", "lastError": {"status": 401, "excerpt": "unauthorized"}},
+        OK_LOGS | {"backend": None, "queryable": False, "state": None},
+        None,
+    ],
+    ids=["misconfigured", "not-queryable", "engine-without-logs"],
+)
+def test_the_logs_probe_fails_when_the_engine_cannot_serve_logs(logs):
+    probe = doctor.logs_probe(urls()["NEOPS_ENGINE_URL"], version(logs))
+    assert not probe.ok and probe.severity == "fail"
+
+
+def test_an_unreachable_store_is_a_warning_because_the_engine_spools_meanwhile():
+    probe = doctor.logs_probe(urls()["NEOPS_ENGINE_URL"], version(OK_LOGS | {"state": "open"}))
+    assert not probe.ok and probe.severity == "warn"
+
+
+def test_the_logs_probe_runs_only_with_the_logs_overlay(tmp_path, monkeypatch):
+    without = _run_with(tmp_path, monkeypatch, "compose.yaml:compose.traefik.yaml")
+    assert doctor.LOGS_PROBE not in [p.name for p in without]
+    with_logs = _run_with(
+        tmp_path, monkeypatch, "compose.yaml:compose.traefik.yaml:compose.grafana.yaml:compose.logs.yaml"
+    )
+    assert doctor.LOGS_PROBE in [p.name for p in with_logs]
 
 
 def test_login_probe_never_accepts_500():

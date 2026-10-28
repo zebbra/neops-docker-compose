@@ -20,6 +20,13 @@ OIDC_UNKNOWN_CODE = "neops-doctor-" + "0" * 51
 OIDC_UNKNOWN_CODE_ANSWER = "Invalid authorization code"
 AUTH_PATH_PROBE = "cms login path"
 DENY_PROBE = "engine worker API denied"
+DENY_LOG_PROBE = "engine worker logs denied"
+# Two @Public worker routes stand for the whole denied set: the job routes and the log route.
+DENY_PATHS = {
+    DENY_PROBE: "/blackboard/job",
+    DENY_LOG_PROBE: "/workers/00000000-0000-0000-0000-000000000000/logs",
+}
+LOGS_PROBE = "engine log store"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 LOOPBACK_ONLY = (
     "not applicable: no reverse proxy in this scenario, and the engine listens on 127.0.0.1 only, "
@@ -167,13 +174,12 @@ def _probe_get(http: Http, spec: ProbeSpec) -> Probe:
     return Probe(spec.name, ok, detail)
 
 
-def _deny_probe(engine: PublicUrl, http: Http, severity: str = "fail") -> Probe:
+def _deny_probe(engine: PublicUrl, http: Http, name: str, severity: str = "fail") -> Probe:
     """The worker API must never answer a request that arrived over the public URL.
 
     In expose mode the deny belongs to a proxy the operator has not necessarily put in front
     yet, so this is a warning there: a first install must be able to finish and say so.
     """
-    name = DENY_PROBE
     if severity == "skip":
         return Probe(name, True, LOOPBACK_ONLY)
     hint = (
@@ -182,13 +188,42 @@ def _deny_probe(engine: PublicUrl, http: Http, severity: str = "fail") -> Probe:
         else "the worker API is reachable from outside; your reverse proxy must deny it "
         "(see examples/external-proxy.env)"
     )
+    target = f"{engine}{DENY_PATHS[name]}"
     try:
-        status, _ = http.request(engine, "/blackboard/job", method="POST", body="{}")
+        status, _ = http.request(engine, DENY_PATHS[name], method="POST", body="{}")
     except Exception as exc:
-        return Probe(name, False, f"{engine}/blackboard/job: {exc}", severity)
+        return Probe(name, False, f"{target}: {exc}", severity)
     if status == 403:
-        return Probe(name, True, f"{engine}/blackboard/job -> 403")
-    return Probe(name, False, f"{engine}/blackboard/job -> {status}: {hint}", severity)
+        return Probe(name, True, f"{target} -> 403")
+    return Probe(name, False, f"{target} -> {status}: {hint}", severity)
+
+
+def _store_probe(logs: dict) -> Probe:
+    """Judge the `logs` object of the engine's GET /version."""
+    if not logs.get("queryable"):
+        return Probe(
+            LOGS_PROBE, False, "the engine has no log store configured (NEOPS_LOG_BACKEND, NEOPS_LOG_URL)"
+        )
+    state, backend = logs.get("state"), logs.get("backend")
+    if state == "misconfigured":
+        return Probe(LOGS_PROBE, False, f"the engine's {backend} rejects its pushes: {logs.get('lastError')}")
+    if state == "open":
+        detail = f"{backend} is unreachable; the engine spools lines to its database meanwhile"
+        return Probe(LOGS_PROBE, False, detail, "warn")
+    return Probe(LOGS_PROBE, True, f"{backend} {state}")
+
+
+def logs_probe(engine: PublicUrl, http: Http) -> Probe:
+    """The engine reports its log pipeline on GET /version; doctor reads it from there."""
+    try:
+        status, text = http.request(engine, "/version")
+        logs = json.loads(text).get("logs") if status == 200 else None
+    except Exception as exc:
+        return Probe(LOGS_PROBE, False, f"{engine}/version: {exc}")
+    if not isinstance(logs, dict):
+        detail = f"{engine}/version -> {status} reports no log store (an engine before 0.44?)"
+        return Probe(LOGS_PROBE, False, detail)
+    return _store_probe(logs)
 
 
 def _specs(urls: dict[str, PublicUrl]) -> list[ProbeSpec]:
@@ -223,7 +258,7 @@ def _specs(urls: dict[str, PublicUrl]) -> list[ProbeSpec]:
 
 def http_probes(urls: dict[str, PublicUrl], http: Http, deny_severity: str = "fail") -> list[Probe]:
     probes = [_probe_get(http, spec) for spec in _specs(urls)]
-    probes.append(_deny_probe(urls["NEOPS_ENGINE_URL"], http, deny_severity))
+    probes += [_deny_probe(urls["NEOPS_ENGINE_URL"], http, name, deny_severity) for name in DENY_PATHS]
     return probes
 
 
@@ -406,6 +441,8 @@ def run(
     urls = public_urls(ctx.env, ctx.scenario)
     http = Http(connect=connect, insecure=insecure)
     probes += http_probes(urls, http, deny_severity(ctx, urls["NEOPS_ENGINE_URL"]))
+    if ctx.scenario.logs:
+        probes.append(logs_probe(urls["NEOPS_ENGINE_URL"], http))
     probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http, worker_grace)
     if probe_ratelimit:
         probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http, ctx.scenario.oidc))

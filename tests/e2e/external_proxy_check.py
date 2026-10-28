@@ -69,13 +69,21 @@ DENIED = (
     "/Workers/Register/",
     "/workers/w-1/ping",
     "/workers/w-1/unregister/",
+    "/workers/w-1/logs",
+    "/Workers/W-1/Logs/",
+    "/blackboard/job/logs",
     "/function-blocks/register",
     "/Function-Blocks/Register",
 )
 # The monitor app needs these, so the deny list must not be a wholesale block of the engine.
 REACHABLE = ("/health", "/workers", "/function-blocks/registrations/list", "/blackboard/jobs")
 # The deny rule is POST-only and exact: none of these is a worker route.
-NOT_DENIED = (("GET", "/workers/register"), ("GET", "/blackboard/job"), ("POST", "/workers"))
+NOT_DENIED = (
+    ("GET", "/workers/register"),
+    ("GET", "/blackboard/job"),
+    ("POST", "/workers"),
+    ("GET", "/workers/w-1/logs"),
+)
 
 
 def docker(*args: str, check: bool = True) -> str:

@@ -68,7 +68,7 @@ def test_shared_host_mode(tmp_path):
     assert r["engine-deny-worker-api"].rule.startswith(
         "Host(`neops.example.com`) && Method(`POST`) && PathRegexp(`^/engine(?i:/("
     )
-    assert "workers/[^/]+/(ping|unregister)" in r["engine-deny-worker-api"].rule
+    assert "workers/[^/]+/(ping|unregister|logs)" in r["engine-deny-worker-api"].rule
     assert r["monitor"].entrypoint == "monitor" and r["monitor"].rule == "Host(`neops.example.com`)"
     assert r["keycloak"].middlewares == () and r["keycloak"].rule.endswith("PathPrefix(`/sso`)")
     assert [e.name for e in c.entrypoints] == ["web", "websecure", "monitor"]
@@ -93,9 +93,16 @@ def _pattern(rule: str) -> str:
 def test_worker_deny_rule_is_case_insensitive_and_slash_tolerant():
     rule = worker_deny_rule("engine.example.com", "")
     pattern = re.compile(_pattern(rule))
-    for path in ("/workers/register/", "/Workers/Register", "/blackboard/job/result"):
+    for path in (
+        "/workers/register/",
+        "/Workers/Register",
+        "/blackboard/job/result",
+        "/blackboard/job/logs",
+        "/workers/w-1/logs",
+        "/Workers/W-1/Logs/",
+    ):
         assert pattern.match(path), path
-    for path in ("/workers/cleanup", "/workers", "/blackboard/jobs", "/function-blocks"):
+    for path in ("/workers/cleanup", "/workers", "/blackboard/jobs", "/function-blocks", "/workers/w-1/jobs"):
         assert not pattern.match(path), path
 
 

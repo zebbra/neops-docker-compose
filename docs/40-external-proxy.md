@@ -56,13 +56,19 @@ built on Express, matches them):
 /workers/register
 /workers/*/ping
 /workers/*/unregister
+/workers/*/logs
 /function-blocks/register
 ```
 
+`/blackboard/job/*` covers the job log route `/blackboard/job/logs`. `/workers/*/logs` is the
+worker's own log route: from outside it would let anyone write lines into the log store.
+
 Everything else on the engine's hostname must reach it normally. The monitor app needs
-`GET /workers`, `GET /function-blocks/registrations/list` and `GET /blackboard/jobs`, all of which
-are permission-guarded, so the deny list has to be exact rather than a wholesale block of the
-engine.
+`GET /workers`, `GET /function-blocks/registrations/list`, `GET /blackboard/jobs` and the three log
+read routes `GET /workflow-execution/*/logs`, `GET /blackboard/jobs/*/logs` and
+`GET /workers/*/logs`, all of which are permission-guarded, so the deny list has to be exact rather
+than a wholesale block of the engine: `GET /workers/*/logs` must pass while `POST` to the same path
+is denied.
 
 ## 3. Allow large request bodies to the CMS
 
@@ -120,7 +126,7 @@ server {
     listen 443 ssl;
     server_name engine.neops.example.com;
 
-    location ~* ^/(blackboard/job(/.*)?|workers/register/?|workers/[^/]+/(ping|unregister)/?|function-blocks/register/?)$ {
+    location ~* ^/(blackboard/job(/.*)?|workers/register/?|workers/[^/]+/(ping|unregister|logs)/?|function-blocks/register/?)$ {
         if ($engine_deny) { return 403; }
         proxy_pass http://127.0.0.1:3030;
         proxy_set_header Host $host;
@@ -170,7 +176,7 @@ cms.neops.example.com {
 engine.neops.example.com {
     @worker_api {
         method POST
-        path_regexp (?i)^/(blackboard/job(/.*)?|workers/register/?|workers/[^/]+/(ping|unregister)/?|function-blocks/register/?)$
+        path_regexp (?i)^/(blackboard/job(/.*)?|workers/register/?|workers/[^/]+/(ping|unregister|logs)/?|function-blocks/register/?)$
     }
     respond @worker_api 403
     reverse_proxy 127.0.0.1:3030 {
@@ -197,9 +203,11 @@ workflows.neops.example.com {
 ports, and `tests/e2e/external_proxy_check.py` runs it in front of a live external-proxy stack
 and asserts all four rules. Keep the two in step: that script is what proves the snippet works.
 
-`doctor` always sends a `POST /blackboard/job` to the public engine URL and fails the
-`engine worker API denied` probe if the response is not `403`. This is enforced in every
-scenario, including external-proxy mode, so a reachable worker route fails `doctor` outright.
+`doctor` sends a `POST /blackboard/job` and a `POST /workers/00000000-0000-0000-0000-000000000000/logs`
+to the public engine URL and reports the `engine worker API denied` and `engine worker logs denied`
+probes as not passing if either response is not `403`. In external-proxy mode that is a warning,
+because the deny is your proxy's rule and may not be in place yet on a first install; behind the
+bundled Traefik it is a failure.
 
 The rate-limit probe needs a different order, because it only tests anything once
 `RATELIMIT_IP_META_KEY` is set: while that key is unset, core rate-limits on the raw TCP source
