@@ -187,9 +187,11 @@ def _stub_up(monkeypatch, order: list[str], minted: bool = False) -> None:
     monkeypatch.setattr(workflow.token, "ensure_engine_token", lambda ctx: minted)
 
 
-def test_up_checks_without_images_and_guards_before_it_changes_anything(tmp_path, monkeypatch):
-    """The downgrade guard has to run before migrate and render, because both write to the
-    deployment: refusing afterwards leaves the operator half-moved to a release we refused."""
+def test_up_migrates_before_the_downgrade_guard_loads_the_project(tmp_path, monkeypatch):
+    """The guard's `docker compose config` must see the migrated COMPOSE_FILE, so a migration
+    that rewrites it need not keep the guard's project load working on the old one. Migrations
+    are forward-only and correct for this checkout; the guard still refuses before render,
+    keys and any image is pulled or started."""
     order: list[str] = []
     _stub_up(monkeypatch, order)
     ctx = make_ctx(tmp_path, compose=FakeCompose("quay.io/zebbra/neops-core:2.0.9"))
@@ -198,7 +200,7 @@ def test_up_checks_without_images_and_guards_before_it_changes_anything(tmp_path
     with pytest.raises(workflow.Downgrade, match="neops-core"):
         workflow.up(ctx)
 
-    assert order == ["check(images=False)"]
+    assert order == ["check(images=False)", "migrate"]
     assert ctx.compose.calls == []
 
 

@@ -184,8 +184,8 @@ def _guard_downgrade(ctx: Ctx, allow_downgrade: bool) -> None:
 
 def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, insecure: bool = False) -> None:
     check(ctx, check_images=False)
-    _guard_downgrade(ctx, allow_downgrade)
     migrate_all(ctx)
+    _guard_downgrade(ctx, allow_downgrade)
     keys(ctx)
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()
