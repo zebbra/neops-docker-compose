@@ -256,7 +256,8 @@ uv run python tests/e2e/chaos.py /tmp/neops-e2e/chaos/repo
 | `compose stop postgres-cms` | `database` | logins fail while the database is gone and work again when it returns |
 | with the logs overlay, `kill` also kills `victorialogs` and `grafana` (C1) | `kill` | the store runs and `GET /version` reports it `ok` within 30 s; Grafana still has the datasource |
 | `NEOPS_LOG_RETENTION=90` (C4b) | `env` | `check` exits 1 and says the unit is required |
-| the log-store faults C2-C8, C10, C12a, C14, C16 and the C15 report | `c2` … `c16` | see below |
+| loadgen.py at 300 lines/s for 60 s | `loadgen` | it sends all 18,000 lines within 62 s and every one reaches the store once |
+| the log-store faults C2-C12a, C14, C16 and the C15 report | `c2` … `c16` | see below |
 
 With `compose.logs.yaml` in the clone's `COMPOSE_FILE` the default run adds the log-store steps
 of `chaos_logs.py`, C14 last. They follow the plan's injection rules: an engine fault is written
@@ -266,27 +267,57 @@ restarts single services with `--no-deps`, never a bare `up`; assertions read `G
 duplicates are checked per series (engine and core per process, a worker per job) on the records
 VictoriaLogs holds for the step's window, and holes only in the workers' series: a store probe that
 fails takes an engine seq and is never spooled, so an outage leaves engine holes by design, and
-those are printed instead. Traffic "under load" is `workflows.py` runs on
-two to four threads, behind `chaos_kit.make_load()`; `loadgen.py`, which needs the worker SDK's
-push sink, replaces it there. C9, C11 and C13 need that generator or a skewed clock and are not
-implemented.
+those are printed instead. Traffic "under load" comes from `chaos_kit.make_load()`: a `loadgen.py`
+burst at 300 lines/s that outlasts the step's fault by 30 s (see [Load generator](#load-generator)).
+`--load workflows` swaps in back-to-back `workflows.py` runs on two to four threads, for a worker
+image without the SDK's push sink, and leaves `loadgen`, `c9` and `c11` out of the default run.
+C13 needs a skewed worker clock and is deferred (D8).
 
 | Step | Fault | Assertion |
 |---|---|---|
-| `c2` | `compose stop victorialogs` 120 s under load | `open`, outbox rows > 0, then `ok` with the outbox drained, no line dropped, the outage's runs readable, no duplicate seq and no worker seq hole; prints the replay time |
+| `c2` | `compose stop victorialogs` 120 s under load | `open`, outbox rows > 0, then `ok` with the outbox drained, no line dropped, every burst line stored once (the outage's runs readable, under `--load workflows`), no duplicate seq and no worker seq hole; prints the replay time |
 | `c3` | the same without traffic | no replay attempt and no row deleted while open; drains afterwards |
 | `c4` | `NEOPS_LOG_URL=http://engine:3030`, confirmed to answer 404 first | `misconfigured`, doctor fails on the log-store probe, the outbox holds the refused lines and replays them once restored |
 | `c4a` | `NEOPS_LOG_URL=http://10.255.255.1:9428` | `open`, not `misconfigured`; doctor passes with a warning |
 | `c5` | the same, then `./neops up` | `up` exits 0, the engine is healthy, the store `open` |
 | `c6` | the engine disconnected from `<project>_logs` 60 s under load | as `c2` |
 | `c7` | `compose restart engine` in the middle of a `c2` outage | outbox rows survive the restart, then as `c2` |
-| `c7b` | `compose kill -s KILL engine` there instead | outbox rows survive, no duplicate seq; the holes of the killed process are printed, not failed |
-| `c8` | `NEOPS_LOG_OUTBOX_MAX_ROWS=2000`, a `c2` outage on four threads | `outbox.dropped` > 0, the engine logs the drop, the newest run's lines are kept |
-| `c10` | `postgres-engine` and `victorialogs` stopped 30 s under load | the engine keeps running and answers a worker push 503, everything recovers; the SDK's retry is not asserted until its push sink defines the line it logs |
+| `c7b` | `compose kill -s KILL engine` there instead | outbox rows survive, no duplicate seq; holes are printed, not failed: the killed engine loses worker lines it had accepted too |
+| `c8` | `NEOPS_LOG_OUTBOX_MAX_ROWS=2000`, a `c2` outage | `outbox.dropped` > 0, the engine logs the drop, the newest burst line (the newest run's lines, under `--load workflows`) is kept |
+| `c9` | loadgen at 400 lines/s for 90 s, `compose stop engine` for 75 s, back with `up -d --no-deps engine` | the SDK reports N > 0 dropped lines and nothing lost otherwise; by `seq` over loadgen's series the store holds sent - N with no duplicate; a `dropped N log lines (buffer full)` warning reached the store |
+| `c10` | `postgres-engine` and `victorialogs` stopped 30 s under load | the engine keeps running and answers a worker push 503, everything recovers, and the SDK logged a retry of a 503 |
+| `c11` | `docker kill -s KILL` the loadgen container 20 s into a burst | it died without a summary; a fresh loadgen worker (`run --no-deps`) is `ONLINE` in `GET /workers` within 60 s of the kill and runs its job; the killed worker's stored series have no hole and no duplicate, so no batch was stored in part or twice |
 | `c12a` | `NEOPS_WORKER_IMAGE=…neops-worker-sdk:0.2.0-beta.8` | precondition: GET /version reports 0.44.x (an engine built without `NEOPS_VERSION` reports `develop` and accepts every client); the old worker exits and logs `… is not compatible with this engine`; the current one runs again |
 | `c15` | `pkill -f celery.*worker` in `cms-worker` during a run | report only, and only with the `cms-tasks` profile |
 | `c16` | 10 baseline runs, then 10 runs with `victorialogs` paused for 100 s | no run slower than the baseline's worst plus 1 s |
 | `c14` | `victorialogs` paused; the engine swapped to `0.43.0-beta.4` and back | the old engine boots on the new schema and leaves `log_outbox` alone; the rows replay after the re-upgrade |
+
+### Load generator
+
+`loadgen.py` runs inside the worker image as a one-off container of the clone's `worker` service,
+started by `loadgen_driver.py` as
+
+```bash
+./neops compose -- run --rm --no-deps -T --name <project>-loadgen-<id> \
+  -v <clone>/tests/e2e/loadgen.py:/loadgen.py:ro worker /app/.venv/bin/python /loadgen.py --rate N --seconds S
+```
+
+It runs the SDK's own worker loop (`neops_worker.main_async`) with `DIR_FUNCTION_BLOCKS` unset, so
+the only block it registers is its own `fb.e2e.neops.io/log_burst:0.1.0`, which no other worker
+has. The driver publishes `wf.e2e.neops.io/log_burst` (one global step on that block) and runs it;
+the block then logs N lines a second for S seconds through the job's logger, so every line takes
+the production path: the push sink's 10,000-line buffer, its overflow and its retries. Once the
+burst is out and the engine answers `/health`, loadgen waits 30 s and sends itself SIGTERM; the
+SDK's graceful shutdown pushes the rest. It prints `LOADGEN READY`, `LOADGEN BURST` and, at exit,
+`LOADGEN SUMMARY` with the worker id, the lines sent, and what the SDK logged about lines it did
+not deliver: dropped (`dropped N log lines (buffer full)`), unpushed at exit, refused by the
+engine, lease refusals, and the HTTP statuses it retried. Those messages are copied into
+`tests/unit/test_loadgen.py`, so a reworded SDK message fails there.
+
+The driver refuses any directory but a harness clone, with the same guard as `chaos.py`. The
+accounting reads the loadgen worker's records straight from VictoriaLogs (`process` is the worker
+id) and counts per `seq` series: each starts at 0, so the highest `seq` stored says how many the SDK
+numbered.
 
 `--only` runs the named steps in the order given, which is how the prune is driven on its own:
 
