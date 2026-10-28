@@ -69,10 +69,24 @@ def test_the_log_steps_join_the_default_run_only_with_the_logs_overlay():
     assert "prune" not in with_logs
 
 
-def test_the_rollback_drill_runs_last_and_the_phase_two_steps_are_absent():
+def test_the_rollback_drill_runs_last_and_the_deferred_clock_skew_step_is_absent():
     steps = list(chaos.LOG_STEPS)
     assert steps[-1] == "c14"
-    assert not {"c9", "c11", "c13"} & set(steps)
+    assert "c13" not in steps
+
+
+def test_the_generator_is_checked_before_any_step_relies_on_it():
+    assert list(chaos.LOG_STEPS)[0] == "loadgen"
+
+
+def test_the_workflow_load_leaves_out_the_steps_that_need_loadgen():
+    steps = chaos.selected_steps(None, prune=False, logs=True, load=chaos_kit.WORKFLOW_LOAD)
+    assert not set(chaos_logs.LOADGEN_STEPS) & set(steps)
+    assert {"c2", "c8", "c10"} <= set(steps)
+
+
+def test_only_runs_a_loadgen_step_under_the_workflow_load_too():
+    assert chaos.selected_steps(["c9"], prune=False, logs=True, load=chaos_kit.WORKFLOW_LOAD) == ["c9"]
 
 
 def test_the_store_and_grafana_are_killed_only_where_they_run():
@@ -125,7 +139,7 @@ class FakeEngine:
 
 
 def test_the_load_counts_a_failing_run_instead_of_raising(monkeypatch):
-    stack = SimpleNamespace(deployment=None, engine=FakeEngine())
+    stack = SimpleNamespace(deployment=None, engine=FakeEngine(), load=chaos_kit.WORKFLOW_LOAD)
     calls = []
 
     def run_once(engine, target):
@@ -138,7 +152,7 @@ def test_the_load_counts_a_failing_run_instead_of_raising(monkeypatch):
     monkeypatch.setattr(chaos_kit.workflows, "prepare", lambda deployment, engine: "target")
     monkeypatch.setattr(chaos_kit.workflows, "run_once", run_once)
     monkeypatch.setattr(chaos_kit.time, "sleep", lambda s: None)
-    load = chaos_kit.make_load(stack, threads=1)
+    load = chaos_kit.make_load(stack, seconds=0, threads=1)
     load.start()
     result = load.stop()
     assert result.errors == ["RuntimeError: engine down"] and len(result.completed) == 1

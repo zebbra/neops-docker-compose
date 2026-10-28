@@ -29,6 +29,7 @@ import inside
 import logrecords
 import workflows
 import yaml
+from loadgen_driver import BurstLoad, BurstOutcome
 from run_scenario import CONNECT, Report, neops
 
 from neops_compose.compose import Compose
@@ -44,6 +45,17 @@ HEALTHY_TIMEOUT = 300.0
 RATE_LIMIT_MARKERS = ("rate limit", "too many")
 OUTBOX_SQL = "select coalesce(max(attempts), 0), count(*) from log_outbox"
 STORE_QUERY_SERVICES = (logrecords.ENGINE_SERVICE, logrecords.WORKER_SERVICE)
+SERIES_FIELDS = ("service", "process", "seq", "job_id")
+# VictoriaLogs keeps the line under its own name; the records come back with the engine's.
+STORE_MESSAGE_FIELD = "_msg"
+LOADGEN_LOAD = "loadgen"
+WORKFLOW_LOAD = "workflows"
+LOADS = (LOADGEN_LOAD, WORKFLOW_LOAD)
+# The plan's C2 rate, for every step "under load".
+BURST_RATE = 300
+# The burst outlasts the fault by this much: the fault starts once the lines flow, and the
+# store takes a few seconds to be seen open.
+LOAD_LEAD_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -53,6 +65,7 @@ class Stack:
     clone: Path
     values: dict[str, str]
     http: Http
+    load: str = LOADGEN_LOAD
 
     @property
     def cms(self) -> PublicUrl:
@@ -139,14 +152,14 @@ class Stack:
         return row["Name"]
 
 
-def load_stack(clone: Path) -> Stack:
+def load_stack(clone: Path, load: str = LOADGEN_LOAD) -> Stack:
     values = {}
     for line in (clone / ".env").read_text().splitlines():
         if line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip()
-    return Stack(clone, values, Http(connect=CONNECT, insecure=True))
+    return Stack(clone, values, Http(connect=CONNECT, insecure=True), load)
 
 
 def compose(
@@ -344,6 +357,25 @@ def store_paused(stack: Stack) -> Iterator[None]:
         docker("unpause", name, check=False)
 
 
+def running_services(stack: Stack) -> set[str]:
+    return {row["Service"] for row in Compose(stack.clone).ps() if row.get("State") == "running"}
+
+
+@contextmanager
+def engine_stopped(stack: Stack) -> Iterator[None]:
+    """Back with --no-deps, so nothing the engine depends on is restarted with it. Whatever the
+    stop took down with it is started again as it was, not recreated."""
+    running = running_services(stack)
+    compose(stack, "stop", "engine")
+    try:
+        yield
+    finally:
+        recreate(stack, "engine")
+        stopped = sorted(running - running_services(stack))
+        if stopped:
+            compose(stack, "start", *stopped)
+
+
 @contextmanager
 def engine_partitioned(stack: Stack) -> Iterator[None]:
     network, name = f"{stack.project}_logs", stack.container("engine")
@@ -366,6 +398,7 @@ class Load(Protocol):
 class LoadResult:
     runs: list[workflows.Run] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    burst: BurstOutcome | None = None
 
     @property
     def completed(self) -> list[workflows.Run]:
@@ -373,9 +406,9 @@ class LoadResult:
 
 
 class WorkflowLoad:
-    """workflows.py runs back to back on `threads` threads. It has no line rate: loadgen.py,
-    which drives the worker SDK's push sink at a set rate, replaces it once the SDK has that
-    sink. A run that fails while the step has the engine down is counted, not raised."""
+    """workflows.py runs back to back on `threads` threads: the fallback (`chaos.py --load
+    workflows`) for a worker image without the SDK's push sink, which loadgen needs. It has no
+    line rate. A run that fails while the step has the engine down is counted, not raised."""
 
     def __init__(self, stack: Stack, threads: int = 2):
         self.stack = stack
@@ -412,16 +445,57 @@ class WorkflowLoad:
         return self.result
 
 
-def make_load(stack: Stack, threads: int = 2) -> Load:
-    """The one place a step gets its traffic from; swap WorkflowLoad for loadgen.py here."""
-    return WorkflowLoad(stack, threads)
+class LoadgenLoad:
+    """One loadgen burst at BURST_RATE: the lines take the worker SDK's real push path."""
+
+    def __init__(self, stack: Stack, seconds: float):
+        self.burst = burst_load(stack, BURST_RATE, seconds)
+
+    def start(self) -> None:
+        self.burst.start()
+
+    def stop(self) -> LoadResult:
+        outcome = self.burst.finish()
+        return LoadResult(runs=[outcome.run] if outcome.run else [], errors=outcome.errors, burst=outcome)
+
+
+def burst_load(stack: Stack, rate: int, seconds: float) -> BurstLoad:
+    return BurstLoad(stack.clone, stack.project, stack.engine, rate, seconds)
+
+
+def make_load(stack: Stack, seconds: float, threads: int = 2) -> Load:
+    """The one place a step gets its traffic from. `seconds` is how long the step needs it;
+    workflow runs go on until stopped and `threads` only sizes them."""
+    if stack.load == WORKFLOW_LOAD:
+        return WorkflowLoad(stack, threads)
+    return LoadgenLoad(stack, seconds + LOAD_LEAD_SECONDS)
+
+
+def store_query(start: str, end: str, where: str, fields: tuple[str, ...]) -> str:
+    return f"_time:[{start}, {end}] {where} | fields {', '.join(fields)}"
 
 
 def store_records(stack: Stack, start: str, end: str) -> list[dict]:
     """The engine's and the workers' records of a window, straight from VictoriaLogs: the read
     API serves one run, a job or a worker at a time, and a seq hole shows only in a whole series."""
     services = ",".join(json.dumps(s) for s in STORE_QUERY_SERVICES)
-    query = f"_time:[{start}, {end}] service:in({services}) | fields service, process, seq, job_id"
+    return query_store(stack, store_query(start, end, f"service:in({services})", SERIES_FIELDS))
+
+
+def worker_records(stack: Stack, start: str, end: str, worker_id: str) -> list[dict]:
+    """One worker's records of a window, its messages included, under the engine's key names."""
+    where = f"service:={json.dumps(logrecords.WORKER_SERVICE)} process:={json.dumps(worker_id)}"
+    records = query_store(stack, store_query(start, end, where, (*SERIES_FIELDS, STORE_MESSAGE_FIELD)))
+    return [as_log_record(record) for record in records]
+
+
+def as_log_record(stored: dict) -> dict:
+    record = {key: value for key, value in stored.items() if key != STORE_MESSAGE_FIELD}
+    record["message"] = stored.get(STORE_MESSAGE_FIELD, "")
+    return record
+
+
+def query_store(stack: Stack, query: str) -> list[dict]:
     url = f"{stack.store.url}/select/logsql/query?{urlencode({'query': query})}"
     status, body = inside.from_engine(stack.clone, "GET", url)
     if status != 200:

@@ -1,6 +1,7 @@
 """The log-store chaos steps, C1-C16 of the logging test plan (§5), on a stack with
-compose.logs.yaml. C1 rides in chaos.py's `kill` step and C4b in its `env` step; C9, C11 and
-C13 need loadgen.py or a skewed worker clock and are not here yet. C15 only reports.
+compose.logs.yaml. C1 rides in chaos.py's `kill` step and C4b in its `env` step; C13 needs a
+skewed worker clock and is deferred (D8). C15 only reports. `loadgen` checks the generator the
+steps "under load" use, before they rely on it.
 """
 
 from __future__ import annotations
@@ -17,14 +18,17 @@ import inside
 import logrecords
 import workflows
 from chaos_kit import (
+    BURST_RATE,
     LoadResult,
     Stack,
+    burst_load,
     compose,
     docker,
     doctor_green,
     drained,
     engine_env,
     engine_partitioned,
+    engine_stopped,
     env_values,
     failing_probes,
     make_load,
@@ -40,7 +44,9 @@ from chaos_kit import (
     wait_for,
     wait_healthy,
     wait_logs,
+    worker_records,
 )
+from loadgen_driver import Accounting, BurstOutcome, account
 from run_scenario import CONNECT, Report, neops
 
 from neops_compose.doctor import LOGS_PROBE
@@ -75,6 +81,20 @@ SLOW_STORE_RUNS = 10
 SLOW_STORE_PAUSE = 100.0
 SLOW_STORE_SLACK = 1.0
 FINE_POLL = 0.25
+STORED_TIMEOUT = 60.0
+LOADGEN_CHECK_SECONDS = 60.0
+# The SDK sleeps a tick between batches of lines, so a burst runs a little past its length.
+RATE_SLACK_SECONDS = 2.0
+# 400 lines/s for 90 s against the SDK's 10,000-line buffer, with the engine gone for 75 s.
+OVERFLOW_RATE = 400
+OVERFLOW_SECONDS = 90.0
+ENGINE_DOWN_SECONDS = 75.0
+KILL_BURST_SECONDS = 60.0
+KILL_AFTER_SECONDS = 20.0
+ONLINE_TIMEOUT = 60.0
+FRESH_RATE = 10
+FRESH_SECONDS = 5.0
+RETRIED_STATUS = 503
 
 
 @dataclass
@@ -99,7 +119,7 @@ def outage_under_load(
     """Traffic, the fault for `seconds`, then recovery until the outbox is drained. `midway`
     runs once the engine has seen the outage, while the fault still holds."""
     start, before = utc_now(), version_logs(stack)
-    load = make_load(stack, threads)
+    load = make_load(stack, seconds, threads)
     load.start()
     try:
         with fault():
@@ -128,6 +148,48 @@ def assert_spooled_and_replayed(report: Report, outage: Outage) -> None:
     )
     dropped = outage.after.get("entriesDropped", 0) - outage.before.get("entriesDropped", 0)
     report.add(dropped == 0, f"no line dropped across the outage ({dropped})")
+
+
+def stored_lines(
+    stack: Stack, start: str, worker_id: str, expect: Callable[[Accounting], bool]
+) -> Accounting:
+    """Polled until `expect` holds: the engine hands a push on to the store a moment later."""
+    seen = account([])
+
+    def check() -> bool:
+        nonlocal seen
+        seen = account(worker_records(stack, start, utc_now(), worker_id))
+        return expect(seen)
+
+    wait_for(check, STORED_TIMEOUT)
+    return seen
+
+
+def burst_ran(report: Report, outcome: BurstOutcome) -> bool:
+    summary, run = outcome.summary, outcome.run
+    ok = summary is not None and summary.exit_code == 0 and run is not None and run.succeeded
+    return report.add(ok, f"loadgen ran its burst and stopped cleanly ({outcome.describe()})")
+
+
+def assert_burst_delivered(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> None:
+    """Every burst line in the store exactly once: the engine took them all, whatever its store did."""
+    if not burst_ran(report, outcome):
+        return
+    summary = outcome.summary
+    lines = stored_lines(stack, start, summary.worker_id, lambda seen: seen.burst_received >= summary.sent)
+    whole = lines.burst_received == summary.sent and lines.missing == 0 and lines.duplicates == 0
+    report.add(
+        whole and summary.dropped == 0 and summary.otherwise_lost == 0,
+        f"all {summary.sent} burst lines stored once, none dropped ({summary.dropped}) or otherwise lost "
+        f"({summary.otherwise_lost}) by the SDK ({lines})",
+    )
+
+
+def assert_load_readable(report: Report, stack: Stack, outage: Outage) -> None:
+    if outage.load.burst:
+        assert_burst_delivered(report, stack, outage.start, outage.load.burst)
+    else:
+        assert_runs_readable(report, stack, outage.load)
 
 
 def assert_runs_readable(report: Report, stack: Stack, load: LoadResult) -> None:
@@ -161,7 +223,7 @@ def step_store_down_under_load(report: Report, stack: Stack) -> None:
     """C2."""
     outage = outage_under_load(report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS)
     assert_spooled_and_replayed(report, outage)
-    assert_runs_readable(report, stack, outage.load)
+    assert_load_readable(report, stack, outage)
     assert_series(report, stack, outage.start)
 
 
@@ -286,11 +348,12 @@ def kill_engine(stack: Stack) -> None:
 
 
 def step_engine_kill_mid_outage(report: Report, stack: Stack) -> None:
-    """C7b: SIGKILL loses the in-memory tail by design; what reached the outbox survives."""
+    """C7b: SIGKILL loses the in-memory tail by design, worker lines it had accepted included;
+    what reached the outbox survives."""
     midway = carried_rows(report, stack, lambda: kill_engine(stack), "a SIGKILL")
     outage = outage_under_load(report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS, midway=midway)
     report.add(outage.recovered, f"the outbox drains after the kill ({outage.after.get('outbox')})")
-    assert_series(report, stack, outage.start)
+    assert_series(report, stack, outage.start, holes_in=())
 
 
 def step_outbox_cap(report: Report, stack: Stack) -> None:
@@ -308,11 +371,26 @@ def step_outbox_cap(report: Report, stack: Stack) -> None:
         report.add(
             warned, f"the engine logs the drop once the circuit closes (looked for {OUTBOX_DROP_MARKER!r})"
         )
-        newest = outage.load.completed[-1:]
-        report.add(bool(newest), "a run completed at the end of the outage")
-        for run in newest:
-            lines, _ = workflows.run_lines(stack.engine, run.execution_id)
-            report.add(not lines.problems(), f"the newest run's lines were kept ({lines})")
+        assert_newest_kept(report, stack, outage)
+
+
+def assert_newest_kept(report: Report, stack: Stack, outage: Outage) -> None:
+    if outage.load.burst:
+        assert_newest_burst_line_kept(report, stack, outage.start, outage.load.burst)
+        return
+    newest = outage.load.completed[-1:]
+    report.add(bool(newest), "a run completed at the end of the outage")
+    for run in newest:
+        lines, _ = workflows.run_lines(stack.engine, run.execution_id)
+        report.add(not lines.problems(), f"the newest run's lines were kept ({lines})")
+
+
+def assert_newest_burst_line_kept(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> None:
+    if not burst_ran(report, outcome):
+        return
+    last = outcome.summary.sent - 1
+    lines = stored_lines(stack, start, outcome.summary.worker_id, lambda seen: seen.newest_burst == last)
+    report.add(lines.newest_burst == last, f"the newest burst line, {last}, was kept ({lines})")
 
 
 def outage_push_body(timestamp: str) -> str:
@@ -330,9 +408,8 @@ def push_during_outage(stack: Stack) -> tuple[int | None, str]:
 
 def step_database_and_store_down(report: Report, stack: Stack) -> None:
     """C10: with its database and the store gone, the engine answers pushes 503 and stays up.
-    The engine's answer is read directly; the worker SDK's retry of it is not asserted until the
-    SDK's push sink (B1) defines the line it logs."""
-    load = make_load(stack)
+    The engine's answer is read directly; under loadgen, the SDK's retry of it is asserted too."""
+    load = make_load(stack, DOUBLE_OUTAGE_SECONDS)
     load.start()
     try:
         compose(stack, "stop", "postgres-engine", stack.store.service)
@@ -355,6 +432,16 @@ def step_database_and_store_down(report: Report, stack: Stack) -> None:
     )
     recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
     report.add(recovered, "the store is ok and the outbox drained")
+    if result.burst:
+        assert_sdk_retried(report, result.burst)
+
+
+def assert_sdk_retried(report: Report, outcome: BurstOutcome) -> None:
+    statuses = outcome.summary.retry_statuses if outcome.summary else []
+    report.add(
+        RETRIED_STATUS in statuses,
+        f"the worker SDK retried a push the engine answered {RETRIED_STATUS} (statuses retried: {statuses})",
+    )
 
 
 def parse_worker_exit(inspect: str) -> tuple[bool, str]:
@@ -472,7 +559,115 @@ def step_slow_store_at_unlock(report: Report, stack: Stack) -> None:
     report.add(recovered, "the store is ok and the outbox drained after the pause")
 
 
+def step_loadgen_rate(report: Report, stack: Stack) -> None:
+    """B8: loadgen sustains its rate for 60 s, and every line it sends reaches the store."""
+    start = utc_now()
+    load = burst_load(stack, BURST_RATE, LOADGEN_CHECK_SECONDS)
+    load.start()
+    outcome = load.finish()
+    summary = outcome.summary
+    if summary:
+        report.add(
+            summary.sent == round(BURST_RATE * LOADGEN_CHECK_SECONDS)
+            and summary.burst_seconds <= LOADGEN_CHECK_SECONDS + RATE_SLACK_SECONDS,
+            f"loadgen sent {summary.sent} lines in {summary.burst_seconds}s "
+            f"({BURST_RATE}/s for {LOADGEN_CHECK_SECONDS:.0f}s wanted)",
+        )
+    assert_burst_delivered(report, stack, start, outcome)
+
+
+def step_engine_down_overflow(report: Report, stack: Stack) -> None:
+    """C9: past the SDK's buffer the oldest lines go, the next push says how many, and nothing
+    else is lost: by seq, the store holds what the SDK numbered minus what it dropped."""
+    start = utc_now()
+    load = burst_load(stack, OVERFLOW_RATE, OVERFLOW_SECONDS)
+    load.start()
+    try:
+        with engine_stopped(stack):
+            time.sleep(ENGINE_DOWN_SECONDS)
+    finally:
+        outcome = load.finish()
+    if burst_ran(report, outcome):
+        assert_overflow_accounted(report, stack, start, outcome)
+
+
+def assert_overflow_accounted(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> None:
+    summary = outcome.summary
+    report.add(
+        summary.dropped > 0, f"the SDK dropped N > 0 lines while the engine was down (N={summary.dropped})"
+    )
+    report.add(
+        summary.otherwise_lost == 0,
+        f"no line lost but to the overflow ({summary.unpushed} unpushed, {summary.refused} refused, "
+        f"{summary.lease_refused} lease refusals)",
+    )
+    last = summary.sent - 1
+    lines = stored_lines(
+        stack,
+        start,
+        summary.worker_id,
+        lambda seen: seen.newest_burst == last and seen.missing <= summary.dropped,
+    )
+    report.add(lines.duplicates == 0, f"no line stored twice ({lines.duplicates})")
+    report.add(
+        lines.received == lines.assigned - summary.dropped,
+        f"received {lines.received} = sent {lines.assigned} - N {summary.dropped}, by seq "
+        f"({lines.burst_received} of {summary.sent} burst lines)",
+    )
+    report.add(lines.drop_warnings > 0, f"the 'dropped N log lines' warning reached the store ({lines})")
+
+
+def step_worker_kill_mid_push(report: Report, stack: Stack) -> None:
+    """C11: a SIGKILLed worker leaves whole batches behind, never part of one or one twice, and
+    a fresh worker takes its place."""
+    start = utc_now()
+    load = burst_load(stack, BURST_RATE, KILL_BURST_SECONDS)
+    load.start()
+    time.sleep(KILL_AFTER_SECONDS)
+    load.kill()
+    killed_at = time.monotonic()
+    outcome = load.finish()
+    report.add(
+        outcome.summary is None,
+        f"loadgen's worker {outcome.worker_id} died mid-burst (exit {outcome.exit_code})",
+    )
+    assert_fresh_worker_online(report, stack, killed_at)
+    records = worker_records(stack, start, utc_now(), outcome.worker_id)
+    problems = logrecords.seq_problems(records, (logrecords.WORKER_SERVICE,))
+    report.add(
+        bool(records) and not problems,
+        f"no partial or duplicate batch in the killed worker's {len(records)} stored lines ({problems[:4]})",
+    )
+
+
+def assert_fresh_worker_online(report: Report, stack: Stack, killed_at: float) -> None:
+    """A new loadgen worker, started with --no-deps, is ONLINE within a minute of the kill and runs a job."""
+    fresh = burst_load(stack, FRESH_RATE, FRESH_SECONDS)
+    try:
+        worker_id = fresh.launch()
+        left = max(0.0, ONLINE_TIMEOUT - (time.monotonic() - killed_at))
+        online = wait_for(lambda: worker_state(stack, worker_id) == workflows.ONLINE, left, interval=2.0)
+        report.add(
+            online,
+            f"a fresh worker {worker_id} is ONLINE {time.monotonic() - killed_at:.0f}s after the kill "
+            f"({worker_state(stack, worker_id)})",
+        )
+        fresh.trigger()
+    except Exception:
+        fresh.kill()
+        raise
+    burst_ran(report, fresh.finish())
+
+
+def worker_state(stack: Stack, worker_id: str) -> str | None:
+    _, states = workflows.workers(stack.engine)
+    return states.get(worker_id)
+
+
+# They drive loadgen.py whatever --load says.
+LOADGEN_STEPS = ("loadgen", "c9", "c11")
 LOG_STEPS: dict[str, Callable[[Report, Stack], None]] = {
+    "loadgen": step_loadgen_rate,
     "c2": step_store_down_under_load,
     "c3": step_store_down_idle,
     "c4": step_misconfigured_endpoint,
@@ -482,7 +677,9 @@ LOG_STEPS: dict[str, Callable[[Report, Stack], None]] = {
     "c7": step_engine_restart_mid_outage,
     "c7b": step_engine_kill_mid_outage,
     "c8": step_outbox_cap,
+    "c9": step_engine_down_overflow,
     "c10": step_database_and_store_down,
+    "c11": step_worker_kill_mid_push,
     "c12a": step_old_worker,
     "c15": step_celery_child_restart,
     "c16": step_slow_store_at_unlock,

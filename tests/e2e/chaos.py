@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Chaos checks against a stack left running by run_scenario.py --keep.
 
-    uv run python tests/e2e/chaos.py <clone dir> [--prune] [--only STEP ...]
+    uv run python tests/e2e/chaos.py <clone dir> [--prune] [--only STEP ...] [--load workflows]
 
 kill      Kill each service in turn; `compose up -d --wait` brings it back and doctor is green.
           With the logs overlay that includes the store and Grafana (C1).
@@ -11,14 +11,17 @@ env       Corrupt .env four ways, a bare-number retention among them (C4b); `./n
           names each problem and exits 1.
 engine    Restart the engine under a polling worker; the worker keeps working.
 database  Stop the CMS database; logins fail while it is gone and work again when it returns.
+loadgen   loadgen.py holds its rate for 60 s and every line it sends reaches the store.
 c2 … c16  The log-store faults of the logging test plan, on a stack with compose.logs.yaml:
           see chaos_logs.py. They run after the steps above, c14 last.
 
 `--only` picks steps by those names and runs them in the listed order; the default is every
 step but `prune`, plus the log steps when the stack runs compose.logs.yaml, and `--prune` swaps
 `prune` in for `restart`. The prune removes every unused image, container and volume on the
-host, so it asks before running and never runs unless named. Exit code 0 only when every step
-passed. See tests/e2e/README.md.
+host, so it asks before running and never runs unless named. Traffic "under load" is loadgen.py
+in a one-off worker container; `--load workflows` swaps in back-to-back workflow runs for a worker
+image without the SDK's push sink, and leaves out the steps that need loadgen. Exit code 0 only
+when every step passed. See tests/e2e/README.md.
 """
 
 from __future__ import annotations
@@ -34,6 +37,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from chaos_kit import (  # noqa: E402
+    LOADGEN_LOAD,
+    LOADS,
     WAIT_TIMEOUT,
     Stack,
     doctor_green,
@@ -45,7 +50,7 @@ from chaos_kit import (  # noqa: E402
     wait_for,
     wait_logs,
 )
-from chaos_logs import LOG_STEPS  # noqa: E402
+from chaos_logs import LOADGEN_STEPS, LOG_STEPS  # noqa: E402
 from run_scenario import (  # noqa: E402
     CONNECT,
     Report,
@@ -325,12 +330,20 @@ def steps_by_name(report: Report, stack: Stack) -> dict[str, Callable[[], None]]
     return steps
 
 
-def selected_steps(only: list[str] | None, prune: bool, logs: bool = False) -> list[str]:
+def selected_steps(
+    only: list[str] | None, prune: bool, logs: bool = False, load: str = LOADGEN_LOAD
+) -> list[str]:
     """The log steps need the VictoriaLogs overlay: they stop, pause and query that store."""
     if only:
         return only
     base = [("prune" if name == "restart" and prune else name) for name in DEFAULT_STEPS]
-    return base + (list(LOG_STEPS) if logs else [])
+    return base + (log_steps(load) if logs else [])
+
+
+def log_steps(load: str) -> list[str]:
+    if load == LOADGEN_LOAD:
+        return list(LOG_STEPS)
+    return [name for name in LOG_STEPS if name not in LOADGEN_STEPS]
 
 
 def run_steps(report: Report, stack: Stack, names: list[str]) -> None:
@@ -354,6 +367,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="STEP",
         help=f"run only this step, repeatable and ordered: {', '.join(STEP_NAMES)}",
     )
+    ap.add_argument(
+        "--load",
+        choices=LOADS,
+        default=LOADGEN_LOAD,
+        help="traffic for the steps under load: loadgen.py (default) or back-to-back workflow runs",
+    )
     args = ap.parse_args(argv)
 
     clone = args.clone.resolve()
@@ -361,10 +380,10 @@ def main(argv: list[str] | None = None) -> int:
     if refusal:
         raise SystemExit(refusal)
 
-    stack = load_stack(clone)
+    stack = load_stack(clone, args.load)
     report = Report()
     started = time.monotonic()
-    run_steps(report, stack, selected_steps(args.only, args.prune, stack.scenario.logs))
+    run_steps(report, stack, selected_steps(args.only, args.prune, stack.scenario.logs, args.load))
     print(
         f"\nchaos: {len(report.results) - len(report.failed)}/{len(report.results)} assertions "
         f"passed in {time.monotonic() - started:.0f}s",
