@@ -196,16 +196,19 @@ other: a running 0.2 worker fails every job it reports to a 0.44 engine. Upgrade
 run in progress, and stop the worker first:
 
 ```bash
+DATA=${NEOPS_DATA_DIR:-./data}                         # the value from .env, if it sets one
 ./neops compose -- stop worker
 ./neops backup
-cp -a data/.neops/state.json data/.neops/state.json.pre-upgrade   # the backup does not carry it
-sudo cp -a data/metrics/grafana data/metrics/grafana.pre-upgrade  # metrics installs only
+cp -a "$DATA/.neops/state.json" "$DATA/.neops/state.json.pre-upgrade"   # the backup does not carry it
+./neops compose -- stop grafana                                         # metrics installs only:
+sudo cp -a "$DATA/metrics/grafana" "$DATA/metrics/grafana.pre-upgrade"  # a stopped Grafana's copy
 git pull
-./neops up                                                         # starts the new worker too
+./neops up                                    # starts the new worker and Grafana again
 ```
 
-Grafana moves from 11 to 12 and migrates `data/metrics/grafana` on its first start; there is no way
-back to 11 on the migrated directory, so the copy above is the only rollback for Grafana's state.
+Grafana moves from 11 to 12 and migrates `metrics/grafana` under the data directory on its first
+start; there is no way back to 11 on the migrated directory, so the copy above, taken while Grafana
+is stopped, is the only rollback for Grafana's state.
 On the first `up`, `./neops check` prints one `WARNING:` that `compose.metrics.yaml` requires
 `compose.grafana.yaml`; migration `0003` then adds it. The CMS's retention default drops from 90 to
 30 days for installs that never enabled retention; one that had it enabled keeps its horizon
