@@ -136,8 +136,8 @@ long as the command runs. Omit the flag and type the password at the prompt on a
 `migrations/NNNN_<slug>.py`, applied once each, in numeric order, recorded in
 `data/.neops/state.json`. These are deployment-*layout* migrations (moving a data directory,
 renaming an `.env` key, a Postgres major-version upgrade), not the CMS's or the engine's own
-application migrations, which each container still runs on its own boot. There are two today, and
-both run on a fresh install as well as on an upgrade:
+application migrations, which each container still runs on its own boot. There are three today,
+and all run on a fresh install as well as on an upgrade:
 
 - `0001_initial_layout` creates the `data/` tree every bind mount points at, the state directory
   and `secrets/` at mode 0700, and hands `data/elasticsearch` to uid 1000, which the Elasticsearch
@@ -145,9 +145,16 @@ both run on a fresh install as well as on an upgrade:
 - `0002_grafana_data_owner` hands `data/metrics/grafana` to uid 472, which the Grafana image runs
   as and refuses to start without. It runs whether or not you use the metrics overlay, so turning
   that overlay on later needs nothing further.
+- `0003_grafana_and_logs_layout` creates `data/logs/victoria`, adds `compose.grafana.yaml` before
+  `compose.metrics.yaml` in `COMPOSE_FILE`, and moves the CMS's logging keys to their new names:
+  `NEOPS_LOGGER_CLASS` becomes `NEOPS_LOG_BACKEND=db` (an `OptimizedDbLogger` class is kept as
+  `NEOPS_LOG_CLASS`), and `EXECUTION_LOG_RETENTION_ENABLED` becomes `NEOPS_LOG_RETENTION_ENABLED`.
+  The retention horizon is carried over unchanged: `EXECUTION_LOG_RETENTION_DAYS=<n>` becomes
+  `NEOPS_LOG_RETENTION=<n>d`, and an enabled retention without a days value gets `90d`, the old
+  default, rather than the new `30d`.
 
-Both are idempotent, and both change ownership through a throwaway container rather than asking
-you for `sudo`.
+All three are idempotent, and the first two change ownership through a throwaway container rather
+than asking you for `sudo`.
 
 `./neops migrate` applies every pending migration; `--dry-run` prints what would run without
 changing anything; `--fake NAME` records one migration as applied without running it. You are
@@ -163,8 +170,8 @@ git pull        # or: git checkout <next release tag>
 ./neops up
 ```
 
-`up` refuses to proceed if the pinned `neops-core` image would move to an *older* tag than the
-last successful `up` recorded: Django migrations are not reversible, so a downgrade is refused
+`up` runs `check`, then the pending migrations, then refuses to go further if the pinned
+`neops-core` image would move to an *older* tag than the last successful `up` recorded: Django migrations are not reversible, so a downgrade is refused
 rather than run and corrupted. Restore a backup instead, or pass `--allow-downgrade` only if you
 are certain the target schema is compatible.
 
@@ -181,6 +188,28 @@ recording the start, so the next `./neops up` tries it again. To run it by hand:
 ```bash
 ./neops compose -- exec cms python manage.py elastic_index --rebuild --force
 ```
+
+### Upgrading to the release with centralized logging
+
+This release moves the engine to 0.44 and the worker to 0.3, which are compatible only with each
+other: a running 0.2 worker fails every job it reports to a 0.44 engine. Upgrade with no workflow
+run in progress, and stop the worker first:
+
+```bash
+./neops compose -- stop worker
+./neops backup
+cp -a data/.neops/state.json data/.neops/state.json.pre-upgrade   # the backup does not carry it
+sudo cp -a data/metrics/grafana data/metrics/grafana.pre-upgrade  # metrics installs only
+git pull
+./neops up                                                         # starts the new worker too
+```
+
+Grafana moves from 11 to 12 and migrates `data/metrics/grafana` on its first start; there is no way
+back to 11 on the migrated directory, so the copy above is the only rollback for Grafana's state.
+On the first `up`, `./neops check` prints one `WARNING:` that `compose.metrics.yaml` requires
+`compose.grafana.yaml`; migration `0003` then adds it. The CMS's retention default drops from 90 to
+30 days for installs that never enabled retention; one that had it enabled keeps its horizon
+(`0003` writes it out).
 
 Elasticsearch upgrades its data directory in place on the first start of a newer image and cannot
 open it with an older one afterwards. Going back to a previous release therefore needs

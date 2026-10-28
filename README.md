@@ -4,7 +4,7 @@
 
 Production deployment of the Neops 2.0 stack with Docker Compose: neops-core (CMS), the workflow
 engine, the workflow manager UI, a worker, the web client, Postgres per service, Redis and
-Elasticsearch, with optional Traefik, Keycloak and a metrics stack.
+Elasticsearch, with optional Traefik, Keycloak, Grafana, a metrics stack and a log store.
 
 Full documentation: `docs/` (and docs.neops.io once published).
 
@@ -50,7 +50,9 @@ Log in at `NEOPS_WEB_URL` as `NEOPS_ADMIN_USER`.
 | `examples/oidc-external.env` | login through your identity provider |
 | `examples/oidc-external-shared-host.env` | the same on one hostname with paths instead of subdomains |
 | `examples/oidc-keycloak.env` | login through a bundled Keycloak |
-| `examples/metrics.env` | + VictoriaMetrics, Grafana, exporters |
+| `examples/metrics.env` | + Grafana, VictoriaMetrics, exporters |
+| `examples/logs.env` | + Grafana, VictoriaLogs as the log store of the engine and the CMS |
+| `examples/metrics-logs.env` | + both of the above |
 
 Overlays combine: edit `COMPOSE_FILE` in `.env`; `./neops check` tells you if a combination is invalid.
 

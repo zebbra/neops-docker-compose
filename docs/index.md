@@ -43,9 +43,13 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `web` | `neops-web-client` | the production Angular web client |
 | `keycloak` | `keycloak:26.5.2` | bundled identity provider (keycloak overlay only) |
 | `traefik` | `traefik:v3.6.25` | bundled reverse proxy and TLS termination (traefik overlay only) |
-| VictoriaMetrics, vmalert, Grafana, exporters | n/a | metrics overlay only |
+| `grafana` | `grafana/grafana:12.4.9` | dashboards and log search (grafana overlay, required by metrics and logs) |
+| VictoriaMetrics, vmalert, exporters | n/a | metrics overlay only |
+| `victorialogs` | `victoria-logs:v1.53.0` | log store of the engine and the CMS (logs overlay only) |
 
-Every service shares one Docker network; the base `compose.yaml` publishes no ports. Which ports
+Every service shares one Docker network, except VictoriaLogs, which the logs overlay puts on a
+`logs` network that only the engine, the CMS services and Grafana join; the base `compose.yaml`
+publishes no ports. Which ports
 reach the host depends on the routing overlay you pick. See [Scenarios](20-scenarios.md).
 
 ## Durable state
@@ -62,7 +66,9 @@ data/
 ├── keycloak/postgres/      Postgres data directory for postgres-keycloak      [keycloak overlay]
 ├── elasticsearch/          Elasticsearch data, owned by uid 1000
 ├── traefik/acme/            acme.json                                        [tls-acme overlay]
-├── metrics/victoria/       metrics/grafana/                                  [metrics overlay]
+├── metrics/victoria/                                                         [metrics overlay]
+├── metrics/grafana/        Grafana's state, owned by uid 472                [grafana overlay]
+├── logs/victoria/          VictoriaLogs data                                [logs overlay]
 ├── secrets/                mode 0700; every file inside is 0600
 │   ├── jwt/private.pem  jwt/public.pem     the CMS signs, the engine verifies
 │   ├── engine.env                          the engine's CMS API key
