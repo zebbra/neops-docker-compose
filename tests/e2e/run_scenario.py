@@ -11,6 +11,7 @@ deployment works. Exit code 0 only when every assertion held. See tests/e2e/READ
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import secrets
@@ -120,7 +121,9 @@ HARNESS_OVERLAYS = "E2E_OVERLAYS"
 E2E_EXAMPLES = REPO / "tests" / "e2e" / "examples"
 GRAFANA_AND_LOGS_MIGRATION = "0003_grafana_and_logs_layout"
 NOT_CONFIGURED = "LOGS_NOT_CONFIGURED"
-OVERRIDE_YAML = """# Written by tests/e2e/run_scenario.py: this dev box runs above Elasticsearch's
+E2E_PROJECT_PREFIX = "neops-e2e-"
+OVERRIDE_MARKER = "# Written by tests/e2e/run_scenario.py"
+OVERRIDE_YAML = f"""{OVERRIDE_MARKER}: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
 services:
   elasticsearch:
@@ -309,7 +312,7 @@ def build_env(example: Path, name: str, ports: Ports, extra: dict[str, str]) -> 
     else:
         apply_traefik_ports(values, scenario, ports)
     values["COMPOSE_FILE"] = values["COMPOSE_FILE"] + ":" + OVERRIDE_FILE
-    values["COMPOSE_PROJECT_NAME"] = f"neops-e2e-{name}-{ports.base}"
+    values["COMPOSE_PROJECT_NAME"] = f"{E2E_PROJECT_PREFIX}{name}-{ports.base}"
     values.update(extra)
     return values
 
@@ -728,16 +731,21 @@ def assert_store_running(report: Report, clone: Path, store: logrecords.LogStore
     report.add(state == "running", f"{store.service} is running ({state})")
 
 
+def assert_sole_store(report: Report, clone: Path, store: logrecords.LogStore) -> None:
+    """A Loki deployment must not also run VictoriaLogs, nor the other way round."""
+    others = set(logrecords.other_store_services(store))
+    found = sorted(r["Name"] for r in Compose(clone).ps() if r.get("Service") in others)
+    report.add(not found, f"no container of another log store runs beside {store.service} ({found})")
+
+
 def assert_log_store_isolation(report: Report, clone: Path, store: logrecords.LogStore) -> None:
     """The engine reaches the store; the worker, where function-block code runs, must not."""
     report.add(
         inside.engine_reaches(clone, store.ready_url),
         f"{store.service} answers {store.ready_path} to the engine",
     )
-    report.add(
-        not inside.worker_reaches(clone, store.ready_url),
-        f"{store.service} is unreachable from the worker container",
-    )
+    isolated, why = inside.worker_isolated_from(clone, store.ready_url)
+    report.add(isolated, f"{store.service} is unreachable from the worker container ({why})")
 
 
 def grafana_datasource_types(clone: Path, values: dict[str, str]) -> list[str]:
@@ -770,19 +778,40 @@ def assert_logs_not_queryable(
     )
 
 
-def assert_run_lines(report: Report, deployment: workflows.Deployment, engine: workflows.Engine) -> None:
+@dataclass(frozen=True)
+class RunPage:
+    run: workflows.Run
+    lines: logrecords.RunLines
+    items: list[dict]
+
+
+def read_run_page(deployment: workflows.Deployment, engine: workflows.Engine) -> RunPage:
+    run = workflows.run_once(engine, workflows.prepare(deployment, engine))
+    lines, items = workflows.run_lines(engine, run.execution_id)
+    return RunPage(run, lines, items)
+
+
+def assert_run_lines(report: Report, page: RunPage) -> None:
     """One workflow run end to end, read back through the run's log route: the worker's lines
     arrive there with the engine's and core's, which is what an operator reads first."""
-    run = workflows.run_once(engine, workflows.prepare(deployment, engine))
+    run, lines = page.run, page.lines
     report.add(
         run.succeeded,
         f"a {workflows.SAVE_FACT_FB} run completes ({run.execution_id}: {run.status}, {run.seconds:.0f}s)",
     )
-    lines, _ = workflows.run_lines(engine, run.execution_id)
     report.add(
         not lines.problems(),
-        f"GET /workflow-execution/:id/logs holds the run's engine, worker and core lock/unlock lines "
-        f"and no other run's ({lines}; {', '.join(lines.problems()) or 'complete'})",
+        f"GET /workflow-execution/:id/logs holds the run's engine and worker lines and core's audit "
+        f"line of the unlock, and no other run's ({lines}; {', '.join(lines.problems()) or 'complete'})",
+    )
+
+
+def assert_no_ingest_keys(report: Report, page: RunPage, store: logrecords.LogStore) -> None:
+    problems = logrecords.ingest_key_problems(page.items, store.ingest_keys)
+    report.add(
+        bool(page.items) and not problems,
+        f"no record of the run carries the keys {store.backend} adds at ingestion "
+        f"({len(page.items)} records; {', '.join(problems) or 'none'})",
     )
 
 
@@ -811,13 +840,16 @@ def log_assertions(
     store = logrecords.store_of(values)
     deployment = workflows.Deployment(clone, values, http)
     engine = workflows.Engine(deployment, lambda: workflows.admin_token(deployment))
+    page = functools.cache(lambda: read_run_page(deployment, engine))
     return {
         "not-queryable": lambda: assert_logs_not_queryable(report, deployment, engine),
         "store-running": lambda: assert_store_running(report, clone, store),
+        "sole-store": lambda: assert_sole_store(report, clone, store),
         "store-isolated": lambda: assert_log_store_isolation(report, clone, store),
         "grafana-datasource": lambda: assert_grafana_has_the_logs_datasource(report, clone, values, store),
         "engine-store-ok": lambda: assert_engine_log_store_ok(report, deployment),
-        "run-lines": lambda: assert_run_lines(report, deployment, engine),
+        "run-lines": lambda: assert_run_lines(report, page()),
+        "no-ingest-keys": lambda: assert_no_ingest_keys(report, page(), store),
         "worker-lines": lambda: assert_worker_lines_round_trip(report, engine),
     }
 

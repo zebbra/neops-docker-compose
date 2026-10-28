@@ -178,10 +178,8 @@ class Smoke:
     def s4(self) -> Check:
         if self.store is None:
             return Check("S4", NA, "no log store")
-        reached = inside.worker_reaches(self.base, self.store.ready_url)
-        return judged(
-            "S4", not reached, f"worker -> {self.store.ready_url}: {'reached' if reached else 'refused'}"
-        )
+        isolated, why = inside.worker_isolated_from(self.base, self.store.ready_url)
+        return judged("S4", isolated, why)
 
     def s5(self) -> Check:
         if self.store is None or not self.store.datasource_type or not self.grafana_runs():

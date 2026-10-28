@@ -168,3 +168,20 @@ def test_warnings_match_needs_each_expected_warning_and_no_other():
     assert not run_scenario.warnings_match([line], [])
     assert not run_scenario.warnings_match([], ["compose.grafana.yaml"])
     assert run_scenario.warnings_match([], [])
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"COMPOSE_FILE": "compose.yaml:compose.grafana.yaml:compose.logs.yaml"},
+        {"COMPOSE_FILE": "compose.yaml:compose.expose.yaml", "NEOPS_LOG_BACKEND": "loki"},
+        {"COMPOSE_FILE": "compose.yaml:compose.expose.yaml"},
+    ],
+)
+def test_every_log_check_a_store_asks_for_has_an_assertion(values):
+    import logrecords
+
+    from neops_compose.doctor import Http
+
+    assertions = run_scenario.log_assertions(run_scenario.Report(), Path("/x"), values, Http())
+    assert set(logrecords.log_checks(values)) <= set(assertions)

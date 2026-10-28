@@ -8,10 +8,14 @@ Node or the worker's Python instead.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from neops_compose.compose import Compose, ComposeError
+from neops_compose.traefik_model import SERVICE_URLS
 
-ENGINE_INTERNAL = "http://127.0.0.1:3030"
+ENGINE_IN_STACK = SERVICE_URLS["engine"]
+ENGINE_INTERNAL = f"http://127.0.0.1:{urlsplit(ENGINE_IN_STACK).port}"
+ENGINE_HEALTH = "/health"
 NODE_GET = (
     "require('http').get(process.argv[1], r => process.exit(r.statusCode === 200 ? 0 : 1))"
     ".on('error', () => process.exit(1))"
@@ -43,9 +47,22 @@ def worker_reaches(base: Path, url: str) -> bool:
     return reaches(base, "worker", "python", "-c", PYTHON_GET, url)
 
 
+def worker_isolated_from(base: Path, url: str) -> tuple[bool, str]:
+    """(isolated, why). A refusal only counts while the worker reaches the engine: a worker that
+    is down, or an exec that fails, refuses every URL."""
+    control = ENGINE_IN_STACK + ENGINE_HEALTH
+    if not worker_reaches(base, control):
+        return False, f"no verdict: the worker does not reach {control} either"
+    if worker_reaches(base, url):
+        return False, f"worker -> {url}: reached"
+    return True, f"worker -> {url}: refused, while it reaches {control}"
+
+
 def parse_status(out: str) -> tuple[int | None, str]:
     first, _, body = out.partition("\n")
-    return (int(first) if first.strip().isdigit() else None), body.strip()
+    if not first.strip().isdigit():
+        return None, out.strip()
+    return int(first), body.strip()
 
 
 def from_engine(base: Path, method: str, url: str, body: str = "") -> tuple[int | None, str]:

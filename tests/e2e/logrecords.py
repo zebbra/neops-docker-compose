@@ -9,8 +9,9 @@ from __future__ import annotations
 import re
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Collection, Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
 
 from neops_compose.rules import LOG_BACKEND
 from neops_compose.scenario import Scenario
@@ -18,6 +19,7 @@ from neops_compose.scenario import Scenario
 ENGINE_SERVICE = "neops-workflow-engine"
 WORKER_SERVICE = "neops-worker"
 CORE_SERVICE = "neops-core"
+SERVICES = (ENGINE_SERVICE, WORKER_SERVICE, CORE_SERVICE)
 DB_BACKEND = "db"
 # Loki injects these at ingestion; the engine drops them on read and no record may carry them.
 LOKI_INGEST_KEYS = frozenset({"service_name", "detected_level"})
@@ -33,6 +35,7 @@ class LogStore:
     url: str
     ready_path: str
     datasource_type: str | None
+    ingest_keys: frozenset[str] = field(default=frozenset())
 
     @property
     def ready_url(self) -> str:
@@ -47,7 +50,7 @@ STORES = {
         "/health",
         "victoriametrics-logs-datasource",
     ),
-    "loki": LogStore("loki", "loki", "http://loki:3100", "/ready", None),
+    "loki": LogStore("loki", "loki", "http://loki:3100", "/ready", None, LOKI_INGEST_KEYS),
 }
 
 
@@ -67,10 +70,26 @@ def log_checks(values: Mapping[str, str]) -> tuple[str, ...]:
     store = store_of(values)
     if store is None:
         return ("not-queryable",)
-    checks = ["store-running", "store-isolated", "engine-store-ok", "run-lines", "worker-lines"]
+    checks = ["store-running", "sole-store", "store-isolated", "engine-store-ok", "run-lines", "worker-lines"]
     if store.datasource_type:
         checks.append("grafana-datasource")
+    if store.ingest_keys:
+        checks.append("no-ingest-keys")
     return tuple(checks)
+
+
+def other_store_services(store: LogStore) -> list[str]:
+    """The services of every store this deployment does not write to: none of them may run."""
+    return sorted(other.service for other in STORES.values() if other.service != store.service)
+
+
+def ingest_key_problems(records: list[Mapping], keys: Collection[str]) -> list[str]:
+    """Each store-injected key found on a record, at the top or among the producer's fields."""
+    counts: Counter[str] = Counter()
+    for record in records:
+        present = set(record) | set(record.get("fields") or {})
+        counts.update(present & set(keys))
+    return [f"{key} on {n} of {len(records)} records" for key, n in sorted(counts.items())]
 
 
 def seq_series_key(record: Mapping) -> tuple[str, ...]:
@@ -81,10 +100,11 @@ def seq_series_key(record: Mapping) -> tuple[str, ...]:
     return key
 
 
-def seq_problems(records: Iterable[Mapping], holes: bool = True) -> list[str]:
-    """Duplicates, and with `holes` the missing numbers, within each series between the lowest
-    and the highest `seq` seen. A SIGKILLed engine loses its in-memory tail by design, so a step
-    that kills one asks for duplicates alone and reports the holes."""
+def seq_problems(records: Iterable[Mapping], holes_in: Collection[str] = SERVICES) -> list[str]:
+    """Duplicates in every series, and the missing numbers between the lowest and the highest
+    `seq` seen in the series of the services in `holes_in`. A SIGKILLed engine loses its
+    in-memory tail, and a store probe that fails takes an engine seq it never spools, so steps
+    that do either leave the engine out of `holes_in`."""
     series: dict[tuple[str, ...], list[int]] = defaultdict(list)
     for record in records:
         series[seq_series_key(record)].append(int(record["seq"]))
@@ -95,7 +115,7 @@ def seq_problems(records: Iterable[Mapping], holes: bool = True) -> list[str]:
         missing = sorted(set(range(min(counts), max(counts) + 1)) - set(counts))
         if duplicates:
             problems.append(f"{'/'.join(key)}: duplicate seq {_abbreviate(duplicates)}")
-        if holes and missing:
+        if key[0] in holes_in and missing:
             problems.append(f"{'/'.join(key)}: {len(missing)} missing seq {_abbreviate(missing)}")
     return problems
 
@@ -114,16 +134,13 @@ def key_set(records: Iterable[Mapping]) -> list[str]:
     return sorted(keys)
 
 
-def core_line_kind(record: Mapping) -> str | None:
-    """`lock` or `unlock` for one of core's lines, judged by its message."""
-    if record.get("service") != CORE_SERVICE:
-        return None
-    message = str(record.get("message", "")).lower()
-    if "unlock" in message:
-        return "unlock"
-    if "lock" in message:
-        return "lock"
-    return None
+# DbUpdater's attribution record, written once per change an unlock applies
+# (neops-core locking/db_updater.py). Core writes no line for a lock it grants.
+UNLOCK_AUDIT = re.compile(r"^lock .+?: applied \S+ on \S+ .* -- actor: ")
+
+
+def is_unlock_audit(record: Mapping) -> bool:
+    return record.get("service") == CORE_SERVICE and bool(UNLOCK_AUDIT.match(str(record.get("message", ""))))
 
 
 @dataclass(frozen=True)
@@ -132,19 +149,16 @@ class RunLines:
 
     engine: int
     worker: int
-    core_lock: int
-    core_unlock: int
+    core_unlock_audit: int
     foreign: int
 
     @classmethod
     def count(cls, records: list[Mapping], execution_id: str) -> RunLines:
         own = [r for r in records if r.get("workflow_execution_id") == execution_id]
-        kinds = [core_line_kind(r) for r in own]
         return cls(
             engine=sum(r.get("service") == ENGINE_SERVICE for r in own),
             worker=sum(r.get("service") == WORKER_SERVICE for r in own),
-            core_lock=kinds.count("lock"),
-            core_unlock=kinds.count("unlock"),
+            core_unlock_audit=sum(map(is_unlock_audit, own)),
             foreign=len(records) - len(own),
         )
 
@@ -152,8 +166,7 @@ class RunLines:
         wanted = {
             "engine": self.engine,
             "worker": self.worker,
-            "core lock": self.core_lock,
-            "core unlock": self.core_unlock,
+            "core unlock audit": self.core_unlock_audit,
         }
         out = [f"no {name} line" for name, n in wanted.items() if n < 1]
         if self.foreign:
@@ -212,6 +225,8 @@ def _errors(value: object, node: Mapping, root: Mapping, path: str) -> list[str]
 
 def _scalar_errors(value: object, node: Mapping, path: str) -> list[str]:
     out = []
+    if "const" in node and value != node["const"]:
+        out.append(f"{path}: {value!r} is not {node['const']!r}")
     if "enum" in node and value not in node["enum"]:
         out.append(f"{path}: {value!r} is not one of {node['enum']}")
     if isinstance(value, str):
@@ -223,6 +238,8 @@ def _scalar_errors(value: object, node: Mapping, path: str) -> list[str]:
             out.append(f"{path}: {value!r} does not match {node['pattern']}")
         if node.get("format") == "uuid" and not _is_uuid(value):
             out.append(f"{path}: {value!r} is not a uuid")
+        if node.get("format") == "date-time" and not _is_date_time(value):
+            out.append(f"{path}: {value!r} is not an RFC 3339 date-time")
     if isinstance(value, int) and "minimum" in node and value < node["minimum"]:
         out.append(f"{path}: below {node['minimum']}")
     return out
@@ -234,6 +251,16 @@ def _is_uuid(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_date_time(value: str) -> bool:
+    if "T" not in value.upper():
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
 
 
 def _object_errors(value: dict, node: Mapping, root: Mapping, path: str) -> list[str]:
