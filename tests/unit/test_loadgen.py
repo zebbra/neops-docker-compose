@@ -243,7 +243,13 @@ def test_received_is_sent_less_what_was_dropped_by_seq_in_each_series():
     own = [record(0, "Worker registered", None), record(2, SDK["dropped"], None)]
     lines = loadgen_driver.account(job + own)
     assert (lines.assigned, lines.received, lines.missing) == (13, 9, 4)
-    assert (lines.burst_received, lines.newest_burst, lines.drop_warnings, lines.duplicates) == (7, 9, 1, 0)
+    tally = (lines.burst_received, lines.newest_burst, lines.drops_reported, lines.duplicates)
+    assert tally == (7, 9, 1234, 0)
+
+
+def test_the_stored_dropped_lines_lines_add_up_to_what_they_report():
+    own = [record(n, f"dropped {n + 3} log lines (buffer full)", None) for n in (0, 1)]
+    assert loadgen_driver.account(own).drops_reported == 7
 
 
 def test_a_line_stored_twice_is_a_duplicate_not_a_second_line():

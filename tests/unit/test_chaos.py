@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "e2e"))
 import chaos  # noqa: E402
 import chaos_kit  # noqa: E402
 import chaos_logs  # noqa: E402
+import loadgen  # noqa: E402
+import loadgen_driver  # noqa: E402
 import run_scenario  # noqa: E402
 
 
@@ -241,3 +243,40 @@ def test_c12a_needs_an_engine_stamped_with_a_0_44_version(version, gates):
 def test_the_c12a_gate_follows_the_engine_pin_of_compose_yaml():
     pinned = chaos_logs.pinned_engine_tag((run_scenario.REPO / "compose.yaml").read_text())
     assert chaos_logs.engine_gates_old_clients(f"v{pinned}", pinned)
+
+
+def overflow(dropped: int, assigned: int, received: int, drops_reported: int) -> list[str]:
+    """C9's verdict on a burst of 100 lines whose store tally is the one given."""
+    tally = loadgen_driver.Accounting(
+        assigned=assigned,
+        received=received,
+        duplicates=0,
+        burst_received=100 - dropped,
+        newest_burst=99,
+        drops_reported=drops_reported,
+    )
+    summary = loadgen.Summary(worker_id="w", sent=100, dropped=dropped, exit_code=0)
+    outcome = loadgen_driver.BurstOutcome("w", summary, None, 0)
+    report = run_scenario.Report()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(chaos_logs, "stored_lines", lambda *args: tally)
+        chaos_logs.assert_overflow_accounted(report, None, "start", outcome)
+    return report.failed
+
+
+def test_an_overflow_is_accounted_when_the_store_misses_exactly_the_reported_drops():
+    assert overflow(dropped=40, assigned=103, received=63, drops_reported=40) == []
+
+
+@pytest.mark.parametrize(
+    "assigned,received,drops_reported,failing",
+    [
+        (104, 63, 40, "received 63 = sent 104 - N 40"),
+        (103, 63, 39, "report 39 of the 40"),
+        (103, 64, 40, "received 64 = sent 103 - N 40"),
+    ],
+    ids=["seq-hole-no-drop-explains", "drop-count-short", "more-stored-than-numbered"],
+)
+def test_an_overflow_fails_when_the_counts_disagree(assigned, received, drops_reported, failing):
+    failed = overflow(dropped=40, assigned=assigned, received=received, drops_reported=drops_reported)
+    assert any(failing in message for message in failed), failed

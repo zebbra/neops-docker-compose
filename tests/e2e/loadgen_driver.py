@@ -218,7 +218,8 @@ class Accounting:
     duplicates: int
     burst_received: int
     newest_burst: int | None
-    drop_warnings: int
+    drops_reported: int
+    """The sum of the N of every stored `dropped N log lines` line."""
 
     @property
     def missing(self) -> int:
@@ -240,5 +241,5 @@ def account(records: Iterable[Mapping]) -> Accounting:
         duplicates=sum(n - 1 for seqs in series.values() for n in seqs.values()),
         burst_received=len(bursts),
         newest_burst=max(bursts, default=None),
-        drop_warnings=sum(bool(loadgen.DROPPED_PATTERN.match(m)) for m in messages),
+        drops_reported=sum(int(m.group(1)) for m in map(loadgen.DROPPED_PATTERN.match, messages) if m),
     )

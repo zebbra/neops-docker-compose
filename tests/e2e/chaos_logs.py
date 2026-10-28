@@ -204,10 +204,15 @@ def assert_runs_readable(report: Report, stack: Stack, load: LoadResult) -> None
 
 
 def assert_series(
-    report: Report, stack: Stack, start: str, holes_in: tuple[str, ...] = OUTAGE_HOLE_SERVICES
+    report: Report,
+    stack: Stack,
+    start: str,
+    holes_in: tuple[str, ...] = OUTAGE_HOLE_SERVICES,
+    accounted_elsewhere: str | None = None,
 ) -> None:
-    """Fails on a duplicate anywhere and on a hole in `holes_in`; the other holes are printed."""
-    records = store_records(stack, start, utc_now())
+    """Fails on a duplicate anywhere and on a hole in `holes_in`; the other holes are printed.
+    The process `accounted_elsewhere` is left out: another check holds its series."""
+    records = [r for r in store_records(stack, start, utc_now()) if r.get("process") != accounted_elsewhere]
     checked = logrecords.seq_problems(records, holes_in)
     report.add(
         not checked,
@@ -339,7 +344,14 @@ def step_engine_restart_mid_outage(report: Report, stack: Stack) -> None:
     midway = carried_rows(report, stack, lambda: compose(stack, "restart", "engine"), "a restart")
     outage = outage_under_load(report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS, midway=midway)
     assert_spooled_and_replayed(report, outage)
-    assert_series(report, stack, outage.start)
+    burst = outage.load.burst
+    if burst and burst_ran(report, burst):
+        # The restarting engine takes no pushes, so loadgen can overflow the SDK's buffer: its
+        # worker's holes are held against the drops the SDK counted, not against none.
+        assert_drops_accounted(report, stack, outage.start, burst)
+        assert_series(report, stack, outage.start, accounted_elsewhere=burst.worker_id)
+    else:
+        assert_series(report, stack, outage.start)
 
 
 def kill_engine(stack: Stack) -> None:
@@ -596,6 +608,13 @@ def assert_overflow_accounted(report: Report, stack: Stack, start: str, outcome:
     report.add(
         summary.dropped > 0, f"the SDK dropped N > 0 lines while the engine was down (N={summary.dropped})"
     )
+    assert_drops_accounted(report, stack, start, outcome)
+
+
+def assert_drops_accounted(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> None:
+    """By seq, the store holds what the SDK numbered minus what it dropped, and the stored
+    `dropped N log lines` lines tell the engine exactly that N."""
+    summary = outcome.summary
     report.add(
         summary.otherwise_lost == 0,
         f"no line lost but to the overflow ({summary.unpushed} unpushed, {summary.refused} refused, "
@@ -606,7 +625,11 @@ def assert_overflow_accounted(report: Report, stack: Stack, start: str, outcome:
         stack,
         start,
         summary.worker_id,
-        lambda seen: seen.newest_burst == last and seen.missing <= summary.dropped,
+        lambda seen: (
+            seen.newest_burst == last
+            and seen.missing <= summary.dropped
+            and seen.drops_reported >= summary.dropped
+        ),
     )
     report.add(lines.duplicates == 0, f"no line stored twice ({lines.duplicates})")
     report.add(
@@ -614,7 +637,10 @@ def assert_overflow_accounted(report: Report, stack: Stack, start: str, outcome:
         f"received {lines.received} = sent {lines.assigned} - N {summary.dropped}, by seq "
         f"({lines.burst_received} of {summary.sent} burst lines)",
     )
-    report.add(lines.drop_warnings > 0, f"the 'dropped N log lines' warning reached the store ({lines})")
+    report.add(
+        lines.drops_reported == summary.dropped,
+        f"stored dropped-lines lines report {lines.drops_reported} of the {summary.dropped} the SDK dropped",
+    )
 
 
 def step_worker_kill_mid_push(report: Report, stack: Stack) -> None:
