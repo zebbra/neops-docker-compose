@@ -313,3 +313,20 @@ def test_online_worker_picks_an_online_one():
         )
     )
     assert workflows.online_worker(engine) == (200, "b")
+
+
+def printing(*lines: str) -> list[str]:
+    return [sys.executable, "-c", "\n".join(f"print({line!r})" for line in lines)]
+
+
+def test_the_process_hands_over_a_marker_its_child_printed(tmp_path):
+    ready = loadgen.marker_line(loadgen.READY, {"worker_id": WORKER})
+    process = loadgen_driver.LoadgenProcess(printing("starting", ready), tmp_path)
+    assert process.wait_marker(loadgen.READY, 10) == {"worker_id": WORKER}
+    assert process.wait(10) == 0 and process.lines == ["starting", ready]
+
+
+def test_a_child_that_ends_without_the_marker_is_no_wait_for_the_timeout(tmp_path):
+    process = loadgen_driver.LoadgenProcess(printing("refusing: no"), tmp_path)
+    assert process.wait_marker(loadgen.READY, 60) is None
+    assert "refusing: no" in process.tail()
