@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from guards import shell_compose_refusal  # noqa: E402
 from logrecords import RunLines  # noqa: E402
 
-from cms import GROUP_UPSERT, gql  # noqa: E402
+from cms import GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import Http  # noqa: E402
 from neops_compose.env import Env  # noqa: E402
@@ -195,6 +195,10 @@ def publish_document(engine: Engine, document: dict) -> str:
 
 
 def ensure_group(deployment: Deployment, token: str) -> int:
+    """Core's upsert is keyed by id, so without one it always creates: look the name up first."""
+    found = gql(deployment.http, deployment.cms, token, GROUP_READ, {"n": TEST_GROUP})["groups"]["results"]
+    if found:
+        return int(found[0]["id"])
     upserted = gql(deployment.http, deployment.cms, token, GROUP_UPSERT, {"n": TEST_GROUP})
     return int(upserted["deviceGroupUpsert"]["deviceGroup"]["id"])
 
@@ -279,11 +283,11 @@ def engine_version(deployment: Deployment) -> str:
 
 
 def worker_states(payload: object) -> dict[str, str]:
-    """GET /workers' answer as uuid -> upper-cased status."""
+    """GET /workers' answer as uuid -> upper-cased state."""
     items = payload.get("items", []) if isinstance(payload, dict) else payload
     if not isinstance(items, list):
         return {}
-    return {str(w.get("uuid") or w.get("id")): str(w.get("status", "")).upper() for w in items}
+    return {str(w.get("uuid") or w.get("id")): str(w.get("state", "")).upper() for w in items}
 
 
 def workers(engine: Engine) -> tuple[int, dict[str, str]]:

@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -67,3 +68,28 @@ def test_only_the_acknowledged_completion_succeeds():
     assert workflows.SETTLED == {"completed_ack", "failed_safe_ack", "failed_unsafe_ack"}
     assert workflows.Run("e", "completed_ack", 1.0).succeeded
     assert not workflows.Run("e", "failed_safe_ack", 1.0).succeeded
+
+
+def fake_cms(monkeypatch, existing):
+    calls = []
+
+    def gql(_http, _cms, _token, query, variables):
+        calls.append(query)
+        if query == workflows.GROUP_READ:
+            return {"groups": {"results": [{"id": i, "name": variables["n"]} for i in existing]}}
+        return {"deviceGroupUpsert": {"deviceGroup": {"id": "41", "name": variables["n"]}}}
+
+    monkeypatch.setattr(workflows, "gql", gql)
+    return calls
+
+
+def test_ensure_group_reuses_the_group_a_previous_run_created(monkeypatch):
+    calls = fake_cms(monkeypatch, existing=["7"])
+    assert workflows.ensure_group(SimpleNamespace(http=None, cms=None), "t") == 7
+    assert workflows.GROUP_UPSERT not in calls
+
+
+def test_ensure_group_creates_the_group_when_none_exists(monkeypatch):
+    calls = fake_cms(monkeypatch, existing=[])
+    assert workflows.ensure_group(SimpleNamespace(http=None, cms=None), "t") == 41
+    assert calls == [workflows.GROUP_READ, workflows.GROUP_UPSERT]

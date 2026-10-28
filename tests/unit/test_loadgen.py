@@ -44,7 +44,7 @@ def test_the_burst_workflow_runs_the_loadgen_block_globally():
     document = loadgen_driver.burst_workflow_document()
     (step,) = document["steps"]
     assert step["functionBlock"] == loadgen.BURST_FB
-    assert document["seedEntity"] == "global"
+    assert document["seedEntity"] == document["runOn"] == step["runOn"] == "global"
     assert workflows.declared_id(document) == "wf.e2e.neops.io/log_burst:1.0.0"
 
 
@@ -302,8 +302,8 @@ def test_a_load_stack_keeps_the_load_it_was_given(tmp_path):
 @pytest.mark.parametrize(
     "payload, states",
     [
-        ([{"uuid": "a", "status": "online"}], {"a": "ONLINE"}),
-        ({"items": [{"id": "b", "status": "OFFLINE"}]}, {"b": "OFFLINE"}),
+        ([{"uuid": "a", "state": "online"}], {"a": "ONLINE"}),
+        ({"items": [{"id": "b", "state": "OFFLINE"}]}, {"b": "OFFLINE"}),
         ("forbidden", {}),
     ],
 )
@@ -315,7 +315,7 @@ def test_online_worker_picks_an_online_one():
     engine = SimpleNamespace(
         call=lambda method, path: (
             200,
-            [{"uuid": "a", "status": "OFFLINE"}, {"uuid": "b", "status": "ONLINE"}],
+            [{"uuid": "a", "state": "OFFLINE"}, {"uuid": "b", "state": "ONLINE"}],
         )
     )
     assert workflows.online_worker(engine) == (200, "b")

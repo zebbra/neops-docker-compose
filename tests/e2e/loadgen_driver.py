@@ -70,8 +70,15 @@ def burst_workflow_document() -> dict:
         "patchVersion": patch,
         "description": "neops-docker-compose e2e: one burst of log lines from loadgen.py.",
         "seedEntity": "global",
+        "runOn": "global",
         "steps": [
-            {"type": "functionBlock", "label": "burst", "functionBlock": loadgen.BURST_FB, "parameters": {}}
+            {
+                "type": "functionBlock",
+                "label": "burst",
+                "functionBlock": loadgen.BURST_FB,
+                "runOn": "global",
+                "parameters": {},
+            }
         ],
     }
 
