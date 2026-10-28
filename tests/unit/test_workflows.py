@@ -33,12 +33,30 @@ def test_the_document_runs_the_one_function_block_on_a_group():
     (step,) = document["steps"]
     assert step["functionBlock"] == workflows.SAVE_FACT_FB
     assert document["seedEntity"] == document["runOn"] == step["runOn"] == "group"
-    assert workflows.declared_id(document) == "wf.e2e.neops.io/group_save_fact:1.0.0"
+    assert workflows.declared_id(document) == "wf.e2e.neops.io/group_save_fact:1.1.0"
 
 
-def test_the_fact_value_is_json_text_as_the_function_blocks_json_field_wants():
-    value = workflows.workflow_document()["steps"][0]["parameters"]["value"]
-    assert isinstance(value, str) and isinstance(json.loads(value), dict)
+def test_the_step_takes_its_fact_from_the_runs_parameters():
+    document = workflows.workflow_document()
+    assert document["steps"][0]["parameters"]["value"] == "{{ parameters.fact }}"
+    assert document["parameterSchema"]["required"] == ["fact"]
+
+
+def started_bodies(times: int) -> list[dict]:
+    bodies = []
+
+    def call(_method, _path, body):
+        bodies.append(body)
+        return 201, {"uuid": "e"}
+
+    for _ in range(times):
+        workflows.execute(SimpleNamespace(call=call), workflows.Target("wf", 3))
+    return bodies
+
+
+def test_every_run_writes_a_fact_value_of_its_own_so_core_has_a_change_to_audit():
+    first, second = (body["parameters"]["fact"] for body in started_bodies(2))
+    assert isinstance(json.loads(first), dict) and first != second
 
 
 def test_the_held_job_is_polled_for_the_same_function_block():

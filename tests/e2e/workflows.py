@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,12 +39,10 @@ from neops_compose.urls import PublicUrl  # noqa: E402
 SAVE_FACT_FB = "fb.base.neops.io/group_save_fact:0.1.0"
 WORKFLOW_PACKAGE = "wf.e2e.neops.io"
 WORKFLOW_NAME = "group_save_fact"
-WORKFLOW_VERSION = (1, 0, 0)
+WORKFLOW_VERSION = (1, 1, 0)
 STEP_LABEL = "save_fact"
 TEST_GROUP = "e2e-log-run"
 FACT_KEY = "e2e_log_run"
-# group_save_fact's `value` is a pydantic Json field: the parameter is the JSON text, not the value.
-FACT_VALUE = json.dumps({"source": "neops-docker-compose e2e"})
 # The engine unlocks the CMS on the way from completed/failed_* to their *_ack: before that the
 # group is still locked and core has written nothing.
 SUCCEEDED = frozenset({"completed_ack"})
@@ -162,13 +161,18 @@ def workflow_document() -> dict:
         "description": "neops-docker-compose e2e: one fact written to a test group.",
         "seedEntity": "group",
         "runOn": "group",
+        "parameterSchema": {
+            "type": "object",
+            "properties": {"fact": {"type": "string"}},
+            "required": ["fact"],
+        },
         "steps": [
             {
                 "type": "functionBlock",
                 "label": STEP_LABEL,
                 "functionBlock": SAVE_FACT_FB,
                 "runOn": "group",
-                "parameters": {"key": FACT_KEY, "value": FACT_VALUE},
+                "parameters": {"key": FACT_KEY, "value": "{{ parameters.fact }}"},
             }
         ],
     }
@@ -213,13 +217,21 @@ def prepare(deployment: Deployment, engine: Engine) -> Target:
     return Target(publish(engine), ensure_group(deployment, engine.bearer()))
 
 
+def fact_value() -> str:
+    """group_save_fact's `value` is a pydantic Json field, so this is JSON text. It differs per run:
+    the worker sends only changed fields, and an unchanged fact leaves core nothing to audit."""
+    return json.dumps({"source": "neops-docker-compose e2e", "run": uuid.uuid4().hex})
+
+
 def execute(engine: Engine, target: Target) -> str:
-    return start_execution(engine, target.workflow_id, {"ids": [target.group_id]})
+    return start_execution(engine, target.workflow_id, {"ids": [target.group_id]}, {"fact": fact_value()})
 
 
-def start_execution(engine: Engine, workflow_id: str, execute_on: dict) -> str:
+def start_execution(
+    engine: Engine, workflow_id: str, execute_on: dict, parameters: dict | None = None
+) -> str:
     """`execute_on` is empty for a global workflow."""
-    body = {"workflow": workflow_id, "executeOnParameters": execute_on, "parameters": {}}
+    body = {"workflow": workflow_id, "executeOnParameters": execute_on, "parameters": parameters or {}}
     status, payload = engine.call("POST", "/workflow-execution", body)
     if status != 201 or not isinstance(payload, dict):
         raise WorkflowError(f"execute answered {status}: {str(payload)[:300]}")
