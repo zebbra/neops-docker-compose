@@ -46,8 +46,8 @@ RESYNC_ROWS = "./neops compose -- exec cms python manage.py resync_unsynced_rows
 RESYNC_UNLOCKS = "./neops compose -- exec cms python manage.py resync_unlock_index --now"
 CMS_TASKS_OFF = (
     "{waiting} index writes (rows, group writes, unlocks) are due for the sweep and COMPOSE_PROFILES has no "
-    "cms-tasks, so only lock requests take them, a few at a time; to sweep them now: {commands} "
-    "(docs/50-troubleshooting.md)"
+    "cms-tasks, so only lock requests take them, a few at a time (docs/50-troubleshooting.md); "
+    "to sweep them now: {commands}"
 )
 
 
