@@ -106,6 +106,12 @@ def test_the_loki_overlay_reaches_compose_through_the_override_file():
     )
 
 
+def test_the_engine_starts_once_loki_is_ready_as_an_operators_running_loki_would_be():
+    services = yaml.safe_load(run_scenario.override_text([LOKI_OVERLAY]))["services"]
+    assert "http://localhost:3100/ready" in services["loki"]["healthcheck"]["test"]
+    assert services["engine"]["depends_on"]["loki"] == {"condition": "service_healthy"}
+
+
 def test_the_loki_scenario_passes_check_without_the_logs_overlay(tmp_path: Path):
     values = run_scenario.build_env(LOKI, "loki", run_scenario.Ports(22500), {})
     overlays = run_scenario.pop_overlays(values)

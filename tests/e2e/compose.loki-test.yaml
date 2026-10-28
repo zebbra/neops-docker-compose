@@ -4,6 +4,8 @@
 # clone's compose.override.yaml, so its relative paths resolve from the repository root.
 # NEOPS_LOG_BACKEND and NEOPS_LOG_URL come from the scenario's .env, the path an operator with
 # a Loki of their own takes; compose.yaml hands them to the engine and every CMS service.
+# Such a Loki is up before the engine starts, so the engine waits for /ready here: Loki answers
+# 503 for its first seconds, which would trip the engine's boot probe and fail the readiness check.
 networks:
   logs: {}
 
@@ -15,10 +17,18 @@ services:
       - ./tests/e2e/loki/config.yaml:/etc/loki/config.yaml:ro
     networks:
       - logs
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "/dev/null", "http://localhost:3100/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
     restart: unless-stopped
 
   engine:
     networks: [default, logs]
+    depends_on:
+      loki:
+        condition: service_healthy
 
   cms-init:
     networks: [default, logs]
