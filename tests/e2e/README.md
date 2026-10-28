@@ -21,7 +21,7 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 | Assertion | Scenarios |
 |---|---|
 | `install` completes and doctor is green | all except expose mode |
-| the worker API deny probe is doctor's **only** failure | expose mode (`compose.expose.yaml`) |
+| the two worker API deny probes (job routes, worker log route) are doctor's **only** warnings | expose mode (`compose.expose.yaml`) |
 | the admin user can log in and gets an access token | password-login scenarios |
 | the Django admin works over plain http: no HSTS, neither cookie is `Secure`, and the login form POST is accepted | `http://` scenarios |
 | the admin creates a device group over GraphQL, reads it back and deletes it, which is what the seeded admin role buys | password-login scenarios |
@@ -31,8 +31,23 @@ A run takes 5 to 10 minutes once the images are cached; the first one pulls abou
 | `cms-worker` and `cms-beat` run and are healthy under `COMPOSE_PROFILES=cms-tasks`, and do not exist without it | all |
 | a device created by hand on the seeded `Linux Generic` platform, a `generic-static-facts` task executed on it over GraphQL, run by `cms-worker` to `SUCCESSFUL`, and the fact read back from the device | `cms-tasks` profile (`local-legacy`) |
 | every exporter, VictoriaMetrics, vmalert and Grafana run; Grafana answers `/api/health` on its public URL; every scrape target reports `up` | metrics |
+| VictoriaLogs runs and answers the engine, the worker container cannot reach it, Grafana provisions the `victorialogs` datasource, the engine's `GET /version` reports `logs.state` `ok`, and the worker's own lines come back from `GET /workers/:uuid/logs` | logs (`logs`, `metrics-logs`) |
 | `./neops backup` writes `cms.dump` and `engine.dump` | all |
 | a second `install` mints no second API key | all |
+
+## Upgrade run
+
+```bash
+make e2e-upgrade FROM=<previous release tag>
+```
+
+Installs `examples/metrics.env` as the release `FROM` shipped it, with
+`EXECUTION_LOG_RETENTION_ENABLED=True` and no days value, then checks out this commit in the same
+clone, as `git pull` would, and runs `./neops up`. It asserts that `./neops check` passes on the
+old `.env` with exactly one `WARNING:` line, that `up` succeeds with doctor green, that migration
+`0003` is recorded, that `.env` names `compose.grafana.yaml` before `compose.metrics.yaml` and
+carries `NEOPS_LOG_RETENTION=90d`, and that Grafana still lists the dashboards it had before. Run it
+on every release branch before tagging.
 
 VictoriaMetrics publishes no host port, so the scrape-target assertion asks it over
 `wget` inside its own container and waits for every target to have been scraped once

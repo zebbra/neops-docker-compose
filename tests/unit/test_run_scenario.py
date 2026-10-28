@@ -48,3 +48,14 @@ def test_a_reused_clone_moves_to_the_new_checkout_head(source: Path, tmp_path: P
     clone = run_scenario.prepare_clone(work, {"A": "1"})
     assert git(clone, "rev-parse", "HEAD") == head
     assert (clone / ".env").read_text() == "A=1\n"
+
+
+def test_an_upgrade_run_starts_on_the_older_ref_and_moves_to_the_checkout_head(source: Path, tmp_path: Path):
+    """--upgrade-from: the operator's .env written for the old release stays across the pull."""
+    first = git(source, "rev-parse", "HEAD")
+    head = commit(source, "second")
+    clone = run_scenario.prepare_clone(tmp_path / "work", {"A": "1"}, rev=first)
+    assert git(clone, "rev-parse", "HEAD") == first
+    run_scenario.move_to_head(clone)
+    assert git(clone, "rev-parse", "HEAD") == head
+    assert (clone / ".env").read_text() == "A=1\n"
