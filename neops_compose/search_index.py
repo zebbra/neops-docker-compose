@@ -16,9 +16,9 @@ from neops_compose.context import Ctx
 MANAGE = ("python", "-u", "manage.py", "elastic_index")
 REBUILD_OWNERS = ("cms", "elasticsearch")
 DO_NOT_INTERRUPT = (
-    "this can take minutes. Do not interrupt it: an interrupted rebuild keeps running inside cms, "
-    "and the next ./neops up waits for it at cms-init (docs/30-operations.md#upgrades)"
+    "this can take minutes. Do not interrupt it: an interrupted rebuild keeps running inside cms"
 )
+SEE_DOCS = "(docs/30-operations.md#upgrades)"
 
 
 def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
@@ -26,10 +26,16 @@ def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
     there would take the whole CMS API down, not only search."""
     usage = ctx.compose.exec("cms", *MANAGE, "--help")
     if "--rebuild-if-stale" in usage:
-        ctx.log(f"neops-core checks the search index and rebuilds what is stale; {DO_NOT_INTERRUPT}")
+        ctx.log(
+            f"neops-core checks the search index and rebuilds what is stale; {DO_NOT_INTERRUPT}, "
+            f"and the next ./neops up waits for it at cms-init {SEE_DOCS}"
+        )
         _stream(ctx, "--rebuild-if-stale")
     elif images_moved(last_up, running):
-        ctx.log(f"neops-core or Elasticsearch changed: rebuilding the search index; {DO_NOT_INTERRUPT}")
+        ctx.log(
+            f"neops-core or Elasticsearch changed: rebuilding the search index; {DO_NOT_INTERRUPT}, "
+            f"and the next ./neops up would start a second one beside it {SEE_DOCS}"
+        )
         lookups = ["--sync-lookups"] if "--sync-lookups" in usage else []
         _stream(ctx, "--rebuild", "--force", *lookups)
 

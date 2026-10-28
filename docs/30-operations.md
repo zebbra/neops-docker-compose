@@ -199,8 +199,8 @@ which; to check yourself:
 - **An older neops-core** (2.2.0, pinned by this release, is one) cannot tell whether an upgrade
   changed its indices, so `up` rebuilds every index whenever the core or the Elasticsearch image
   differs from the one the last successful `up` ran (`up` logs "neops-core or Elasticsearch
-  changed: rebuilding the search index"). That is `manage.py elastic_index --rebuild`, plus
-  `--sync-lookups` where core has it.
+  changed: rebuilding the search index"). That is `manage.py elastic_index --rebuild --force`,
+  plus `--sync-lookups` where core has it.
 
 A full rebuild took 57 s for 2,000 devices, 20,000 interfaces and 50 groups; plan an upgrade that
 rebuilds as a short maintenance window, because while it runs:
@@ -226,13 +226,15 @@ screen, and can fail with a compose timeout once that wait passes 15 minutes. On
 nothing waits, and the next `up` starts a second full rebuild beside the first. Either way:
 
 ```bash
-./neops logs cms-init      # follows; "creating the search indices (...)" is the last line
+./neops logs cms-init      # follows; with --rebuild-if-stale, "creating the search indices (...)" is last
 ./neops compose -- top cms # a python ... elastic_index process is the rebuild still running
 ```
 
-Wait for it to finish, or abort it with `./neops restart cms`. The indices it did not finish carry
-no stamp, so the next `./neops up` rebuilds them; until core notices the aborted rebuild (its
-heartbeat goes stale after 5 minutes) the engine's searching locks are still refused.
+Wait for it to finish, or abort it with `./neops restart cms`. On a core with
+`--rebuild-if-stale`, the indices it did not finish carry no stamp, so the next `./neops up`
+rebuilds them, and the engine's searching locks stay refused until core notices the aborted
+rebuild (its heartbeat goes stale after 5 minutes). On an older core the next `up` rebuilds
+everything again only if the core or Elasticsearch image moved since the last successful `up`.
 
 To run the check or a rebuild by hand:
 
