@@ -24,7 +24,9 @@ import workflows
 from logrecords import seq_series_key
 from run_scenario import clone_refusal
 
-LOADGEN_IN_CLONE = Path("tests/e2e/loadgen.py")
+# The file this driver parses the markers of, not the clone's copy: that one is whatever was
+# committed when the clone was made.
+LOADGEN_SOURCE = Path(loadgen.__file__).resolve()
 LOADGEN_MOUNT = "/loadgen.py"
 # The image's own venv: its CMD is `uv run --no-sync neops_worker` from /app.
 WORKER_PYTHON = "/app/.venv/bin/python"
@@ -48,8 +50,8 @@ def container_name(project: str) -> str:
     return f"{project}-loadgen-{uuid.uuid4().hex[:8]}"
 
 
-def loadgen_command(clone: Path, container: str, rate: int, seconds: float) -> list[str]:
-    mount = f"{clone / LOADGEN_IN_CLONE}:{LOADGEN_MOUNT}:ro"
+def loadgen_command(container: str, rate: int, seconds: float) -> list[str]:
+    mount = f"{LOADGEN_SOURCE}:{LOADGEN_MOUNT}:ro"
     return [
         "./neops", "compose", "--", "run", "--rm", "--no-deps", "-T", "--name", container, "-v", mount,
         "worker", WORKER_PYTHON, LOADGEN_MOUNT, "--rate", str(rate), "--seconds", str(seconds),
@@ -160,7 +162,7 @@ class BurstLoad:
         """Start the container; the worker id once its block is registered."""
         if refusal := clone_refusal(self.clone, os.environ):
             raise LoadgenError(refusal)
-        command = loadgen_command(self.clone, self.container, self.rate, self.seconds)
+        command = loadgen_command(self.container, self.rate, self.seconds)
         self._process = LoadgenProcess(command, self.clone)
         ready = self._process.wait_marker(loadgen.READY, READY_TIMEOUT) or {}
         if not ready.get("worker_id"):

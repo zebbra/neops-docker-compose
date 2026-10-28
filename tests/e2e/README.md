@@ -299,8 +299,11 @@ started by `loadgen_driver.py` as
 
 ```bash
 ./neops compose -- run --rm --no-deps -T --name <project>-loadgen-<id> \
-  -v <clone>/tests/e2e/loadgen.py:/loadgen.py:ro worker /app/.venv/bin/python /loadgen.py --rate N --seconds S
+  -v <checkout>/tests/e2e/loadgen.py:/loadgen.py:ro worker /app/.venv/bin/python /loadgen.py --rate N --seconds S
 ```
+
+`<checkout>` is the tree the harness runs from, not the clone: the container runs the same
+`loadgen.py`, uncommitted edits included, whose markers the driver parses.
 
 It runs the SDK's own worker loop (`neops_worker.main_async`) with `DIR_FUNCTION_BLOCKS` unset, so
 the only block it registers is its own `fb.e2e.neops.io/log_burst:0.1.0`, which no other worker

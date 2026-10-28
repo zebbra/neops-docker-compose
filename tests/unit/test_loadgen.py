@@ -162,11 +162,9 @@ def test_the_burst_block_is_the_only_one_and_the_worker_is_named():
 
 
 def test_loadgen_runs_as_a_one_off_worker_without_its_dependencies():
-    clone = Path("/work/repo")
-    command = loadgen_driver.loadgen_command(clone, "neops-e2e-logs-18000-loadgen-ab", 400, 90.0)
+    command = loadgen_driver.loadgen_command("neops-e2e-logs-18000-loadgen-ab", 400, 90.0)
     assert command[:5] == ["./neops", "compose", "--", "run", "--rm"]
     assert "--no-deps" in command and "-T" in command
-    assert f"{clone}/tests/e2e/loadgen.py:/loadgen.py:ro" in command
     worker = command.index("worker")
     assert command[worker + 1 :] == [
         loadgen_driver.WORKER_PYTHON,
@@ -176,6 +174,11 @@ def test_loadgen_runs_as_a_one_off_worker_without_its_dependencies():
         "--seconds",
         "90.0",
     ]
+
+
+def test_the_container_runs_the_loadgen_whose_markers_the_driver_parses():
+    command = loadgen_driver.loadgen_command("neops-e2e-logs-18000-loadgen-ab", 400, 90.0)
+    assert f"{Path(loadgen.__file__).resolve()}:/loadgen.py:ro" in command
 
 
 def test_each_loadgen_container_has_a_name_of_its_project():
