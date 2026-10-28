@@ -155,11 +155,12 @@ automation that has been dormant since.
 10-minute threshold, and `--json` prints the report on one line. What its messages mean:
 
 - `rows in error`: the last write failed and no sweep has repaired the row in the two minutes a
-  periodic run needs to get to it. With Elasticsearch up, `resync_unsynced_rows` fixes it; if that
-  stops early with `Elasticsearch unavailable`, start with `docker compose logs elasticsearch`.
-  A row that fails on every retry for a reason of its own (bad data, a bug) restarts that clock
-  each time, so it can sit in the `error` column without a warning: `--list error` names such
-  rows, and the log line `Re-indexing ... failed` gives the reason.
+  periodic run needs to get to it. Run `resync_unsynced_rows`. If it ends with `Stopped early,
+  Elasticsearch or the database is unavailable: ...`, the error after the colon says which: start
+  with `docker compose logs elasticsearch` or `docker compose logs postgres-cms`. A row that
+  fails on every retry for a reason of its own (bad data, a bug) restarts that clock each time,
+  so it can sit in the `error` column without a warning: `--list error` names such rows, and
+  `docker compose logs cms cms-worker | grep 'Re-indexing'` gives the reason.
 - `rows rejected by Elasticsearch`: Elasticsearch refused the document itself, usually a value
   its mapping cannot take. That is a data or mapping bug in Neops, not an outage: report it with
   the log line. `index_sync_status --list rejected` names the rows, and
@@ -167,7 +168,7 @@ automation that has been dormant since.
   reason (both containers sweep, and their logs rotate after 100 MB). A rejected row stays out of
   the index until it changes again, or until a search index rebuild (`elastic_index --rebuild`,
   see [Operations](30-operations.md#upgrades)) on a release that fixes the cause indexes it.
-- `pending rows` or `group index writes` older than the threshold: nothing has swept them. Run
+- `rows pending` or `group index writes` longer than the threshold: nothing has swept them. Run
   `resync_unsynced_rows`.
 - `unlocks have waited`: locks that search the index are refused with `INDEX_SYNC_PENDING`
   until these unlocks are indexed. Run `resync_unlock_index --now`.
@@ -175,6 +176,10 @@ automation that has been dormant since.
   that resolve those entities are refused. Lock requests do not retry them; the periodic sweep
   does, hourly. `resync_unlock_index` lists them, `--retry-quarantined` retries them now, and
   `--clear REFERENCE` gives them up.
+
+Right after an upgrade, rows an older release left pending or in error warn at once: their
+time of change was never recorded, so they count as the oldest. The sweep takes them first, up to
+10,000 a minute with `cms-tasks`; run `./neops doctor` again before acting on them.
 
 `periodic sweep last ran` reads `never recorded` without `cms-tasks`, and after Redis restarts
 until the next run; the time lives in Redis only. A run that found Elasticsearch down still
