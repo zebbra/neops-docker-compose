@@ -8,6 +8,8 @@ whenever the core or the Elasticsearch image moved.
 
 from __future__ import annotations
 
+import json
+
 from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 
@@ -19,6 +21,11 @@ DO_NOT_INTERRUPT = (
     "this can take minutes. Do not interrupt it: an interrupted rebuild keeps running inside cms"
 )
 SEE_DOCS = "(docs/30-operations.md#upgrades)"
+# --rebuild-if-stale finished the rebuild but set aside documents Elasticsearch refused.
+SET_ASIDE = 3
+INDEX_SYNC_REPORT = ("python", "manage.py", "index_sync_status", "--json")
+INDEX_SYNC_REPORT_VERSION = 1
+LIST_REJECTED = "./neops compose -- exec cms python manage.py index_sync_status --list rejected"
 
 
 def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
@@ -30,7 +37,8 @@ def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
             f"neops-core checks the search index and rebuilds what is stale; {DO_NOT_INTERRUPT}, "
             f"and the next ./neops up waits for it at cms-init {SEE_DOCS}"
         )
-        _stream(ctx, "--rebuild-if-stale")
+        if _stream(ctx, "--rebuild-if-stale", tolerated=(SET_ASIDE,)) == SET_ASIDE:
+            ctx.log(_set_aside_warning(ctx))
     elif images_moved(last_up, running):
         ctx.log(
             f"neops-core or Elasticsearch changed: rebuilding the search index; {DO_NOT_INTERRUPT}, "
@@ -49,12 +57,47 @@ def images_moved(last_up: dict | None, running: dict[str, str]) -> bool:
     return any(before.get(service) != running.get(service) for service in REBUILD_OWNERS)
 
 
-def _stream(ctx: Ctx, *flags: str) -> None:
+def _stream(ctx: Ctx, *flags: str, tolerated: tuple[int, ...] = ()) -> int:
     """Not captured: a rebuild runs for minutes, and a failed populate prints its traceback."""
-    try:
-        ctx.compose.run("exec", "-T", "cms", *MANAGE, *flags)
-    except ComposeError as exc:
+    code = ctx.compose.run("exec", "-T", "cms", *MANAGE, *flags, check=False).returncode
+    if code != 0 and code not in tolerated:
         raise ComposeError(
-            f"the search index rebuild failed (its output is above) and this start was not recorded; "
-            f"fix the cause and run ./neops up again. {exc}"
-        ) from exc
+            f"the search index rebuild failed (exit {code}, its output is above) and this start was not "
+            "recorded; fix the cause and run ./neops up again"
+        )
+    return code
+
+
+def _set_aside_warning(ctx: Ctx) -> str:
+    count = _rejected_rows(ctx)
+    documents = "some documents were" if count is None else f"{count} documents were"
+    return (
+        f"WARNING: the search index was rebuilt, but {documents} set aside: Elasticsearch refused them, "
+        f"and they stay out of search until their rows change. See {LIST_REJECTED}"
+    )
+
+
+def _rejected_rows(ctx: Ctx) -> int | None:
+    """Only the number is at stake here, so an answer this release cannot read just leaves it out.
+    index_sync_status exits 1 while rows are rejected, after it has printed its report."""
+    try:
+        result = ctx.compose.run("exec", "-T", "cms", *INDEX_SYNC_REPORT, capture=True, check=False)
+    except ComposeError:
+        return None
+    report = _last_json_line(result.stdout or "")
+    if report.get("version") != INDEX_SYNC_REPORT_VERSION:
+        return None
+    try:
+        return sum(int(model["rejected"]) for model in report["models"].values())
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _last_json_line(stdout: str) -> dict:
+    """Core prints its report as the last line; Django may print startup lines before it."""
+    lines = [line for line in stdout.splitlines() if line.startswith("{")]
+    try:
+        report = json.loads(lines[-1])
+    except (IndexError, ValueError):
+        return {}
+    return report if isinstance(report, dict) else {}

@@ -289,12 +289,25 @@ def test_a_fresh_install_has_nothing_to_rebuild():
     assert not search_index.images_moved(None, {"cms": CORE, "elasticsearch": ES_NEW})
 
 
+INDEX_SYNC_REPORT = ("exec", "-T", "cms", "python", "manage.py", "index_sync_status", "--json")
+REJECTED_REPORT = "neops.enterprise.celery.cron loaded\n" + json.dumps(
+    {"version": 1, "models": {"core.Device": {"rejected": 2}, "core.Interface": {"rejected": 3}}}
+)
+
+
 class IndexedCompose(FakeCompose):
-    def __init__(self, help_text: str, failing: tuple[str, ...] | None = None, help_fails: bool = False):
+    def __init__(
+        self,
+        help_text: str,
+        exits: dict[tuple[str, ...], int] | None = None,
+        help_fails: bool = False,
+        sync_report: str = REJECTED_REPORT,
+    ):
         super().__init__(CORE)
         self.help_text = help_text
-        self.failing = failing
+        self.exits = exits or {}
         self.help_fails = help_fails
+        self.sync_report = sync_report
         self.execs: list[tuple[str, ...]] = []
         self.runs: list[tuple[tuple[str, ...], bool]] = []
 
@@ -309,19 +322,25 @@ class IndexedCompose(FakeCompose):
 
     def run(self, *args, capture=False, check=True, env=None):
         self.runs.append((args, capture))
-        if args == self.failing:
-            raise ComposeError(f"docker compose {' '.join(args)} failed (1)")
-        return subprocess.CompletedProcess(args, 0)
+        if args == INDEX_SYNC_REPORT:
+            return subprocess.CompletedProcess(args, 1, stdout=self.sync_report, stderr="rows are rejected")
+        return subprocess.CompletedProcess(args, self.exits.get(args, 0))
 
     @property
     def streamed(self) -> list[tuple[str, ...]]:
-        """Every call here must stream: a rebuild runs for minutes."""
-        assert all(capture is False for _, capture in self.runs)
-        return [args for args, _ in self.runs]
+        """Every elastic_index call must stream: a rebuild runs for minutes."""
+        rebuilds = [(args, capture) for args, capture in self.runs if args[: len(EXEC)] == EXEC]
+        assert all(capture is False for _, capture in rebuilds)
+        return [args for args, _ in rebuilds]
 
 
 def _up_after(
-    tmp_path, monkeypatch, compose: IndexedCompose, last_up: dict | None, order: list[str] | None = None
+    tmp_path,
+    monkeypatch,
+    compose: IndexedCompose,
+    last_up: dict | None,
+    order: list[str] | None = None,
+    logged: list[str] | None = None,
 ) -> list[str]:
     order = [] if order is None else order
     _stub_up(monkeypatch, order)
@@ -334,6 +353,8 @@ def _up_after(
     monkeypatch.setattr(compose, "run", recorded_run)
     ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
     ctx.state.last_up = last_up
+    if logged is not None:
+        ctx.log = logged.append
     workflow.up(ctx)
     return order
 
@@ -341,11 +362,39 @@ def _up_after(
 def test_a_deciding_core_is_asked_on_every_up_and_before_the_start_is_recorded(tmp_path, monkeypatch):
     """Core compares each index's stamp itself, so compose asks even when no image moved."""
     compose = IndexedCompose(DECIDING_CORE)
-    order = _up_after(tmp_path, monkeypatch, compose, _last_up())
+    logged: list[str] = []
+    order = _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
 
     assert compose.execs == [("cms", *ELASTIC_INDEX, "--help")]
     assert compose.streamed == [REBUILD_IF_STALE]
     assert order[-2:] == ["run:--rebuild-if-stale", "finish"]
+    assert not any("set aside" in line for line in logged)
+    assert all(args != INDEX_SYNC_REPORT for args, _ in compose.runs)
+
+
+def test_documents_set_aside_by_the_rebuild_warn_and_the_start_is_still_recorded(tmp_path, monkeypatch):
+    """Exit 3: core rebuilt everything and set aside what Elasticsearch refused."""
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3})
+    logged: list[str] = []
+    order = _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+
+    assert order[-1] == "finish"
+    assert compose.runs[-1] == (INDEX_SYNC_REPORT, True)
+    warning = logged[-1]
+    assert warning.startswith("WARNING:") and "5 documents were set aside" in warning
+    assert "index_sync_status --list rejected" in warning
+
+
+def test_a_set_aside_warning_without_a_readable_report_still_points_at_the_listing(tmp_path, monkeypatch):
+    """The count is the only thing an unreadable report costs; the start is still recorded."""
+    unreadable = json.dumps({"version": 2, "models": {"core.Device": {"rejected": 2}}})
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3}, sync_report=unreadable)
+    logged: list[str] = []
+    order = _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+
+    assert order[-1] == "finish"
+    assert "some documents were set aside" in logged[-1]
+    assert "index_sync_status --list rejected" in logged[-1]
 
 
 def test_a_deciding_core_is_asked_on_a_fresh_install_too(tmp_path, monkeypatch):
@@ -356,9 +405,9 @@ def test_a_deciding_core_is_asked_on_a_fresh_install_too(tmp_path, monkeypatch):
 
 
 def test_a_failed_rebuild_stops_up_before_it_records_the_start(tmp_path, monkeypatch):
-    compose = IndexedCompose(DECIDING_CORE, failing=REBUILD_IF_STALE)
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 1})
     order: list[str] = []
-    with pytest.raises(ComposeError, match="not recorded"):
+    with pytest.raises(ComposeError, match=r"exit 1.*not recorded"):
         _up_after(tmp_path, monkeypatch, compose, _last_up(), order)
     assert order[-1] == "run:--rebuild-if-stale"
 
@@ -386,6 +435,15 @@ def test_an_older_core_is_rebuilt_whole_after_a_core_upgrade(tmp_path, monkeypat
     _up_after(tmp_path, monkeypatch, compose, _last_up(cms=CORE_PREV))
 
     assert compose.streamed == [REBUILD]
+
+
+def test_an_older_cores_full_rebuild_tolerates_no_exit_but_0(tmp_path, monkeypatch):
+    """Exit 3 means documents set aside only for --rebuild-if-stale; on --rebuild it is a failure."""
+    compose = IndexedCompose(OLD_CORE_WITH_LOOKUPS, exits={(*REBUILD, "--sync-lookups"): 3})
+    order: list[str] = []
+    with pytest.raises(ComposeError, match=r"exit 3.*not recorded"):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(es=ES_OLD), order)
+    assert "finish" not in order
 
 
 def test_an_older_core_is_left_alone_while_neither_image_moved(tmp_path, monkeypatch):

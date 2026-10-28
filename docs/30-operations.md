@@ -196,6 +196,13 @@ which; to check yourself:
   nothing. **The first `up` on such a core rebuilds every index once**, because indices built by
   compose or by a hand-run `--rebuild` carry no stamp. A fresh install builds its first, empty
   indices the same way, in seconds.
+
+  A document Elasticsearch refuses does not fail the rebuild: core finishes it, sets the refused
+  documents aside and marks their rows `rejected`, and `up` prints a `WARNING` with how many and
+  records the start as usual. Those rows stay out of search until they change again;
+  `./neops compose -- exec cms python manage.py index_sync_status --list rejected` names them, and
+  [Search index out of sync](50-troubleshooting.md#search-index-out-of-sync) says what to do
+  about them.
 - **An older neops-core** (2.2.0, pinned by this release, is one) cannot tell whether an upgrade
   changed its indices, so `up` rebuilds every index whenever the core or the Elasticsearch image
   differs from the one the last successful `up` ran (`up` logs "neops-core or Elasticsearch
@@ -215,8 +222,9 @@ rebuilds as a short maintenance window, because while it runs:
 A save that lands while an index is deleted fails instead of recreating it: Elasticsearch is
 configured not to auto-create the Neops indices (`action.auto_create_index`), since an
 auto-created one would carry a dynamic mapping that breaks search. The rebuild re-indexes those
-rows from the database anyway. If the rebuild fails, `up` says so and stops before recording the
-start, so the next `./neops up` tries it again.
+rows from the database anyway. If the rebuild fails, which is any non-zero exit except the
+set-aside one above (on an older core, any non-zero exit at all), `up` says so and stops before
+recording the start, so the next `./neops up` tries it again.
 
 **Do not interrupt a rebuild.** Ctrl-C stops `./neops up`, not the rebuild: `docker compose exec`
 cannot signal the process it started, so it keeps running inside `cms`. On a core with
