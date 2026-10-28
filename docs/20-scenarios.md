@@ -31,8 +31,9 @@ writes Elasticsearch on every save without them. A device, interface, group or c
 write failed is re-indexed on the engine's lock requests, up to 20 rows per request
 (`NEOPS_INDEX_RESYNC_INLINE_BUDGET`). A row whose write may still be running is left alone for a
 grace period first, and after Elasticsearch has been unreachable lock requests wait 60 s
-(`NEOPS_INDEX_RESYNC_INLINE_BACKOFF_SECONDS`) before they try again. With `cms-tasks`, `cms-beat`
-also sweeps them every minute; `manage.py resync_unsynced_rows` does all of them at once. A
+(`NEOPS_INDEX_RESYNC_INLINE_BACKOFF_SECONDS`) before they try again. With
+`COMPOSE_PROFILES=cms-tasks`, `cms-beat` also has `cms-worker` sweep them every minute;
+`manage.py resync_unsynced_rows` does all of them at once. A
 document Elasticsearch rejects (a mapping or parse error) is marked `rejected` and skipped until
 the row changes. A deployment that still runs 1.0 tasks or
 cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with the next
