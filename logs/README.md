@@ -21,8 +21,9 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   otherwise write lines for any workflow run, bypassing the engine's per-job lease, and read every
   line, bypassing the `workflow-execution-log:read` permission. A store you run yourself instead
   of this overlay (`NEOPS_LOG_BACKEND` and `NEOPS_LOG_URL` in `.env`) needs the same isolation.
-- `./neops doctor` reads the engine's `GET /version` and fails its `engine log store` probe when
-  the engine cannot deliver to the store or cannot read from it.
+- `./neops doctor` reads the engine's `GET /version`. Its `engine log store` probe fails when the
+  engine has no store or the store refuses its pushes (`misconfigured`), and warns while the store
+  is unreachable (`open`), when the engine spools lines to its database instead.
 
 ## Grafana
 
