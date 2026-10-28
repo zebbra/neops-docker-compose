@@ -42,9 +42,11 @@ INDEX_SYNC_UNREADABLE = (
     "the CMS answered with an index sync report of version {version}, which this checkout cannot read: "
     "is NEOPS_CORE_TAG or NEOPS_CORE_IMAGE overridden in .env?"
 )
+RESYNC_NOW = "./neops compose -- exec cms python manage.py resync_unsynced_rows"
 CMS_TASKS_OFF = (
     "{waiting} index writes (rows, group writes, unlocks) are due for the sweep and COMPOSE_PROFILES has no "
-    "cms-tasks, so only lock requests take them, a few at a time (docs/50-troubleshooting.md)"
+    f"cms-tasks, so only lock requests take them, a few at a time; to re-index them now: {RESYNC_NOW} "
+    "(docs/50-troubleshooting.md)"
 )
 
 

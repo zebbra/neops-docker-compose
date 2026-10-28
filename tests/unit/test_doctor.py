@@ -594,6 +594,7 @@ def test_index_writes_due_for_the_sweep_without_cms_tasks_are_a_warning():
     probes = index_sync_probes(cms_tasks=False, stdout=index_sync_report(awaiting_sweep=3))
     assert [p.detail for p in probes] == [doctor.CMS_TASKS_OFF.format(waiting=3)]
     assert probes[0].severity == "warn"
+    assert "./neops compose -- exec cms python manage.py resync_unsynced_rows" in probes[0].detail
 
 
 def test_with_cms_tasks_on_index_writes_due_for_the_sweep_are_not_a_warning():

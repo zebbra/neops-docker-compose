@@ -157,9 +157,9 @@ automation that has been dormant since.
 - `rows in error`: the last write failed and no sweep has repaired the row in the two minutes a
   periodic run needs to get to it. Run `resync_unsynced_rows`. If it ends with
   `Stopped early, Elasticsearch or the database is unavailable: ...`, the error after the colon
-  says which: start with `docker compose logs elasticsearch` or `docker compose logs postgres-cms`. A row that
-  fails on every retry for a reason of its own (bad data, a bug) restarts that clock each time,
-  so it can sit in the `error` column without a warning: `--list error` names such rows, and
+  says which: start with `docker compose logs elasticsearch` or `docker compose logs postgres-cms`.
+  A row that fails on every retry for a reason of its own (bad data, a bug) keeps the time of its
+  first failure, so it warns as well: `--list error` names such rows, and
   `docker compose logs cms cms-worker | grep 'Re-indexing'` gives the reason.
 - `rows rejected by Elasticsearch`: Elasticsearch refused the document itself, usually a value
   its mapping cannot take. That is a data or mapping bug in Neops, not an outage: report it with
