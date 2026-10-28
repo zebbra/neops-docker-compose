@@ -550,7 +550,7 @@ def index_sync_report(**overrides) -> str:
         },
         "periodic_sweep_last_ran_at": "2026-10-27T18:00:00+00:00",
         "max_pending_age_seconds": 600,
-        "grace_seconds": 60,
+        "max_error_age_seconds": 120,
         "awaiting_sweep": 0,
         "permission_pending": 0,
         "problems": [],
