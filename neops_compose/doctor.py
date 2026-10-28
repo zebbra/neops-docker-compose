@@ -42,10 +42,11 @@ INDEX_SYNC_UNREADABLE = (
     "the CMS answered with an index sync report of version {version}, which this checkout cannot read: "
     "is NEOPS_CORE_TAG or NEOPS_CORE_IMAGE overridden in .env?"
 )
-RESYNC_NOW = "./neops compose -- exec cms python manage.py resync_unsynced_rows"
+RESYNC_ROWS = "./neops compose -- exec cms python manage.py resync_unsynced_rows"
+RESYNC_UNLOCKS = "./neops compose -- exec cms python manage.py resync_unlock_index --now"
 CMS_TASKS_OFF = (
     "{waiting} index writes (rows, group writes, unlocks) are due for the sweep and COMPOSE_PROFILES has no "
-    f"cms-tasks, so only lock requests take them, a few at a time; to re-index them now: {RESYNC_NOW} "
+    "cms-tasks, so only lock requests take them, a few at a time; to re-index them now: {commands} "
     "(docs/50-troubleshooting.md)"
 )
 
@@ -412,8 +413,16 @@ def index_sync_probes(compose, cms_tasks: bool) -> list[Probe]:
         return [_index_sync_warning(INDEX_SYNC_UNREADABLE.format(version=report.get("version")))]
     probes = [_index_sync_warning(problem) for problem in report["problems"]]
     if report["awaiting_sweep"] and not cms_tasks:
-        probes.append(_index_sync_warning(CMS_TASKS_OFF.format(waiting=report["awaiting_sweep"])))
+        waiting, commands = report["awaiting_sweep"], _resync_commands(report)
+        probes.append(_index_sync_warning(CMS_TASKS_OFF.format(waiting=waiting, commands=commands)))
     return probes or [Probe(INDEX_SYNC_PROBE, True, _index_sync_summary(report))]
+
+
+def _resync_commands(report: dict) -> str:
+    """Rows and group writes, and unlocks, each have their own command."""
+    unlocks = report.get("unlocks", {}).get("awaiting_sweep", 0)
+    commands = [RESYNC_ROWS] if report["awaiting_sweep"] > unlocks else []
+    return " and ".join(commands + ([RESYNC_UNLOCKS] if unlocks else []))
 
 
 def _index_sync_warning(detail: str) -> Probe:

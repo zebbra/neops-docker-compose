@@ -592,9 +592,33 @@ def test_each_problem_core_reports_is_a_warning_that_does_not_fail_doctor():
 
 def test_index_writes_due_for_the_sweep_without_cms_tasks_are_a_warning():
     probes = index_sync_probes(cms_tasks=False, stdout=index_sync_report(awaiting_sweep=3))
-    assert [p.detail for p in probes] == [doctor.CMS_TASKS_OFF.format(waiting=3)]
+    assert [p.detail for p in probes] == [doctor.CMS_TASKS_OFF.format(waiting=3, commands=doctor.RESYNC_ROWS)]
     assert probes[0].severity == "warn"
-    assert "./neops compose -- exec cms python manage.py resync_unsynced_rows" in probes[0].detail
+
+
+def _due_unlocks(count: int) -> dict:
+    return {
+        "waiting": count,
+        "quarantined": 0,
+        "awaiting_sweep": count,
+        "oldest_unquarantined_age_seconds": 1.0,
+    }
+
+
+def test_without_cms_tasks_the_warning_names_the_command_for_what_is_due():
+    rows_only = index_sync_probes(cms_tasks=False, stdout=index_sync_report(awaiting_sweep=2))
+    unlocks_only = index_sync_probes(
+        cms_tasks=False, stdout=index_sync_report(awaiting_sweep=1, unlocks=_due_unlocks(1))
+    )
+    both = index_sync_probes(
+        cms_tasks=False, stdout=index_sync_report(awaiting_sweep=3, unlocks=_due_unlocks(1))
+    )
+
+    assert doctor.RESYNC_ROWS in rows_only[0].detail and doctor.RESYNC_UNLOCKS not in rows_only[0].detail
+    assert (
+        doctor.RESYNC_UNLOCKS in unlocks_only[0].detail and doctor.RESYNC_ROWS not in unlocks_only[0].detail
+    )
+    assert doctor.RESYNC_ROWS in both[0].detail and doctor.RESYNC_UNLOCKS in both[0].detail
 
 
 def test_with_cms_tasks_on_index_writes_due_for_the_sweep_are_not_a_warning():

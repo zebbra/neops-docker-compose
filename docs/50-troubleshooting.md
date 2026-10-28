@@ -159,7 +159,7 @@ automation that has been dormant since.
   `Stopped early, Elasticsearch or the database is unavailable: ...`, the error after the colon
   says which: start with `docker compose logs elasticsearch` or `docker compose logs postgres-cms`.
   A row that fails on every retry for a reason of its own (bad data, a bug) keeps the time of its
-  first failure, so it warns as well: `--list error` names such rows, and
+  first failure, so it warns as well, unless the row itself keeps changing: `--list error` names such rows, and
   `docker compose logs cms cms-worker | grep 'Re-indexing'` gives the reason.
 - `rows rejected by Elasticsearch`: Elasticsearch refused the document itself, usually a value
   its mapping cannot take. That is a data or mapping bug in Neops, not an outage: report it with
