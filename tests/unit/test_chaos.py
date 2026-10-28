@@ -245,14 +245,16 @@ def test_the_c12a_gate_follows_the_engine_pin_of_compose_yaml():
     assert chaos_logs.engine_gates_old_clients(f"v{pinned}", pinned)
 
 
-def overflow(dropped: int, assigned: int, received: int, drops_reported: int) -> list[str]:
+def overflow(
+    dropped: int, assigned: int, received: int, drops_reported: int, newest_burst: int = 99
+) -> list[str]:
     """C9's verdict on a burst of 100 lines whose store tally is the one given."""
     tally = loadgen_driver.Accounting(
         assigned=assigned,
         received=received,
         duplicates=0,
         burst_received=100 - dropped,
-        newest_burst=99,
+        newest_burst=newest_burst,
         drops_reported=drops_reported,
     )
     summary = loadgen.Summary(worker_id="w", sent=100, dropped=dropped, exit_code=0)
@@ -280,3 +282,8 @@ def test_an_overflow_is_accounted_when_the_store_misses_exactly_the_reported_dro
 def test_an_overflow_fails_when_the_counts_disagree(assigned, received, drops_reported, failing):
     failed = overflow(dropped=40, assigned=assigned, received=received, drops_reported=drops_reported)
     assert any(failing in message for message in failed), failed
+
+
+def test_an_overflow_fails_when_the_newest_burst_line_never_reached_the_store():
+    failed = overflow(dropped=40, assigned=98, received=58, drops_reported=40, newest_burst=94)
+    assert any("newest burst line 99" in message for message in failed), failed

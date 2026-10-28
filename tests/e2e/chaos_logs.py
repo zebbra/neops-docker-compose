@@ -212,7 +212,11 @@ def assert_series(
 ) -> None:
     """Fails on a duplicate anywhere and on a hole in `holes_in`; the other holes are printed.
     The process `accounted_elsewhere` is left out: another check holds its series."""
-    records = [r for r in store_records(stack, start, utc_now()) if r.get("process") != accounted_elsewhere]
+    records = [
+        r
+        for r in store_records(stack, start, utc_now())
+        if accounted_elsewhere is None or r.get("process") != accounted_elsewhere
+    ]
     checked = logrecords.seq_problems(records, holes_in)
     report.add(
         not checked,
@@ -631,6 +635,7 @@ def assert_drops_accounted(report: Report, stack: Stack, start: str, outcome: Bu
             and seen.drops_reported >= summary.dropped
         ),
     )
+    report.add(lines.newest_burst == last, f"the newest burst line {last} is stored ({lines.newest_burst})")
     report.add(lines.duplicates == 0, f"no line stored twice ({lines.duplicates})")
     report.add(
         lines.received == lines.assigned - summary.dropped,
