@@ -631,7 +631,7 @@ def test_without_cms_tasks_the_warning_names_the_command_for_what_is_due():
     assert (
         doctor.RESYNC_UNLOCKS in unlocks_only[0].detail and doctor.RESYNC_ROWS not in unlocks_only[0].detail
     )
-    pastes_as_one_line = f"{doctor.RESYNC_ROWS} && {doctor.RESYNC_UNLOCKS}"
+    pastes_as_one_line = f"{doctor.RESYNC_ROWS}; {doctor.RESYNC_UNLOCKS}"
     assert pastes_as_one_line in both[0].detail
 
 

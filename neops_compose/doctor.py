@@ -419,10 +419,11 @@ def index_sync_probes(compose, cms_tasks: bool) -> list[Probe]:
 
 
 def _resync_commands(report: dict) -> str:
-    """Rows and group writes, and unlocks, each have their own command."""
+    """Rows and group writes, and unlocks, each have their own command. Joined with "; ", not "&&":
+    resync_unsynced_rows exits 3 while a row keeps failing, which must not keep the unlocks waiting."""
     unlocks = report.get("unlocks", {}).get("awaiting_sweep", 0)
     commands = [RESYNC_ROWS] if report["awaiting_sweep"] > unlocks else []
-    return " && ".join(commands + ([RESYNC_UNLOCKS] if unlocks else []))
+    return "; ".join(commands + ([RESYNC_UNLOCKS] if unlocks else []))
 
 
 def _index_sync_warning(detail: str) -> Probe:
