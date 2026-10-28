@@ -256,6 +256,34 @@ def test_0003_counts_the_retention_toggle_as_on_exactly_when_the_cms_does(tmp_pa
     assert env.get("NEOPS_LOG_RETENTION") == horizon
 
 
+@pytest.mark.parametrize(
+    "text,enabled,horizon",
+    [
+        ("EXECUTION_LOG_RETENTION_ENABLED=True\nEXECUTION_LOG_RETENTION_ENABLED=False\n", "False", ""),
+        ("EXECUTION_LOG_RETENTION_ENABLED=False\nEXECUTION_LOG_RETENTION_ENABLED=True\n", "True", "90d"),
+        ("EXECUTION_LOG_RETENTION_ENABLED = y\n", "y", "90d"),
+    ],
+    ids=["duplicate-last-off", "duplicate-last-on", "spaced"],
+)
+def test_0003_reads_the_retention_toggle_the_way_compose_does(tmp_path, text, enabled, horizon):
+    """Compose takes the last of a duplicated key and allows spaces around `=`."""
+    env, _, _ = run_0003(tmp_path, text)
+    assert env.get("NEOPS_LOG_RETENTION_ENABLED") == enabled
+    assert env.get("NEOPS_LOG_RETENTION") == horizon
+    assert "EXECUTION_LOG_RETENTION" not in (tmp_path / ".env").read_text()
+
+
+def test_0003_keeps_the_logger_class_compose_reads_from_a_duplicated_key(tmp_path):
+    loggers = "neops.core.log.loggers"
+    text = (
+        f"NEOPS_LOGGER_CLASS={loggers}.db.DbLogger\n"
+        f"NEOPS_LOGGER_CLASS={loggers}.optimized_db.OptimizedDbLogger\n"
+    )
+    env, _, _ = run_0003(tmp_path, text)
+    assert env.get("NEOPS_LOG_CLASS") == f"{loggers}.optimized_db.OptimizedDbLogger"
+    assert "NEOPS_LOGGER_CLASS" not in (tmp_path / ".env").read_text()
+
+
 def test_0003_keeps_a_retention_the_operator_already_set_in_the_new_name(tmp_path):
     text = "NEOPS_LOG_RETENTION_ENABLED=True\nNEOPS_LOG_RETENTION=2w\nEXECUTION_LOG_RETENTION_DAYS=90\n"
     env, _, _ = run_0003(tmp_path, text)

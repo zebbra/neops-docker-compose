@@ -48,24 +48,22 @@ class Env:
             del self.values[key]
 
     def rename(self, old: str, new: str) -> None:
-        if not self.exists:
+        """In place when `old` sits on exactly one `KEY=` line, keeping its position and comment.
+        Otherwise the value compose reads (the last occurrence) moves to `new`."""
+        if not self.exists or old not in self.values:
             raise MissingEnv(old)
-        old_re = re.compile(rf"^(?P<prefix>[ \t]*(?:export[ \t]+)?){re.escape(old)}=")
-        new_re = re.compile(rf"^[ \t]*(?:export[ \t]+)?{re.escape(new)}=")
-        lines = self.path.read_text().splitlines(keepends=True)
-        if any(new_re.match(line) for line in lines):
+        if new in self.values:
             raise ValueError(f"cannot rename {old} to {new}: {new} already exists")
-        matched = False
-        result = []
-        for line in lines:
-            match = None if matched else old_re.match(line)
-            if match:
-                matched = True
-                result.append(f"{match.group('prefix')}{new}={line[match.end() :]}")
-            else:
-                result.append(line)
-        if not matched:
-            raise MissingEnv(old)
-        self.path.write_text("".join(result))
-        self.values[new] = self.values.get(old, "")
-        self.values.pop(old, None)
+        lines = self.path.read_text().splitlines(keepends=True)
+        any_form = re.compile(rf"^[ \t]*(?:export[ \t]+)?{re.escape(old)}[ \t]*=")
+        exact = re.compile(rf"^(?P<prefix>[ \t]*(?:export[ \t]+)?){re.escape(old)}=")
+        occurrences = [i for i, line in enumerate(lines) if any_form.match(line)]
+        match = exact.match(lines[occurrences[0]]) if len(occurrences) == 1 else None
+        if match is None:
+            self.set(new, self.values[old])
+            self.unset(old)
+            return
+        i = occurrences[0]
+        lines[i] = f"{match.group('prefix')}{new}={lines[i][match.end() :]}"
+        self.path.write_text("".join(lines))
+        self.values[new] = self.values.pop(old)
