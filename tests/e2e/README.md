@@ -310,7 +310,7 @@ the only block it registers is its own `fb.e2e.neops.io/log_burst:0.1.0`, which 
 has. The driver publishes `wf.e2e.neops.io/log_burst` (one global step on that block) and runs it;
 the block then logs N lines a second for S seconds through the job's logger, so every line takes
 the production path: the push sink's 10,000-line buffer, its overflow and its retries. Once the
-burst is out and the engine answers `/health`, loadgen waits 30 s and sends itself SIGTERM; the
+burst is out and the engine answers `/health`, loadgen waits `SETTLE_SECONDS` and sends itself SIGTERM; the
 SDK's graceful shutdown pushes the rest. It prints `LOADGEN READY`, `LOADGEN BURST` and, at exit,
 `LOADGEN SUMMARY` with the worker id, the lines sent, and what the SDK logged about lines it did
 not deliver: dropped (`dropped N log lines (buffer full)`), unpushed at exit, refused by the
@@ -321,6 +321,10 @@ warning in the store. A reworded unpushed, refused or lease message would count 
 so before it starts loadgen reads the installed SDK's source and refuses with exit 2 when one of
 those three (`loadgen.QUIET_NOTICES`) is no longer in it. `tests/unit/test_loadgen.py` only
 tests the parsing against sample messages and cannot notice an SDK change.
+
+The block is neither idempotent, pure nor reversible, so the engine neither replaces the job of
+a killed loadgen nor rolls it back, and no stale job waits for the next loadgen on the same stack. loadgen is one more worker: with
+the developer-preview engine image, which allows two, C11's fresh loadgen is refused with 403.
 
 The driver refuses any directory but a harness clone, with the same guard as `chaos.py`. The
 accounting reads the loadgen worker's records straight from VictoriaLogs (`process` is the worker

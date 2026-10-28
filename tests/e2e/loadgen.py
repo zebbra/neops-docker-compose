@@ -50,8 +50,9 @@ READY, BURST, SUMMARY = "READY", "BURST", "SUMMARY"
 TICK_SECONDS = 0.1
 # After the burst, once the engine answers: time for the job's result and the backlog an outage
 # left to go out before the graceful stop, whose own final flush is bounded at 5 s. A flush that
-# met the outage may sit in a retry backoff of up to 16 s first.
-SETTLE_SECONDS = 30.0
+# met the outage may sit in a retry backoff of up to 16 s first, and /health answers before the
+# outbox takes lines.
+SETTLE_SECONDS = 45.0
 ENGINE_WAIT_SECONDS = 300.0
 ENGINE_HEALTH = "/health"
 # Without a job for this long past the burst's length, the worker stops on its own.
@@ -303,8 +304,6 @@ def register_burst_block(burst: Burst) -> None:
             param_cls=BurstParameters,
             result_cls=BurstResult,
             version=BURST_VERSION,
-            is_idempotent=True,
-            is_pure=True,
         )
     )
     class LogBurst(FunctionBlock[BurstParameters, BurstResult]):
