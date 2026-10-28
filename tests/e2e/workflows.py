@@ -49,6 +49,7 @@ FACT_VALUE = json.dumps({"source": "neops-docker-compose e2e"})
 SUCCEEDED = frozenset({"completed_ack"})
 SETTLED = SUCCEEDED | {"failed_safe_ack", "failed_unsafe_ack"}
 RUN_TIMEOUT = 90.0
+ONLINE = "ONLINE"
 LINES_TIMEOUT = 30.0
 PAGE_LIMIT = 500
 FB_ID = re.compile(r"^(?P<package>[^/:]+)/(?P<name>[^/:]+):(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
@@ -179,9 +180,12 @@ def declared_id(document: dict) -> str:
 
 
 def publish(engine: Engine) -> str:
+    return publish_document(engine, workflow_document())
+
+
+def publish_document(engine: Engine, document: dict) -> str:
     """`increment` makes a rerun against an install that holds an older copy of the document
     publish the next free version instead of answering 409; an identical copy answers 200."""
-    document = workflow_document()
     status, payload = engine.call(
         "POST", "/workflow-definition/publish", {"workflow": document, "increment": True}
     )
@@ -206,11 +210,12 @@ def prepare(deployment: Deployment, engine: Engine) -> Target:
 
 
 def execute(engine: Engine, target: Target) -> str:
-    body = {
-        "workflow": target.workflow_id,
-        "executeOnParameters": {"ids": [target.group_id]},
-        "parameters": {},
-    }
+    return start_execution(engine, target.workflow_id, {"ids": [target.group_id]})
+
+
+def start_execution(engine: Engine, workflow_id: str, execute_on: dict) -> str:
+    """`execute_on` is empty for a global workflow."""
+    body = {"workflow": workflow_id, "executeOnParameters": execute_on, "parameters": {}}
     status, payload = engine.call("POST", "/workflow-execution", body)
     if status != 201 or not isinstance(payload, dict):
         raise WorkflowError(f"execute answered {status}: {str(payload)[:300]}")
@@ -273,14 +278,24 @@ def engine_version(deployment: Deployment) -> str:
     return str(engine_version_payload(deployment).get("version", ""))
 
 
-def online_worker(engine: Engine) -> tuple[int, str | None]:
-    """GET /workers' status and the uuid of one ONLINE worker; 403 means no worker:read."""
+def worker_states(payload: object) -> dict[str, str]:
+    """GET /workers' answer as uuid -> upper-cased status."""
+    items = payload.get("items", []) if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        return {}
+    return {str(w.get("uuid") or w.get("id")): str(w.get("status", "")).upper() for w in items}
+
+
+def workers(engine: Engine) -> tuple[int, dict[str, str]]:
+    """GET /workers' status and every worker's state; 403 means no worker:read."""
     status, payload = engine.call("GET", "/workers")
-    if status != 200:
-        return status, None
-    items = payload if isinstance(payload, list) else payload.get("items", [])
-    online = [w for w in items if str(w.get("status", "")).upper() == "ONLINE"]
-    return status, (online[0].get("uuid") or online[0].get("id")) if online else None
+    return status, worker_states(payload) if status == 200 else {}
+
+
+def online_worker(engine: Engine) -> tuple[int, str | None]:
+    """GET /workers' status and the uuid of one ONLINE worker."""
+    status, states = workers(engine)
+    return status, next((uuid for uuid, state in states.items() if state == ONLINE), None)
 
 
 def run_logs(engine: Engine, execution_id: str, **query: str) -> tuple[int, object]:
