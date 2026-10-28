@@ -56,6 +56,8 @@ BURST_RATE = 300
 # The burst outlasts the fault by this much: the fault starts once the lines flow, and the
 # store takes a few seconds to be seen open.
 LOAD_LEAD_SECONDS = 30.0
+ENGINE_HEALTH_URL = inside.ENGINE_INTERNAL + inside.ENGINE_HEALTH
+ANSWER_POLL = 0.5
 
 
 @dataclass(frozen=True)
@@ -253,9 +255,13 @@ def wait_healthy(stack: Stack, service: str, timeout: float = HEALTHY_TIMEOUT) -
     return wait_for(lambda: stack.health_of(service) == "healthy", timeout)
 
 
-def recreate(stack: Stack, service: str) -> bool:
+def start_alone(stack: Stack, service: str) -> None:
     """One service, with whatever configuration the files now say, and nothing it depends on."""
     compose(stack, "up", "-d", "--no-deps", service)
+
+
+def recreate(stack: Stack, service: str) -> bool:
+    start_alone(stack, service)
     return wait_healthy(stack, service) if service == "engine" else True
 
 
@@ -365,16 +371,36 @@ def running_services(stack: Stack) -> set[str]:
     return {row["Service"] for row in Compose(stack.clone).ps() if row.get("State") == "running"}
 
 
+@dataclass
+class FaultSpan:
+    """A fault in time.monotonic(): from when it was in place to when the service it took away
+    answered again, None until then."""
+
+    began: float = field(default_factory=time.monotonic)
+    ended: float | None = None
+
+
+def engine_answered_at(stack: Stack) -> float | None:
+    """Asked from inside its container, so before the healthcheck and the proxy see it: a worker
+    reaches the engine directly too."""
+    if wait_for(lambda: inside.engine_reaches(stack.clone, ENGINE_HEALTH_URL), HEALTHY_TIMEOUT, ANSWER_POLL):
+        return time.monotonic()
+    return None
+
+
 @contextmanager
-def engine_stopped(stack: Stack) -> Iterator[None]:
+def engine_stopped(stack: Stack) -> Iterator[FaultSpan]:
     """Back with --no-deps, so nothing the engine depends on is restarted with it. Whatever the
     stop took down with it is started again as it was, not recreated."""
     running = running_services(stack)
     compose(stack, "stop", "engine")
+    span = FaultSpan()
     try:
-        yield
+        yield span
     finally:
-        recreate(stack, "engine")
+        start_alone(stack, "engine")
+        span.ended = engine_answered_at(stack)
+        wait_healthy(stack, "engine")
         stopped = sorted(running - running_services(stack))
         if stopped:
             compose(stack, "start", *stopped)

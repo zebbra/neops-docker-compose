@@ -23,7 +23,9 @@ import chaos_kit  # noqa: E402
 import chaos_logs  # noqa: E402
 import loadgen  # noqa: E402
 import loadgen_driver  # noqa: E402
+import logrecords  # noqa: E402
 import run_scenario  # noqa: E402
+import workflows  # noqa: E402
 
 
 def test_set_value_replaces_only_that_key():
@@ -245,29 +247,113 @@ def test_the_c12a_gate_follows_the_engine_pin_of_compose_yaml():
     assert chaos_logs.engine_gates_old_clients(f"v{pinned}", pinned)
 
 
-def overflow(
-    dropped: int, assigned: int, received: int, drops_reported: int, newest_burst: int = 99
-) -> list[str]:
-    """C9's verdict on a burst of 100 lines whose store tally is the one given."""
-    tally = loadgen_driver.Accounting(
+BURST_RATE = 10
+BURST_LINES = 300
+# 30 s of lines at 10 a second from t=0, its fault in place from t=3 - the settle, so the outage's
+# lines start at 30, and its service back at t=20 + the slack, so the recent ones end at 200. The
+# buffer of the two shapes below holds 60 lines, 6 s.
+FAULT = chaos_kit.FaultSpan(
+    began=3.0 - chaos_logs.FAULT_SETTLE_SECONDS, ended=20.0 + chaos_logs.RECENT_SLACK_SECONDS
+)
+RECENT_START = 200 - round(BURST_RATE * (chaos_logs.RECENT_SECONDS - chaos_logs.RECENT_SLACK_SECONDS))
+OLDEST_DROPPED = frozenset([*range(30), *range(170, BURST_LINES)])
+NEWEST_DROPPED = frozenset([*range(90), *range(230, BURST_LINES)])
+
+
+def burst_outcome(dropped: int = 0) -> loadgen_driver.BurstOutcome:
+    summary = loadgen.Summary(worker_id="w", sent=BURST_LINES, dropped=dropped, exit_code=0)
+    run = workflows.Run("burst", next(iter(workflows.SUCCEEDED)), 1.0)
+    return loadgen_driver.BurstOutcome("w", summary, run, 0, rate=BURST_RATE, started=0.0)
+
+
+def tally(assigned: int, received: int, kept: frozenset[int], **counts: int) -> loadgen_driver.Accounting:
+    return loadgen_driver.Accounting(
         assigned=assigned,
         received=received,
         duplicates=0,
-        burst_received=100 - dropped,
-        newest_burst=newest_burst,
-        drops_reported=drops_reported,
+        burst_received=len(kept),
+        newest_burst=counts.pop("newest_burst", max(kept)),
+        drops_reported=counts.pop("drops_reported", 0),
+        burst_indices=kept,
     )
-    summary = loadgen.Summary(worker_id="w", sent=100, dropped=dropped, exit_code=0)
-    outcome = loadgen_driver.BurstOutcome("w", summary, None, 0)
+
+
+def judged(stored: loadgen_driver.Accounting, check, *args) -> list[str]:
     report = run_scenario.Report()
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(chaos_logs, "stored_lines", lambda *args: tally)
-        chaos_logs.assert_overflow_accounted(report, None, "start", outcome)
+        patch.setattr(chaos_logs, "stored_lines", lambda *_: stored)
+        check(report, None, *args)
     return report.failed
+
+
+def overflow(
+    dropped: int,
+    assigned: int,
+    received: int,
+    drops_reported: int,
+    newest_burst: int = BURST_LINES - 1,
+    kept: frozenset[int] = OLDEST_DROPPED,
+    fault: chaos_kit.FaultSpan = FAULT,
+) -> list[str]:
+    """C9's verdict on a burst of 300 lines whose store tally is the one given."""
+    stored = tally(assigned, received, kept, newest_burst=newest_burst, drops_reported=drops_reported)
+    return judged(stored, chaos_logs.assert_overflow_accounted, "start", burst_outcome(dropped), fault)
+
+
+def test_the_outage_window_starts_once_the_fault_has_settled_and_the_recent_one_before_the_return():
+    outage, recent = chaos_logs.burst_windows(burst_outcome(), FAULT)
+    assert (outage, recent) == (range(30, BURST_LINES), range(RECENT_START, 200))
+
+
+def test_the_recent_window_ends_at_the_bursts_end_when_the_burst_ended_before_the_return():
+    late = chaos_kit.FaultSpan(began=FAULT.began, ended=60.0)
+    _, recent = chaos_logs.burst_windows(burst_outcome(), late)
+    assert recent.stop == BURST_LINES - round(BURST_RATE * chaos_logs.RECENT_SLACK_SECONDS)
 
 
 def test_an_overflow_is_accounted_when_the_store_misses_exactly_the_reported_drops():
     assert overflow(dropped=40, assigned=103, received=63, drops_reported=40) == []
+
+
+def test_an_overflow_fails_when_the_sdk_dropped_its_newest_lines_instead_of_its_oldest():
+    failed = overflow(dropped=20, assigned=103, received=83, drops_reported=20, kept=NEWEST_DROPPED)
+    assert any("newest outage lines" in message for message in failed), failed
+    assert any("only the oldest" in message for message in failed), failed
+
+
+def test_an_overflow_fails_when_the_engine_was_never_seen_answering_again():
+    unseen = chaos_kit.FaultSpan(began=FAULT.began)
+    failed = overflow(dropped=40, assigned=103, received=63, drops_reported=40, fault=unseen)
+    assert any("answered again" in message for message in failed), failed
+
+
+def outbox_cap(missing: int, dropped: int, kept: frozenset[int] = OLDEST_DROPPED) -> list[str]:
+    """C8's verdict on a burst of 300 lines, the outbox having counted `dropped` rows."""
+    outcome = burst_outcome()
+    load = chaos_kit.LoadResult(burst=outcome)
+    outage = chaos_logs.Outage("start", {}, {}, {"outbox": {"dropped": dropped}}, True, 0.0, load, FAULT)
+    stored = tally(BURST_LINES + 3 + missing, BURST_LINES + 3, kept)
+    return judged(stored, chaos_logs.assert_outbox_dropped_oldest, outage)
+
+
+def test_a_capped_outbox_accounts_for_every_line_the_store_misses():
+    assert outbox_cap(missing=38026, dropped=38027) == []
+
+
+def test_a_capped_outbox_fails_when_the_store_misses_more_lines_than_it_dropped():
+    failed = outbox_cap(missing=38028, dropped=38027)
+    assert any("38028 missing" in message for message in failed), failed
+
+
+def test_a_capped_outbox_fails_when_it_kept_its_oldest_rows_and_dropped_the_newest():
+    failed = outbox_cap(missing=20, dropped=20, kept=NEWEST_DROPPED)
+    assert any("only the oldest" in message for message in failed), failed
+
+
+def test_a_paused_run_without_a_core_unlock_audit_line_is_named():
+    audited = logrecords.RunLines(engine=3, worker=2, core_unlock_audit=1, foreign=0)
+    silent = logrecords.RunLines(engine=3, worker=2, core_unlock_audit=0, foreign=0)
+    assert chaos_logs.runs_without_audit({"a": audited, "b": silent}) == ["b"]
 
 
 @pytest.mark.parametrize(
@@ -285,8 +371,8 @@ def test_an_overflow_fails_when_the_counts_disagree(assigned, received, drops_re
 
 
 def test_an_overflow_fails_when_the_newest_burst_line_never_reached_the_store():
-    failed = overflow(dropped=40, assigned=98, received=58, drops_reported=40, newest_burst=94)
-    assert any("newest burst line 99" in message for message in failed), failed
+    failed = overflow(dropped=40, assigned=98, received=58, drops_reported=40, newest_burst=294)
+    assert any("newest burst line 299" in message for message in failed), failed
 
 
 @pytest.mark.parametrize(

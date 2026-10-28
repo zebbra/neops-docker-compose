@@ -10,7 +10,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 
@@ -19,6 +19,7 @@ import logrecords
 import workflows
 from chaos_kit import (
     BURST_RATE,
+    FaultSpan,
     LoadResult,
     Stack,
     burst_load,
@@ -46,7 +47,7 @@ from chaos_kit import (
     wait_logs,
     worker_records,
 )
-from loadgen_driver import Accounting, BurstOutcome, account
+from loadgen_driver import Accounting, BurstOutcome, account, drop_order
 from run_scenario import CONNECT, Report, neops
 
 from neops_compose.doctor import LOGS_PROBE
@@ -95,6 +96,14 @@ ONLINE_TIMEOUT = 60.0
 FRESH_RATE = 10
 FRESH_SECONDS = 5.0
 RETRIED_STATUS = 503
+RECOVERY_POLL = 0.5
+# Burst lines due this long after a fault was in place were logged after it: the driver reads the
+# burst's start a moment late, and a store or engine stopping takes a push in flight with it.
+FAULT_SETTLE_SECONDS = 2.0
+# The newest lines of an outage: those due between these two lengths before its service answered
+# again. The slack covers loadgen running behind schedule and the poll that saw the service back.
+RECENT_SECONDS = 6.0
+RECENT_SLACK_SECONDS = 3.0
 
 
 @dataclass
@@ -106,6 +115,7 @@ class Outage:
     recovered: bool
     replay_seconds: float
     load: LoadResult
+    span: FaultSpan
 
 
 def outage_under_load(
@@ -123,6 +133,7 @@ def outage_under_load(
     load.start()
     try:
         with fault():
+            span = FaultSpan()
             opened, during = wait_logs(stack, state_is("open"), STATE_TIMEOUT)
             report.add(opened, f"the engine reports its store open during the fault ({during.get('state')})")
             if midway:
@@ -130,11 +141,22 @@ def outage_under_load(
             time.sleep(seconds)
             during = version_logs(stack)
         recovering = time.monotonic()
-        recovered, after = wait_logs(stack, drained, REPLAY_TIMEOUT)
+        recovered, after = wait_replayed(stack, span)
         replay = time.monotonic() - recovering
     finally:
         result = load.stop()
-    return Outage(start, before, during, after, recovered, replay, result)
+    return Outage(start, before, during, after, recovered, replay, result, span)
+
+
+def wait_replayed(stack: Stack, span: FaultSpan) -> tuple[bool, dict]:
+    """Until the outbox is drained; `span` ends the first time the engine reports its store ok."""
+
+    def ok_then_drained(logs: dict) -> bool:
+        if span.ended is None and logs.get("state") == "ok":
+            span.ended = time.monotonic()
+        return drained(logs)
+
+    return wait_logs(stack, ok_then_drained, REPLAY_TIMEOUT, interval=RECOVERY_POLL)
 
 
 def assert_spooled_and_replayed(report: Report, outage: Outage) -> None:
@@ -148,6 +170,12 @@ def assert_spooled_and_replayed(report: Report, outage: Outage) -> None:
     )
     dropped = outage.after.get("entriesDropped", 0) - outage.before.get("entriesDropped", 0)
     report.add(dropped == 0, f"no line dropped across the outage ({dropped})")
+    outbox_dropped = outbox_drops(outage)
+    report.add(outbox_dropped == 0, f"the outbox dropped no row ({outbox_dropped})")
+
+
+def outbox_drops(outage: Outage) -> int:
+    return int((outage.after.get("outbox") or {}).get("dropped", 0))
 
 
 def stored_lines(
@@ -323,6 +351,7 @@ def step_partition(report: Report, stack: Stack) -> None:
     """C6: the engine cut off the logs network, under load."""
     outage = outage_under_load(report, stack, lambda: engine_partitioned(stack), PARTITION_SECONDS)
     assert_spooled_and_replayed(report, outage)
+    assert_load_readable(report, stack, outage)
     assert_series(report, stack, outage.start)
 
 
@@ -390,26 +419,37 @@ def step_outbox_cap(report: Report, stack: Stack) -> None:
         report.add(
             warned, f"the engine logs the drop once the circuit closes (looked for {OUTBOX_DROP_MARKER!r})"
         )
-        assert_newest_kept(report, stack, outage)
+        if outage.load.burst:
+            assert_outbox_dropped_oldest(report, stack, outage)
+        else:
+            assert_newest_run_kept(report, stack, outage.load)
 
 
-def assert_newest_kept(report: Report, stack: Stack, outage: Outage) -> None:
-    if outage.load.burst:
-        assert_newest_burst_line_kept(report, stack, outage.start, outage.load.burst)
-        return
-    newest = outage.load.completed[-1:]
+def assert_newest_run_kept(report: Report, stack: Stack, load: LoadResult) -> None:
+    newest = load.completed[-1:]
     report.add(bool(newest), "a run completed at the end of the outage")
     for run in newest:
         lines, _ = workflows.run_lines(stack.engine, run.execution_id)
         report.add(not lines.problems(), f"the newest run's lines were kept ({lines})")
 
 
-def assert_newest_burst_line_kept(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> None:
+def assert_outbox_dropped_oldest(report: Report, stack: Stack, outage: Outage) -> None:
+    """Every burst line the store misses is a row the outbox counted dropped, and they are the
+    outage's oldest."""
+    outcome = outage.load.burst
     if not burst_ran(report, outcome):
         return
     last = outcome.summary.sent - 1
-    lines = stored_lines(stack, start, outcome.summary.worker_id, lambda seen: seen.newest_burst == last)
-    report.add(lines.newest_burst == last, f"the newest burst line, {last}, was kept ({lines})")
+    lines = stored_lines(
+        stack, outage.start, outcome.summary.worker_id, lambda seen: seen.newest_burst == last
+    )
+    dropped = outbox_drops(outage)
+    report.add(
+        lines.missing <= dropped,
+        f"the store's {lines.missing} missing loadgen lines are no more than the {dropped} rows the "
+        f"outbox dropped ({lines})",
+    )
+    assert_oldest_dropped(report, lines, outcome, outage.span, "the store")
 
 
 def outage_push_body(timestamp: str) -> str:
@@ -554,28 +594,39 @@ def step_celery_child_restart(report: Report, stack: Stack) -> None:
     print(f"C15 (report only): pkill exit {killed}; run {execution_id} {status}; {lines}", flush=True)
 
 
-def run_durations(stack: Stack, target: workflows.Target, count: int) -> list[float]:
-    runs = [workflows.run_once(stack.engine, target, interval=FINE_POLL) for _ in range(count)]
-    return [run.seconds for run in runs]
+def timed_runs(stack: Stack, target: workflows.Target, count: int) -> list[workflows.Run]:
+    return [workflows.run_once(stack.engine, target, interval=FINE_POLL) for _ in range(count)]
+
+
+def runs_without_audit(lines: Mapping[str, logrecords.RunLines]) -> list[str]:
+    return [execution_id for execution_id, run in lines.items() if run.core_unlock_audit < 1]
 
 
 def step_slow_store_at_unlock(report: Report, stack: Stack) -> None:
     """C16: core's push to a store that hangs must not hold the unlock up. A run's duration
-    covers its unlock, so every run with the store paused stays within the baseline's worst."""
+    covers its unlock, so every run with the store paused stays within the baseline's worst; and
+    each of those runs' unlock audit line is read back after the pause, so core did push it."""
     target = workflows.prepare(stack.deployment, stack.engine)
-    baseline = max(run_durations(stack, target, SLOW_STORE_RUNS))
+    baseline = max(run.seconds for run in timed_runs(stack, target, SLOW_STORE_RUNS))
     with store_paused(stack):
         paused = time.monotonic()
-        slow = run_durations(stack, target, SLOW_STORE_RUNS)
+        slow = timed_runs(stack, target, SLOW_STORE_RUNS)
         time.sleep(max(0.0, SLOW_STORE_PAUSE - (time.monotonic() - paused)))
-    limit = baseline + SLOW_STORE_SLACK
+    worst, limit = max(run.seconds for run in slow), baseline + SLOW_STORE_SLACK
     report.add(
-        max(slow) < limit,
-        f"no run slowed by the paused store: worst {max(slow):.1f}s < {limit:.1f}s "
-        f"({', '.join(f'{s:.1f}' for s in slow)})",
+        worst < limit,
+        f"no run slowed by the paused store: worst {worst:.1f}s < {limit:.1f}s "
+        f"({', '.join(f'{run.seconds:.1f}' for run in slow)})",
     )
     recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
     report.add(recovered, "the store is ok and the outbox drained after the pause")
+    lines = {run.execution_id: workflows.run_lines(stack.engine, run.execution_id)[0] for run in slow}
+    silent = runs_without_audit(lines)
+    report.add(
+        not silent,
+        f"core pushed the unlock audit line of every run the paused store saw: {len(lines) - len(silent)} "
+        f"of {len(lines)} read back after the pause (without one: {silent})",
+    )
 
 
 def step_loadgen_rate(report: Report, stack: Stack) -> None:
@@ -602,23 +653,59 @@ def step_engine_down_overflow(report: Report, stack: Stack) -> None:
     load = burst_load(stack, OVERFLOW_RATE, OVERFLOW_SECONDS)
     load.start()
     try:
-        with engine_stopped(stack):
+        with engine_stopped(stack) as span:
             time.sleep(ENGINE_DOWN_SECONDS)
     finally:
         outcome = load.finish()
     if burst_ran(report, outcome):
-        assert_overflow_accounted(report, stack, start, outcome)
+        assert_overflow_accounted(report, stack, start, outcome, span)
 
 
-def assert_overflow_accounted(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> None:
+def assert_overflow_accounted(
+    report: Report, stack: Stack, start: str, outcome: BurstOutcome, span: FaultSpan
+) -> None:
     summary = outcome.summary
     report.add(
         summary.dropped > 0, f"the SDK dropped N > 0 lines while the engine was down (N={summary.dropped})"
     )
-    assert_drops_accounted(report, stack, start, outcome)
+    lines = assert_drops_accounted(report, stack, start, outcome)
+    assert_oldest_dropped(report, lines, outcome, span, "the engine")
 
 
-def assert_drops_accounted(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> None:
+def burst_windows(outcome: BurstOutcome, span: FaultSpan) -> tuple[range, range]:
+    """The burst lines logged while the fault held, and its newest before the service came back:
+    those logged a few seconds before it answered, or before the burst ended if that was first."""
+    sent = outcome.summary.sent
+    outage = range(outcome.due_by(span.began + FAULT_SETTLE_SECONDS), sent)
+    burst_end = outcome.started + sent / outcome.rate
+    back = min(span.ended, burst_end)
+    recent = range(outcome.due_by(back - RECENT_SECONDS), outcome.due_by(back - RECENT_SLACK_SECONDS))
+    return outage, recent
+
+
+def assert_oldest_dropped(
+    report: Report, lines: Accounting, outcome: BurstOutcome, span: FaultSpan, service: str
+) -> None:
+    """The outage's newest lines survived and its missing ones are a run of its oldest."""
+    if not report.add(span.ended is not None, f"{service} was seen to have answered again"):
+        return
+    outage, recent = burst_windows(outcome, span)
+    order = drop_order(lines.burst_indices, outcome.summary.sent, outage, recent)
+    report.add(
+        order.newest_kept,
+        f"the newest outage lines survived: {order.recent_kept} of burst lines "
+        f"{recent.start}-{recent.stop - 1}, logged {RECENT_SECONDS:.0f}-{RECENT_SLACK_SECONDS:.0f}s "
+        f"before {service} answered again, are stored",
+    )
+    late = order.missing_after_first_kept
+    report.add(
+        order.oldest_dropped,
+        f"only the oldest outage lines are missing: none above {order.first_kept}, the oldest stored line "
+        f"of the outage from {outage.start} ({len(late)} missing above it, {list(late[:4])})",
+    )
+
+
+def assert_drops_accounted(report: Report, stack: Stack, start: str, outcome: BurstOutcome) -> Accounting:
     """By seq, the store holds what the SDK numbered minus what it dropped, and the stored
     `dropped N log lines` lines tell the engine exactly that N."""
     summary = outcome.summary
@@ -649,6 +736,7 @@ def assert_drops_accounted(report: Report, stack: Stack, start: str, outcome: Bu
         lines.drops_reported == summary.dropped,
         f"stored dropped-lines lines report {lines.drops_reported} of the {summary.dropped} the SDK dropped",
     )
+    return lines
 
 
 def step_worker_kill_mid_push(report: Report, stack: Stack) -> None:

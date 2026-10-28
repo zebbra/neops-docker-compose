@@ -262,6 +262,47 @@ def test_nothing_stored_accounts_for_nothing():
     assert (lines.assigned, lines.received, lines.newest_burst) == (0, 0, None)
 
 
+def test_the_tally_names_the_burst_lines_the_store_holds_without_printing_them():
+    lines = loadgen_driver.account([record(i, loadgen.BURST_LINE.format(i)) for i in (0, 2, 3)])
+    assert lines.burst_indices == {0, 2, 3}
+    assert "burst_indices" not in repr(lines)
+
+
+def test_a_burst_line_is_due_on_schedule_from_the_moment_the_burst_was_seen_starting():
+    outcome = loadgen_driver.BurstOutcome("w", loadgen.Summary(sent=600), None, 0, rate=300, started=100.0)
+    assert [outcome.due_by(t) for t in (99.0, 100.0, 101.0, 103.0)] == [0, 0, 300, 600]
+
+
+OUTAGE = range(30, 100)
+RECENT = range(60, 70)
+
+
+def stored(*spans: range) -> frozenset[int]:
+    return frozenset(i for span in spans for i in span)
+
+
+def test_a_buffer_that_drops_its_oldest_leaves_its_gap_at_the_start_of_the_outage():
+    order = loadgen_driver.drop_order(stored(range(30), range(50, 100)), 100, OUTAGE, RECENT)
+    assert (order.first_kept, order.missing_after_first_kept, order.recent_kept) == (50, (), 10)
+    assert order.oldest_dropped and order.newest_kept
+
+
+def test_a_buffer_that_drops_its_newest_keeps_the_start_of_the_outage_and_loses_its_end():
+    order = loadgen_driver.drop_order(stored(range(50), range(75, 100)), 100, OUTAGE, RECENT)
+    assert order.first_kept == 30 and order.missing_after_first_kept[:2] == (50, 51)
+    assert not order.oldest_dropped and not order.newest_kept
+
+
+def test_a_line_lost_after_the_newest_kept_ones_is_no_oldest_line():
+    order = loadgen_driver.drop_order(stored(range(30), range(50, 90), range(91, 100)), 100, OUTAGE, RECENT)
+    assert order.missing_after_first_kept == (90,) and not order.oldest_dropped
+
+
+def test_an_outage_with_none_of_its_lines_stored_proves_no_order():
+    order = loadgen_driver.drop_order(stored(range(30)), 100, OUTAGE, RECENT)
+    assert order.first_kept is None and not order.oldest_dropped and not order.newest_kept
+
+
 def test_a_workers_store_query_asks_for_its_process_and_its_messages():
     query = chaos_kit.store_query(
         "2026-10-28T10:00:00Z", "2026-10-28T10:05:00Z", 'process:="w"', ("seq", "_msg")

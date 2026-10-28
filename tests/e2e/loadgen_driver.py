@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Set
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -136,6 +136,16 @@ class BurstOutcome:
     run: workflows.Run | None
     exit_code: int | None
     errors: list[str] = field(default_factory=list)
+    rate: int = 0
+    started: float | None = None
+    """When the driver read the burst's start, a time.monotonic()."""
+
+    def due_by(self, instant: float) -> int:
+        """How many burst lines were out by `instant`, at most: loadgen never runs ahead of its
+        schedule, so line i is never logged before `started` + i / `rate`."""
+        if self.summary is None or self.started is None:
+            return 0
+        return loadgen.lines_due(self.rate, self.summary.sent, instant - self.started)
 
     def describe(self) -> str:
         run = f"run {self.run.execution_id} {self.run.status}" if self.run else "no run"
@@ -155,6 +165,7 @@ class BurstLoad:
         self._process: LoadgenProcess | None = None
         self._execution_id: str | None = None
         self._triggered = 0.0
+        self._burst_started: float | None = None
 
     def start(self) -> None:
         """Returns once the burst's lines are flowing; a loadgen that got that far is killed."""
@@ -185,6 +196,7 @@ class BurstLoad:
         self._execution_id = workflows.start_execution(self.engine, workflow_id, {})
         if self._process.wait_marker(loadgen.BURST, BURST_START_TIMEOUT) is None:
             raise LoadgenError(f"the burst did not start within {BURST_START_TIMEOUT:.0f}s")
+        self._burst_started = time.monotonic()
 
     def kill(self) -> None:
         print(f"+ docker kill -s KILL {self.container}", flush=True)
@@ -199,7 +211,8 @@ class BurstLoad:
             self.kill()
             code = self._process.wait(30)
         lines = self._process.lines if self._process else []
-        return BurstOutcome(self.worker_id, loadgen.summary_of(lines), self._run(code, errors), code, errors)
+        summary, run = loadgen.summary_of(lines), self._run(code, errors)
+        return BurstOutcome(self.worker_id, summary, run, code, errors, self.rate, self._burst_started)
 
     def _run(self, exit_code: int | None, errors: list[str]) -> workflows.Run | None:
         """A loadgen that died leaves its run unsettled for the engine to fail much later."""
@@ -227,6 +240,7 @@ class Accounting:
     newest_burst: int | None
     drops_reported: int
     """The sum of the N of every stored `dropped N log lines` line."""
+    burst_indices: frozenset[int] = field(default=frozenset(), repr=False)
 
     @property
     def missing(self) -> int:
@@ -249,4 +263,31 @@ def account(records: Iterable[Mapping]) -> Accounting:
         burst_received=len(bursts),
         newest_burst=max(bursts, default=None),
         drops_reported=sum(int(m.group(1)) for m in map(loadgen.DROPPED_PATTERN.match, messages) if m),
+        burst_indices=frozenset(bursts),
     )
+
+
+@dataclass(frozen=True)
+class DropOrder:
+    """Where the burst lines an outage lost sit within it. A buffer that drops its oldest loses
+    the start of the outage and keeps its end; one that drops its newest does the reverse."""
+
+    first_kept: int | None
+    """The oldest line of the outage the store holds."""
+    missing_after_first_kept: tuple[int, ...]
+    recent_kept: int
+    """How many of the lines logged just before the fault's service came back the store holds."""
+
+    @property
+    def oldest_dropped(self) -> bool:
+        return self.first_kept is not None and not self.missing_after_first_kept
+
+    @property
+    def newest_kept(self) -> bool:
+        return self.recent_kept > 0
+
+
+def drop_order(kept: Set[int], sent: int, outage: range, recent: range) -> DropOrder:
+    first = next((i for i in outage if i in kept), None)
+    later = () if first is None else tuple(i for i in range(first, sent) if i not in kept)
+    return DropOrder(first, later, sum(i in kept for i in recent))
