@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from neops_compose import preflight, search_index, secrets, workflow
-from neops_compose.compose import ComposeError
+from neops_compose.compose import DOCKER_MISSING, ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.paths import Paths
@@ -302,12 +302,16 @@ class IndexedCompose(FakeCompose):
         exits: dict[tuple[str, ...], int] | None = None,
         help_fails: bool = False,
         sync_report: str = REJECTED_REPORT,
+        sync_stderr: str = "rows are rejected",
+        sync_raises: bool = False,
     ):
         super().__init__(CORE)
         self.help_text = help_text
         self.exits = exits or {}
         self.help_fails = help_fails
         self.sync_report = sync_report
+        self.sync_stderr = sync_stderr
+        self.sync_raises = sync_raises
         self.execs: list[tuple[str, ...]] = []
         self.runs: list[tuple[tuple[str, ...], bool]] = []
 
@@ -323,7 +327,9 @@ class IndexedCompose(FakeCompose):
     def run(self, *args, capture=False, check=True, env=None):
         self.runs.append((args, capture))
         if args == INDEX_SYNC_REPORT:
-            return subprocess.CompletedProcess(args, 1, stdout=self.sync_report, stderr="rows are rejected")
+            if self.sync_raises:
+                raise ComposeError(DOCKER_MISSING)
+            return subprocess.CompletedProcess(args, 1, stdout=self.sync_report, stderr=self.sync_stderr)
         return subprocess.CompletedProcess(args, self.exits.get(args, 0))
 
     @property
@@ -372,42 +378,80 @@ def test_a_deciding_core_is_asked_on_every_up_and_before_the_start_is_recorded(t
     assert all(args != INDEX_SYNC_REPORT for args, _ in compose.runs)
 
 
-def test_documents_set_aside_by_the_rebuild_warn_and_the_start_is_still_recorded(tmp_path, monkeypatch):
+def _set_aside(tmp_path, monkeypatch, **compose_options) -> tuple[IndexedCompose, list[str], list[str]]:
     """Exit 3: core rebuilt everything and set aside what Elasticsearch refused."""
-    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3})
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3}, **compose_options)
     logged: list[str] = []
     order = _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+    return compose, order, logged
+
+
+def test_documents_set_aside_by_the_rebuild_warn_and_the_start_is_still_recorded(tmp_path, monkeypatch):
+    compose, order, logged = _set_aside(tmp_path, monkeypatch)
 
     assert order[-1] == "finish"
     assert compose.runs[-1] == (INDEX_SYNC_REPORT, True)
-    warning = logged[-1]
-    assert warning.startswith("WARNING:") and "5 documents were set aside" in warning
-    assert "index_sync_status --list rejected" in warning
+    warning, rows = logged[-2:]
+    assert warning.startswith("WARNING:") and "set them aside" in warning and "output above" in warning
+    assert rows == f"5 rows are now marked rejected; list them with: {search_index.LIST_REJECTED}"
 
 
-def test_a_set_aside_warning_without_a_readable_report_still_points_at_the_listing(tmp_path, monkeypatch):
-    """The count is the only thing an unreadable report costs; the start is still recorded."""
-    unreadable = json.dumps({"version": 2, "models": {"core.Device": {"rejected": 2}}})
-    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3}, sync_report=unreadable)
-    logged: list[str] = []
-    order = _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+def test_one_row_set_aside_is_counted_in_the_singular(tmp_path, monkeypatch):
+    one = json.dumps({"version": 1, "models": {"core.Device": {"rejected": 1}}})
+    _, _, logged = _set_aside(tmp_path, monkeypatch, sync_report=one)
+
+    assert logged[-1].startswith("1 row is now marked rejected")
+
+
+@pytest.mark.parametrize(
+    "sync_report",
+    [
+        json.dumps({"version": 2, "models": {"core.Device": {"rejected": 2}}}),
+        json.dumps({"version": 1, "models": {"core.Device": {"rejected": 0}}}),
+        "no report at all",
+    ],
+)
+def test_without_a_count_to_give_the_warning_still_points_at_the_listing(tmp_path, monkeypatch, sync_report):
+    """An unreadable report, or a row already re-indexed since, only costs the number."""
+    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_report=sync_report)
 
     assert order[-1] == "finish"
-    assert "some documents were set aside" in logged[-1]
-    assert "index_sync_status --list rejected" in logged[-1]
+    assert logged[-1] == f"list the rows set aside with: {search_index.LIST_REJECTED}"
 
 
-def test_a_deciding_core_is_asked_on_a_fresh_install_too(tmp_path, monkeypatch):
-    compose = IndexedCompose(DECIDING_CORE)
-    _up_after(tmp_path, monkeypatch, compose, None)
+def test_a_count_that_cannot_be_asked_for_still_lets_the_start_be_recorded(tmp_path, monkeypatch):
+    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_raises=True)
 
-    assert compose.streamed == [REBUILD_IF_STALE]
+    assert order[-1] == "finish"
+    assert logged[-2].startswith("WARNING:")
+    assert logged[-1] == f"list the rows set aside with: {search_index.LIST_REJECTED}"
+
+
+def test_a_core_without_index_sync_status_is_sent_to_the_rebuild_output(tmp_path, monkeypatch):
+    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_stderr="Unknown command: 'index_sync_status'")
+
+    assert order[-1] == "finish"
+    assert "only record" in logged[-1] and "index_sync_status --list" not in logged[-1]
+
+
+def test_install_records_the_start_after_documents_were_set_aside(tmp_path, monkeypatch):
+    order: list[str] = []
+    _stub_up(monkeypatch, order)
+    monkeypatch.setattr(workflow, "check_images", lambda c: None)
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3})
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    ctx.state.last_up = _last_up()
+
+    workflow.install(ctx)
+
+    assert order[-1] == "finish"
+    assert compose.runs[-1] == (INDEX_SYNC_REPORT, True)
 
 
 def test_a_failed_rebuild_stops_up_before_it_records_the_start(tmp_path, monkeypatch):
     compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 1})
     order: list[str] = []
-    with pytest.raises(ComposeError, match=r"exit 1.*not recorded"):
+    with pytest.raises(ComposeError, match=r"--rebuild-if-stale exited 1.*not recorded"):
         _up_after(tmp_path, monkeypatch, compose, _last_up(), order)
     assert order[-1] == "run:--rebuild-if-stale"
 
@@ -441,7 +485,7 @@ def test_an_older_cores_full_rebuild_tolerates_no_exit_but_0(tmp_path, monkeypat
     """Exit 3 means documents set aside only for --rebuild-if-stale; on --rebuild it is a failure."""
     compose = IndexedCompose(OLD_CORE_WITH_LOOKUPS, exits={(*REBUILD, "--sync-lookups"): 3})
     order: list[str] = []
-    with pytest.raises(ComposeError, match=r"exit 3.*not recorded"):
+    with pytest.raises(ComposeError, match=r"--rebuild --force --sync-lookups exited 3.*not recorded"):
         _up_after(tmp_path, monkeypatch, compose, _last_up(es=ES_OLD), order)
     assert "finish" not in order
 

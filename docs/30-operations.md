@@ -106,7 +106,8 @@ The indices need no `elastic_index --create`: `up` runs `cms-init`, which create
 missing. On a host that was running before the restore, the indices still hold documents for rows
 the restore removed, and their stamps still say they are current, so `up` leaves them alone. Deleting
 them makes every index stale: `--rebuild-if-stale` then refills all of them (groups, clients and the
-lookup indices included) and stamps them, so the next `up` has nothing to do. On a fresh host this
+lookup indices included) and stamps them, so the next `up` has nothing to do. Its exit 3 means it
+finished but set documents aside (see [Upgrades](#upgrades)). On a fresh host this
 costs one rebuild more than strictly needed, since `up` has just built them from the restored
 data. An older core has no stamps; `--rebuild --force` drops the old documents and refills every
 index. Do not use `--populate`: it keeps the documents of removed rows.
@@ -196,18 +197,21 @@ which; to check yourself:
   nothing. **The first `up` on such a core rebuilds every index once**, because indices built by
   compose or by a hand-run `--rebuild` carry no stamp. A fresh install builds its first, empty
   indices the same way, in seconds.
-
-  A document Elasticsearch refuses does not fail the rebuild: core finishes it, sets the refused
-  documents aside and marks their rows `rejected`, and `up` prints a `WARNING` with how many and
-  records the start as usual. Those rows stay out of search until they change again;
-  `./neops compose -- exec cms python manage.py index_sync_status --list rejected` names them, and
-  [Search index out of sync](50-troubleshooting.md#search-index-out-of-sync) says what to do
-  about them.
 - **An older neops-core** (2.2.0, pinned by this release, is one) cannot tell whether an upgrade
   changed its indices, so `up` rebuilds every index whenever the core or the Elasticsearch image
   differs from the one the last successful `up` ran (`up` logs "neops-core or Elasticsearch
   changed: rebuilding the search index"). That is `manage.py elastic_index --rebuild --force`,
   plus `--sync-lookups` where core has it.
+
+On a core with `--rebuild-if-stale`, a document Elasticsearch refuses does not fail the rebuild:
+core finishes it, sets the refused documents aside and marks their rows `rejected`, and exits 3.
+`up` then prints a `WARNING`, how many rows are marked `rejected`, and the command that lists them
+(`./neops compose -- exec cms python manage.py index_sync_status --list rejected`), and records
+the start as usual. Keep the rebuild's output: it is where the reason for each refusal is printed.
+Those rows stay out of search until their data is corrected and the row saved, or until a later
+rebuild finds Elasticsearch accepting them; see
+[Search index out of sync](50-troubleshooting.md#search-index-out-of-sync) for what to do about
+them.
 
 A full rebuild took 57 s for 2,000 devices, 20,000 interfaces and 50 groups; plan an upgrade that
 rebuilds as a short maintenance window, because while it runs:
@@ -222,9 +226,9 @@ rebuilds as a short maintenance window, because while it runs:
 A save that lands while an index is deleted fails instead of recreating it: Elasticsearch is
 configured not to auto-create the Neops indices (`action.auto_create_index`), since an
 auto-created one would carry a dynamic mapping that breaks search. The rebuild re-indexes those
-rows from the database anyway. If the rebuild fails, which is any non-zero exit except the
-set-aside one above (on an older core, any non-zero exit at all), `up` says so and stops before
-recording the start, so the next `./neops up` tries it again.
+rows from the database anyway. If the rebuild fails, which is any non-zero exit other than
+`--rebuild-if-stale`'s exit 3 above (on an older core, any non-zero exit at all), `up` says so and
+stops before recording the start, so the next `./neops up` tries it again.
 
 **Do not interrupt a rebuild.** Ctrl-C stops `./neops up`, not the rebuild: `docker compose exec`
 cannot signal the process it started, so it keeps running inside `cms`. On a core with
@@ -252,7 +256,8 @@ To run the check or a rebuild by hand:
 ```
 
 `--rebuild` writes no stamps, so on a core with `--rebuild-if-stale` the next `up` rebuilds once
-more.
+more. A hand-run `--rebuild-if-stale` that exits 3 finished, but set documents aside as described
+above.
 
 Elasticsearch upgrades its data directory in place on the first start of a newer image and cannot
 open it with an older one afterwards. Going back to a previous release therefore needs

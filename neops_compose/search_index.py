@@ -26,6 +26,12 @@ SET_ASIDE = 3
 INDEX_SYNC_REPORT = ("python", "manage.py", "index_sync_status", "--json")
 INDEX_SYNC_REPORT_VERSION = 1
 LIST_REJECTED = "./neops compose -- exec cms python manage.py index_sync_status --list rejected"
+SET_ASIDE_WARNING = (
+    "WARNING: the search index was rebuilt, but Elasticsearch refused some documents and neops-core set "
+    "them aside as rejected. They stay out of search until their data is corrected and the row saved, or "
+    "a later rebuild finds Elasticsearch accepting them. The rebuild's output above gives each reason; "
+    f"keep it {SEE_DOCS}"
+)
 
 
 def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
@@ -38,7 +44,7 @@ def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
             f"and the next ./neops up waits for it at cms-init {SEE_DOCS}"
         )
         if _stream(ctx, "--rebuild-if-stale", tolerated=(SET_ASIDE,)) == SET_ASIDE:
-            ctx.log(_set_aside_warning(ctx))
+            _report_set_aside(ctx)
     elif images_moved(last_up, running):
         ctx.log(
             f"neops-core or Elasticsearch changed: rebuilding the search index; {DO_NOT_INTERRUPT}, "
@@ -62,29 +68,39 @@ def _stream(ctx: Ctx, *flags: str, tolerated: tuple[int, ...] = ()) -> int:
     code = ctx.compose.run("exec", "-T", "cms", *MANAGE, *flags, check=False).returncode
     if code != 0 and code not in tolerated:
         raise ComposeError(
-            f"the search index rebuild failed (exit {code}, its output is above) and this start was not "
-            "recorded; fix the cause and run ./neops up again"
+            f"elastic_index {' '.join(flags)} exited {code} (its output is above): the search index rebuild "
+            "failed and this start was not recorded; fix the cause and run ./neops up again"
         )
     return code
 
 
-def _set_aside_warning(ctx: Ctx) -> str:
-    count = _rejected_rows(ctx)
-    documents = "some documents were" if count is None else f"{count} documents were"
-    return (
-        f"WARNING: the search index was rebuilt, but {documents} set aside: Elasticsearch refused them, "
-        f"and they stay out of search until their rows change. See {LIST_REJECTED}"
-    )
+def _report_set_aside(ctx: Ctx) -> None:
+    """The warning goes out before the count is asked for, which nothing bounds in time."""
+    ctx.log(SET_ASIDE_WARNING)
+    ctx.log(_rejected_rows_line(ctx))
 
 
-def _rejected_rows(ctx: Ctx) -> int | None:
-    """Only the number is at stake here, so an answer this release cannot read just leaves it out.
-    index_sync_status exits 1 while rows are rejected, after it has printed its report."""
+def _rejected_rows_line(ctx: Ctx) -> str:
+    """index_sync_status exits 1 while rows are rejected, after it has printed its report."""
     try:
         result = ctx.compose.run("exec", "-T", "cms", *INDEX_SYNC_REPORT, capture=True, check=False)
     except ComposeError:
-        return None
-    report = _last_json_line(result.stdout or "")
+        return f"list the rows set aside with: {LIST_REJECTED}"
+    if "Unknown command" in (result.stderr or ""):
+        return (
+            "this neops-core has no index_sync_status command: the rebuild's output above is the only "
+            "record of which documents were set aside"
+        )
+    count = _rejected_count(result.stdout or "")
+    if not count:
+        return f"list the rows set aside with: {LIST_REJECTED}"
+    rows = "1 row is" if count == 1 else f"{count} rows are"
+    return f"{rows} now marked rejected; list them with: {LIST_REJECTED}"
+
+
+def _rejected_count(stdout: str) -> int | None:
+    """Only the number is at stake, so a report this release cannot read just leaves it out."""
+    report = _last_json_line(stdout)
     if report.get("version") != INDEX_SYNC_REPORT_VERSION:
         return None
     try:
