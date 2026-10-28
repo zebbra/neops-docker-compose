@@ -92,12 +92,18 @@ def admin_token(deployment: Deployment) -> str:
 
 
 class Engine:
-    """The engine's REST API as one principal; a token that expired mid-run is minted again once."""
+    """The engine's REST API as one principal. The token is fetched on first use, so a CMS that is
+    down fails the call that needs it, and one that expired mid-run is fetched again once."""
 
     def __init__(self, deployment: Deployment, token_source: Callable[[], str]):
         self.deployment = deployment
         self.token_source = token_source
-        self.token = token_source()
+        self.token: str | None = None
+
+    def bearer(self) -> str:
+        if self.token is None:
+            self.token = self.token_source()
+        return self.token
 
     def call(self, method: str, path: str, body: object = None) -> tuple[int, object]:
         status, payload = self._send(method, path, body)
@@ -112,7 +118,7 @@ class Engine:
             path,
             method=method,
             body=None if body is None else json.dumps(body),
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers={"Authorization": f"Bearer {self.bearer()}"},
         )
         return status, parse_json(text)
 
@@ -192,7 +198,7 @@ class Target:
 
 
 def prepare(deployment: Deployment, engine: Engine) -> Target:
-    return Target(publish(engine), ensure_group(deployment, engine.token))
+    return Target(publish(engine), ensure_group(deployment, engine.bearer()))
 
 
 def execute(engine: Engine, target: Target) -> str:
