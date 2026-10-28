@@ -356,6 +356,15 @@ def test_a_paused_run_without_a_core_unlock_audit_line_is_named():
     assert chaos_logs.runs_without_audit({"a": audited, "b": silent}) == ["b"]
 
 
+def test_core_reached_the_paused_store_when_it_stored_every_audit_line_or_reported_a_drop():
+    audited = logrecords.RunLines(engine=3, worker=2, core_unlock_audit=1, foreign=0)
+    silent = logrecords.RunLines(engine=3, worker=2, core_unlock_audit=0, foreign=0)
+    drop = "ERROR Failed to write VictoriaLogs entries: ReadTimeout"
+    assert chaos_logs.core_reached_store({"a": audited}, "")
+    assert chaos_logs.core_reached_store({"a": audited, "b": silent}, drop)
+    assert not chaos_logs.core_reached_store({"a": audited, "b": silent}, "")
+
+
 @pytest.mark.parametrize(
     "assigned,received,drops_reported,failing",
     [
