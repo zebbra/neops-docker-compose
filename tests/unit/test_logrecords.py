@@ -78,6 +78,11 @@ def test_a_hole_and_a_duplicate_are_both_reported():
     assert problems == ["neops-core/p: duplicate seq 2", "neops-core/p: 2 missing seq 3, 4"]
 
 
+def test_holes_can_be_left_out_where_a_kill_makes_them_expected():
+    records = [line("neops-core", s) for s in (1, 1, 5)]
+    assert logrecords.seq_problems(records, holes=False) == ["neops-core/p: duplicate seq 1"]
+
+
 def test_a_restarted_engine_starts_a_new_series_rather_than_a_hole():
     records = [line("neops-workflow-engine", s, "a:1") for s in (7, 8)]
     records += [line("neops-workflow-engine", s, "a:2") for s in (0, 1)]

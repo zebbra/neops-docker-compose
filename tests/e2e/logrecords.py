@@ -81,8 +81,10 @@ def seq_series_key(record: Mapping) -> tuple[str, ...]:
     return key
 
 
-def seq_problems(records: Iterable[Mapping]) -> list[str]:
-    """Duplicates and holes within each series, between the lowest and the highest `seq` seen."""
+def seq_problems(records: Iterable[Mapping], holes: bool = True) -> list[str]:
+    """Duplicates, and with `holes` the missing numbers, within each series between the lowest
+    and the highest `seq` seen. A SIGKILLed engine loses its in-memory tail by design, so a step
+    that kills one asks for duplicates alone and reports the holes."""
     series: dict[tuple[str, ...], list[int]] = defaultdict(list)
     for record in records:
         series[seq_series_key(record)].append(int(record["seq"]))
@@ -93,7 +95,7 @@ def seq_problems(records: Iterable[Mapping]) -> list[str]:
         missing = sorted(set(range(min(counts), max(counts) + 1)) - set(counts))
         if duplicates:
             problems.append(f"{'/'.join(key)}: duplicate seq {_abbreviate(duplicates)}")
-        if missing:
+        if holes and missing:
             problems.append(f"{'/'.join(key)}: {len(missing)} missing seq {_abbreviate(missing)}")
     return problems
 

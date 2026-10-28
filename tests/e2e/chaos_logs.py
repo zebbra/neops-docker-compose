@@ -1,0 +1,438 @@
+"""The log-store chaos steps, C1-C16 of the logging test plan (§5), on a stack with
+compose.logs.yaml. C1 rides in chaos.py's `kill` step and C4b in its `env` step; C9, C11 and
+C13 need loadgen.py or a skewed worker clock and are not here yet. C15 only reports.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
+
+import inside
+import logrecords
+import workflows
+from chaos_kit import (
+    LoadResult,
+    Stack,
+    compose,
+    docker,
+    doctor_green,
+    drained,
+    engine_env,
+    engine_partitioned,
+    env_values,
+    failing_probes,
+    make_load,
+    outbox_attempts_and_rows,
+    outbox_rows,
+    recreate,
+    state_is,
+    store_paused,
+    store_records,
+    store_stopped,
+    utc_now,
+    version_logs,
+    wait_for,
+    wait_healthy,
+    wait_logs,
+)
+from run_scenario import CONNECT, Report, neops
+
+from neops_compose.doctor import LOGS_PROBE
+
+OUTAGE_SECONDS = 120
+PARTITION_SECONDS = 60
+DOUBLE_OUTAGE_SECONDS = 30
+STATE_TIMEOUT = 90.0
+REPLAY_TIMEOUT = 600.0
+READABLE_SAMPLE = 3
+# The engine answers its own unknown routes 404, which the push classifies as `configuration`.
+MISCONFIGURED_URL = "http://engine:3030"
+VICTORIALOGS_PUSH = "/insert/loki/api/v1/push?disable_message_parsing=1"
+BLACKHOLE_URL = "http://10.255.255.1:9428"
+OUTBOX_CAP = "2000"
+OUTBOX_CAP_THREADS = 4
+OUTBOX_DROP_MARKER = "dropped"
+PUSH_UNAVAILABLE_MARKER = "503"
+OLD_WORKER_IMAGE = "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.5"
+OLD_ENGINE_IMAGE = "quay.io/zebbra/neops-workflow-engine:0.43.0-beta.4"
+REFUSAL_MARKERS = ("compatib", "version")
+WORKER_EXIT_TIMEOUT = 120.0
+SLOW_STORE_RUNS = 10
+SLOW_STORE_PAUSE = 100.0
+SLOW_STORE_SLACK = 1.0
+FINE_POLL = 0.25
+
+
+@dataclass
+class Outage:
+    start: str
+    before: dict
+    during: dict
+    after: dict
+    recovered: bool
+    replay_seconds: float
+    load: LoadResult
+
+
+def outage_under_load(
+    report: Report,
+    stack: Stack,
+    fault: Callable[[], AbstractContextManager],
+    seconds: float,
+    threads: int = 2,
+    midway: Callable[[], None] | None = None,
+) -> Outage:
+    """Traffic, the fault for `seconds`, then recovery until the outbox is drained. `midway`
+    runs once the engine has seen the outage, while the fault still holds."""
+    start, before = utc_now(), version_logs(stack)
+    load = make_load(stack, threads)
+    load.start()
+    try:
+        with fault():
+            opened, during = wait_logs(stack, state_is("open"), STATE_TIMEOUT)
+            report.add(opened, f"the engine reports its store open during the fault ({during.get('state')})")
+            if midway:
+                midway()
+            time.sleep(seconds)
+            during = version_logs(stack)
+        recovering = time.monotonic()
+        recovered, after = wait_logs(stack, drained, REPLAY_TIMEOUT)
+        replay = time.monotonic() - recovering
+    finally:
+        result = load.stop()
+    return Outage(start, before, during, after, recovered, replay, result)
+
+
+def assert_spooled_and_replayed(report: Report, outage: Outage) -> None:
+    report.add(
+        outbox_rows(outage.during) > 0, f"the outbox fills during the outage ({outage.during.get('outbox')})"
+    )
+    report.add(
+        outage.recovered,
+        f"the store is ok and the outbox drained {outage.replay_seconds:.0f}s after recovery "
+        f"(#23 replay time; {outage.after.get('outbox')})",
+    )
+    dropped = outage.after.get("entriesDropped", 0) - outage.before.get("entriesDropped", 0)
+    report.add(dropped == 0, f"no line dropped across the outage ({dropped})")
+
+
+def assert_runs_readable(report: Report, stack: Stack, load: LoadResult) -> None:
+    """The runs of the outage, read back once replayed: their lines were spooled, not lost."""
+    sample = load.completed[-READABLE_SAMPLE:]
+    report.add(
+        bool(sample), f"runs completed under the fault ({len(load.completed)}, {len(load.errors)} errors)"
+    )
+    for run in sample:
+        lines, _ = workflows.run_lines(stack.engine, run.execution_id)
+        report.add(not lines.problems(), f"run {run.execution_id} is readable after the replay ({lines})")
+
+
+def assert_series(report: Report, stack: Stack, start: str, holes: bool = True) -> list[str]:
+    records = store_records(stack, start, utc_now())
+    problems = logrecords.seq_problems(records, holes=holes)
+    what = "duplicate or missing" if holes else "duplicate"
+    report.add(not problems, f"no {what} seq per series in {len(records)} stored records ({problems[:4]})")
+    return problems
+
+
+def step_store_down_under_load(report: Report, stack: Stack) -> None:
+    """C2."""
+    outage = outage_under_load(report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS)
+    assert_spooled_and_replayed(report, outage)
+    assert_runs_readable(report, stack, outage.load)
+    assert_series(report, stack, outage.start)
+
+
+def step_store_down_idle(report: Report, stack: Stack) -> None:
+    """C3: with nothing to push, the open circuit attempts nothing and deletes nothing."""
+    with store_stopped(stack):
+        opened, _ = wait_logs(stack, state_is("open"), STATE_TIMEOUT)
+        report.add(opened, "the engine reports its store open")
+        attempts_before, rows_before = outbox_attempts_and_rows(stack)
+        time.sleep(OUTAGE_SECONDS)
+        attempts_after, rows_after = outbox_attempts_and_rows(stack)
+    report.add(
+        attempts_after == attempts_before == 0 and rows_after >= rows_before,
+        f"no replay attempt and no row deleted while open (attempts {attempts_before}->{attempts_after}, "
+        f"rows {rows_before}->{rows_after})",
+    )
+    recovered, after = wait_logs(stack, drained, REPLAY_TIMEOUT)
+    report.add(recovered, f"the outbox drains once the store is back ({after.get('outbox')})")
+
+
+def confirm_misconfigured_target(report: Report, stack: Stack) -> bool:
+    status, body = inside.from_engine(stack.clone, "POST", MISCONFIGURED_URL + VICTORIALOGS_PUSH, "{}")
+    return report.add(
+        status == 404, f"{MISCONFIGURED_URL}{VICTORIALOGS_PUSH} answers 404 ({status}: {body[:80]})"
+    )
+
+
+def step_misconfigured_endpoint(report: Report, stack: Stack) -> None:
+    """C4: a store that answers 404 refuses the engine's settings; doctor fails, nothing is lost."""
+    if not confirm_misconfigured_target(report, stack):
+        return
+    with engine_env(report, stack, {"NEOPS_LOG_URL": MISCONFIGURED_URL}) as injected:
+        if not injected:
+            return
+        refused, logs = wait_logs(stack, state_is("misconfigured"), STATE_TIMEOUT)
+        report.add(
+            refused,
+            f"the engine reports its store misconfigured ({logs.get('state')}: {logs.get('lastError')})",
+        )
+        failing = [name for name, _ in failing_probes(stack.clone)]
+        report.add(LOGS_PROBE in failing, f"doctor fails on {LOGS_PROBE!r} ({failing})")
+        workflows.run_once(stack.engine, workflows.prepare(stack.deployment, stack.engine))
+        held = outbox_rows(version_logs(stack))
+        report.add(held > 0, f"the outbox holds the lines the store refused ({held} rows)")
+    recovered, after = wait_logs(stack, drained, REPLAY_TIMEOUT)
+    report.add(recovered, f"the held lines replay once the URL is right again ({after.get('outbox')})")
+
+
+def step_unreachable_host(report: Report, stack: Stack) -> None:
+    """C4a: an address nobody answers is transient, `open`, and doctor only warns."""
+    with engine_env(report, stack, {"NEOPS_LOG_URL": BLACKHOLE_URL}) as injected:
+        if not injected:
+            return
+        opened, logs = wait_logs(stack, state_is("open"), STATE_TIMEOUT)
+        report.add(
+            opened, f"the engine reports an unreachable store open, not misconfigured ({logs.get('state')})"
+        )
+        ok, detail = doctor_green(stack.clone)
+        report.add(ok, f"doctor passes with the store unreachable, a warning only ({detail})")
+    recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
+    report.add(recovered, "the store is ok again once the URL is restored")
+
+
+def full_up(report: Report, stack: Stack) -> None:
+    started = time.monotonic()
+    code = neops(stack.clone, "up", "--connect", CONNECT, "--insecure", check=False).returncode
+    report.add(
+        code == 0, f"`./neops up` with the store unreachable exits 0 [{time.monotonic() - started:.0f}s]"
+    )
+
+
+def step_unreachable_at_boot(report: Report, stack: Stack) -> None:
+    """C5: the store is no start dependency of the engine, so `up` is not held up by it."""
+    with engine_env(report, stack, {"NEOPS_LOG_URL": BLACKHOLE_URL}, apply=lambda: full_up(report, stack)):
+        report.add(
+            stack.health_of("engine") == "healthy", f"the engine is healthy ({stack.health_of('engine')})"
+        )
+        opened, logs = wait_logs(stack, state_is("open"), STATE_TIMEOUT)
+        report.add(opened, f"the engine reports the store open ({logs.get('state')})")
+    recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
+    report.add(recovered, "the store is ok again once the URL is restored")
+
+
+def step_partition(report: Report, stack: Stack) -> None:
+    """C6: the engine cut off the logs network, under load."""
+    outage = outage_under_load(report, stack, lambda: engine_partitioned(stack), PARTITION_SECONDS)
+    assert_spooled_and_replayed(report, outage)
+    assert_series(report, stack, outage.start)
+
+
+def carried_rows(
+    report: Report, stack: Stack, interrupt: Callable[[], None], what: str
+) -> Callable[[], None]:
+    """Midway through an outage: interrupt the engine and require the outbox rows to survive."""
+
+    def midway() -> None:
+        time.sleep(OUTAGE_SECONDS / 4)
+        _, rows_before = outbox_attempts_and_rows(stack)
+        interrupt()
+        healthy = wait_healthy(stack, "engine")
+        _, rows_after = outbox_attempts_and_rows(stack)
+        report.add(
+            healthy and rows_after >= rows_before,
+            f"the outbox rows survive {what} ({rows_before} -> {rows_after}, "
+            f"engine {stack.health_of('engine')})",
+        )
+
+    return midway
+
+
+def step_engine_restart_mid_outage(report: Report, stack: Stack) -> None:
+    """C7: a graceful restart flushes its queue to the outbox, and the replay picks up after it."""
+    midway = carried_rows(report, stack, lambda: compose(stack, "restart", "engine"), "a restart")
+    outage = outage_under_load(report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS, midway=midway)
+    assert_spooled_and_replayed(report, outage)
+    assert_series(report, stack, outage.start)
+
+
+def kill_engine(stack: Stack) -> None:
+    compose(stack, "kill", "-s", "KILL", "engine")
+    recreate(stack, "engine")
+
+
+def step_engine_kill_mid_outage(report: Report, stack: Stack) -> None:
+    """C7b: SIGKILL loses the in-memory tail by design; what reached the outbox survives."""
+    midway = carried_rows(report, stack, lambda: kill_engine(stack), "a SIGKILL")
+    outage = outage_under_load(report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS, midway=midway)
+    report.add(outage.recovered, f"the outbox drains after the kill ({outage.after.get('outbox')})")
+    assert_series(report, stack, outage.start, holes=False)
+    lost = [
+        p for p in logrecords.seq_problems(store_records(stack, outage.start, utc_now())) if "missing" in p
+    ]
+    print(f"C7b (report only): seq holes from the killed process: {lost or 'none'}", flush=True)
+
+
+def step_outbox_cap(report: Report, stack: Stack) -> None:
+    """C8: a full outbox deletes its oldest rows and says so once the circuit closes."""
+    since = utc_now()
+    with engine_env(report, stack, {"NEOPS_LOG_OUTBOX_MAX_ROWS": OUTBOX_CAP}) as injected:
+        if not injected:
+            return
+        outage = outage_under_load(
+            report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS, threads=OUTBOX_CAP_THREADS
+        )
+        outbox = outage.after.get("outbox") or {}
+        report.add(outbox.get("dropped", 0) > 0, f"the capped outbox dropped its oldest rows ({outbox})")
+        warned = OUTBOX_DROP_MARKER in stack.logs_since("engine", since).lower()
+        report.add(
+            warned, f"the engine logs the drop once the circuit closes (looked for {OUTBOX_DROP_MARKER!r})"
+        )
+        newest = outage.load.completed[-1:]
+        report.add(bool(newest), "a run completed at the end of the outage")
+        for run in newest:
+            lines, _ = workflows.run_lines(stack.engine, run.execution_id)
+            report.add(not lines.problems(), f"the newest run's lines were kept ({lines})")
+
+
+def step_database_and_store_down(report: Report, stack: Stack) -> None:
+    """C10: with its database and the store gone, the engine answers pushes 503 and stays up."""
+    since = utc_now()
+    load = make_load(stack)
+    load.start()
+    try:
+        compose(stack, "stop", "postgres-engine", stack.store.service)
+        try:
+            time.sleep(DOUBLE_OUTAGE_SECONDS)
+            state = (stack.row("engine") or {}).get("State")
+            report.add(
+                state == "running", f"the engine keeps running without its database and store ({state})"
+            )
+        finally:
+            compose(stack, "start", "postgres-engine", stack.store.service)
+    finally:
+        result = load.stop()
+    report.add(wait_healthy(stack, "engine"), f"the engine is healthy again ({stack.health_of('engine')})")
+    worker_log = stack.logs_since("worker", since)
+    report.add(
+        PUSH_UNAVAILABLE_MARKER in worker_log,
+        f"the worker logged a 503 from its pushes and retried "
+        f"({len(result.runs)} runs, {len(result.errors)} errors)",
+    )
+    recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
+    report.add(recovered, "the store is ok and the outbox drained")
+
+
+def worker_refused(stack: Stack) -> tuple[bool, str]:
+    name = stack.container("worker")
+    out = docker(
+        "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.RestartCount}}", name
+    ).stdout.split()
+    status, code, restarts = out[0], int(out[1]), int(out[2])
+    return (code != 0 or restarts > 0), f"{status}, exit {code}, {restarts} restarts"
+
+
+def step_old_worker(report: Report, stack: Stack) -> None:
+    """C12a: a 0.2 worker against the 0.44 engine is told it is incompatible and exits."""
+    since = utc_now()
+    try:
+        with env_values(stack, {"NEOPS_WORKER_IMAGE": OLD_WORKER_IMAGE}):
+            recreate(stack, "worker")
+            refused = wait_for(lambda: worker_refused(stack)[0], WORKER_EXIT_TIMEOUT)
+            report.add(refused, f"worker {OLD_WORKER_IMAGE} exits ({worker_refused(stack)[1]})")
+            log = stack.logs_since("worker", since).lower()
+            report.add(
+                any(m in log for m in REFUSAL_MARKERS), f"its log names the version refusal {REFUSAL_MARKERS}"
+            )
+    finally:
+        recreate(stack, "worker")
+    running = wait_for(lambda: stack.health_of("worker") == "running", WORKER_EXIT_TIMEOUT)
+    report.add(running, f"the current worker runs again ({stack.health_of('worker')})")
+
+
+def step_rollback_during_outage(report: Report, stack: Stack) -> None:
+    """C14: engine 0.43 boots on the 0.44 schema while the store hangs, leaves log_outbox
+    alone, and the re-upgraded engine replays it once the store answers again."""
+    workflows.run_once(stack.engine, workflows.prepare(stack.deployment, stack.engine))
+    with store_paused(stack):
+        with env_values(stack, {"NEOPS_ENGINE_IMAGE": OLD_ENGINE_IMAGE}):
+            booted = recreate(stack, "engine")
+            report.add(
+                booted, f"engine {OLD_ENGINE_IMAGE} boots on the 0.44 schema ({stack.health_of('engine')})"
+            )
+            _, rows_first = outbox_attempts_and_rows(stack)
+            time.sleep(DOUBLE_OUTAGE_SECONDS)
+            _, rows_then = outbox_attempts_and_rows(stack)
+            report.add(
+                rows_first == rows_then,
+                f"the old engine leaves log_outbox alone ({rows_first} -> {rows_then})",
+            )
+        report.add(recreate(stack, "engine"), "the 0.44 engine is back and healthy")
+    recovered, after = wait_logs(stack, drained, REPLAY_TIMEOUT)
+    report.add(
+        recovered and rows_then > 0,
+        f"the kept rows replay after the re-upgrade ({rows_then} rows; {after.get('outbox')})",
+    )
+
+
+def step_celery_child_restart(report: Report, stack: Stack) -> None:
+    """C15, report only: core lines in flight in a Celery child are lost when it restarts."""
+    if stack.health_of("cms-worker") in ("absent", "exited"):
+        print("C15 (report only): no cms-worker in this deployment, nothing to restart", flush=True)
+        return
+    target = workflows.prepare(stack.deployment, stack.engine)
+    execution_id = workflows.execute(stack.engine, target)
+    killed = compose(
+        stack, "exec", "-T", "cms-worker", "pkill", "-f", "celery.*worker", check=False
+    ).returncode
+    status = workflows.wait_settled(stack.engine, execution_id)
+    lines, _ = workflows.run_lines(stack.engine, execution_id, timeout=10)
+    print(f"C15 (report only): pkill exit {killed}; run {execution_id} {status}; {lines}", flush=True)
+
+
+def run_durations(stack: Stack, target: workflows.Target, count: int) -> list[float]:
+    runs = [workflows.run_once(stack.engine, target, interval=FINE_POLL) for _ in range(count)]
+    return [run.seconds for run in runs]
+
+
+def step_slow_store_at_unlock(report: Report, stack: Stack) -> None:
+    """C16: core's push to a store that hangs must not hold the unlock up. A run's duration
+    covers its unlock, so every run with the store paused stays within the baseline's worst."""
+    target = workflows.prepare(stack.deployment, stack.engine)
+    baseline = max(run_durations(stack, target, SLOW_STORE_RUNS))
+    with store_paused(stack):
+        paused = time.monotonic()
+        slow = run_durations(stack, target, SLOW_STORE_RUNS)
+        time.sleep(max(0.0, SLOW_STORE_PAUSE - (time.monotonic() - paused)))
+    limit = baseline + SLOW_STORE_SLACK
+    report.add(
+        max(slow) < limit,
+        f"no run slowed by the paused store: worst {max(slow):.1f}s < {limit:.1f}s "
+        f"({', '.join(f'{s:.1f}' for s in slow)})",
+    )
+    recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
+    report.add(recovered, "the store is ok and the outbox drained after the pause")
+
+
+LOG_STEPS: dict[str, Callable[[Report, Stack], None]] = {
+    "c2": step_store_down_under_load,
+    "c3": step_store_down_idle,
+    "c4": step_misconfigured_endpoint,
+    "c4a": step_unreachable_host,
+    "c5": step_unreachable_at_boot,
+    "c6": step_partition,
+    "c7": step_engine_restart_mid_outage,
+    "c7b": step_engine_kill_mid_outage,
+    "c8": step_outbox_cap,
+    "c10": step_database_and_store_down,
+    "c12a": step_old_worker,
+    "c15": step_celery_child_restart,
+    "c16": step_slow_store_at_unlock,
+    # Last: it swaps the engine image and back, the riskiest thing the suite does to a clone.
+    "c14": step_rollback_during_outage,
+}
