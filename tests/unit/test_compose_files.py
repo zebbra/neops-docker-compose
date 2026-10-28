@@ -1,6 +1,10 @@
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
@@ -12,6 +16,7 @@ ALLOWED_BIND_ROOTS = (
     "./cms/",
     "./cust-cert/",
     "./metrics/",
+    "./logs/",
     "${NEOPS_TLS_CERT_FILE:-./certs/cert.pem}",
     "${NEOPS_TLS_KEY_FILE:-./certs/key.pem}",
 )
@@ -203,18 +208,20 @@ def _binding(mapping: str, env) -> tuple[str, int]:
 
 
 def _published_ports(env, scenario) -> list[tuple[str, int]]:
-    """The tracked files' port mappings plus the fragment the shared-host overlay extends."""
+    """The tracked files' port mappings plus the fragment the shared-host overlay extends. A
+    mapping two files repeat for one service is one port: Compose merges it."""
     from neops_compose.render import traefik_ports
 
     docs = [load(REPO / name) for name in scenario.files]
     if scenario.shared_host:
         docs.append(traefik_ports(env, scenario))
-    return sorted(
-        _binding(mapping, env)
+    mappings = {
+        (name, mapping)
         for doc in docs
-        for service in (doc.get("services") or {}).values()
+        for name, service in (doc.get("services") or {}).items()
         for mapping in service.get("ports") or []
-    )
+    }
+    return sorted(_binding(mapping, env) for _, mapping in mappings)
 
 
 def test_the_merged_config_publishes_exactly_the_ports_preflight_reserves():
@@ -251,3 +258,109 @@ def test_generated_env_files_added_after_the_first_release_are_optional():
                 if not str(path).startswith("./generated/") or path in rendered_since_first_release:
                     continue
                 assert isinstance(entry, dict) and entry.get("required") is False, f"{f.name}: {name} {path}"
+
+
+DATA_ROOT = "${NEOPS_DATA_DIR:-./data}/"
+
+
+def test_every_data_bind_mount_sits_in_a_directory_the_migrations_create():
+    """Docker creates a missing bind source as root, which no non-root image can then write."""
+    from neops_compose.env import Env
+    from neops_compose.paths import Paths
+
+    paths = Paths.for_repo(Path("/repo"), Env(Path("/nonexistent")))
+    created = {d.relative_to(paths.data) for d in paths.data_dirs()}
+    for f in COMPOSE_FILES:
+        for name, svc in (load(f).get("services") or {}).items():
+            for v in svc.get("volumes") or []:
+                src = bind_source(v)
+                if not src.startswith(DATA_ROOT):
+                    continue
+                rel = Path(src.removeprefix(DATA_ROOT))
+                assert rel in created or rel.parent in created, f"{f.name}: {name} mounts {src}"
+
+
+def test_grafana_alone_depends_on_nothing_and_provisions_nothing():
+    """A logs-only file list must load, and a dependency on victoriametrics, which only the
+    metrics overlay defines, fails `docker compose config`. Each overlay mounts its own
+    datasource, so the shared file mounts none."""
+    grafana = load(REPO / "compose.grafana.yaml")["services"]["grafana"]
+    assert "depends_on" not in grafana
+    assert not any("/etc/grafana/provisioning" in v for v in grafana["volumes"])
+
+
+def test_the_worker_is_never_put_on_the_log_store_network():
+    assert "networks" not in load(REPO / "compose.yaml")["services"]["worker"]
+    for f in COMPOSE_FILES:
+        assert "worker" not in (load(f).get("services") or {}) or f.name == "compose.yaml", f.name
+
+
+def _docker_compose_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    return subprocess.run(["docker", "compose", "version"], capture_output=True).returncode == 0
+
+
+needs_docker = pytest.mark.skipif(not _docker_compose_available(), reason="docker compose is not installed")
+EXAMPLE = (REPO / "examples" / "metrics-logs.env").read_text()
+FILES_LINE = re.compile(r"^COMPOSE_FILE=.*$", re.MULTILINE)
+TRAEFIK_BASE = "compose.yaml:compose.traefik.yaml:compose.tls-files.yaml"
+
+
+def merged(tmp_path: Path, overlays: str) -> dict:
+    """The project `docker compose config` resolves for the shared example with these overlays,
+    the cms-tasks profile on, and the scratch directory written as <repo>."""
+    from tests.compose_config_check import compose_config, prepare
+
+    scratch = tmp_path / overlays.replace(":", "+")
+    scratch.mkdir()
+    env_text = FILES_LINE.sub(f"COMPOSE_FILE={TRAEFIK_BASE}:{overlays}", EXAMPLE)
+    prepare(scratch, env_text + "COMPOSE_PROFILES=cms-tasks\n")
+    result = compose_config(scratch, "--format", "json")
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.replace(str(scratch), "<repo>"))
+
+
+@needs_docker
+@pytest.mark.parametrize(
+    "overlays",
+    [
+        "compose.metrics.yaml",
+        "compose.grafana.yaml:compose.metrics.yaml",
+        "compose.grafana.yaml:compose.logs.yaml",
+        "compose.grafana.yaml:compose.metrics.yaml:compose.logs.yaml",
+    ],
+    ids=["previous-release-metrics", "metrics", "logs", "metrics-logs"],
+)
+def test_every_overlay_combination_the_rules_allow_or_warn_about_loads(tmp_path, overlays):
+    assert merged(tmp_path, overlays)["services"]["grafana"]["image"] == "grafana/grafana:12.4.9"
+
+
+@needs_docker
+def test_the_metrics_overlays_grafana_is_the_one_the_grafana_overlay_builds(tmp_path):
+    """The previous release's .env loads compose.metrics.yaml without compose.grafana.yaml
+    until migration 0003 runs: its copy of the grafana block must be faithful."""
+    alone = merged(tmp_path, "compose.metrics.yaml")["services"]["grafana"]
+    split = merged(tmp_path, "compose.grafana.yaml:compose.metrics.yaml")["services"]["grafana"]
+    assert alone == split
+
+
+@needs_docker
+def test_the_log_store_is_reachable_from_the_engine_and_core_only(tmp_path):
+    """Function-block code runs in the worker: on the store's network it could write lines for
+    any run, bypassing the engine's lease, and read every line, bypassing its permission."""
+    services = merged(tmp_path, "compose.grafana.yaml:compose.metrics.yaml:compose.logs.yaml")["services"]
+    assert set(services["victorialogs"]["networks"]) == {"logs"}
+    assert set(services["worker"]["networks"]) == {"default"}
+    wired = [name for name, svc in services.items() if (svc.get("environment") or {}).get("NEOPS_LOG_URL")]
+    assert sorted(wired) == ["cms", "cms-beat", "cms-init", "cms-worker", "engine"]
+    for name in [*wired, "grafana"]:
+        assert set(services[name]["networks"]) == {"default", "logs"}, name
+
+
+def test_no_compose_file_mounts_the_cms_metrics_route():
+    """The CMS's /metrics discloses what the log store does; until the exporter has a network
+    the worker cannot reach, compose gives the route no credential, so the CMS never mounts it."""
+    for f in COMPOSE_FILES:
+        for key in ("NEOPS_METRICS_TOKEN", "NEOPS_METRICS_ALLOW_ANONYMOUS"):
+            assert key not in f.read_text(), f"{f.name} sets {key}"

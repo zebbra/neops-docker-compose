@@ -133,6 +133,14 @@ def test_check_warns_when_the_security_checks_are_disabled(tmp_path, monkeypatch
     assert any("NEOPS_DISABLE_SECURITY_CHECKS" in line for line in logged)
 
 
+def test_check_logs_a_rule_warning_and_still_passes(tmp_path, monkeypatch):
+    logged = check_with(tmp_path, monkeypatch, "COMPOSE_FILE=compose.yaml:compose.metrics.yaml\n")
+    warned = [line for line in logged if line.startswith("WARNING:")]
+    assert warned == [
+        "WARNING: compose.metrics.yaml requires compose.grafana.yaml; migration 0003 adds it to COMPOSE_FILE"
+    ]
+
+
 def test_check_says_nothing_about_the_flag_when_it_is_off(tmp_path, monkeypatch):
     logged = check_with(tmp_path, monkeypatch, "COMPOSE_FILE=compose.yaml\n")
     assert logged and not any("NEOPS_DISABLE_SECURITY_CHECKS" in line for line in logged)

@@ -74,13 +74,13 @@ def public_urls(env: Env, scenario: Scenario) -> dict[str, PublicUrl]:
     """The browser-facing URLs this scenario has, which is one rule with three readers: the
     Traefik routers, doctor's probes and the hostnames the self-signed certificate covers.
 
-    Keycloak arrives with its overlay. Grafana only when the operator also routed it: the
-    metrics overlay otherwise leaves it on loopback with no public name at all.
+    Keycloak arrives with its overlay. Grafana only when the operator also routed it: its
+    overlay otherwise leaves it on loopback with no public name at all.
     """
     keys = [*BASE_URLS]
     if scenario.keycloak:
         keys.append("NEOPS_KEYCLOAK_URL")
-    if scenario.metrics and env.is_set("NEOPS_GRAFANA_URL"):
+    if scenario.runs_grafana and env.is_set("NEOPS_GRAFANA_URL"):
         keys.append("NEOPS_GRAFANA_URL")
     return {key: PublicUrl.parse(env.require(key)) for key in keys}
 

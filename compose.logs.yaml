@@ -1,0 +1,69 @@
+# Overlay: VictoriaLogs as the log store of the engine and the CMS, and Grafana's datasource for
+# it. Requires compose.grafana.yaml. The store sits on its own `logs` network, which the worker
+# never joins: function-block code could otherwise write lines for any run and read all of them.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-log-store-env: &log-store-env
+  NEOPS_LOG_BACKEND: victorialogs
+  NEOPS_LOG_URL: http://victorialogs:9428
+
+x-log-store-networks: &log-store-networks
+  - default
+  - logs
+
+networks:
+  # Not `internal`: Grafana on it downloads its datasource plugin at first start.
+  logs: {}
+
+services:
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.53.0
+    command:
+      - "--storageDataPath=/vlogs"
+      - "--retentionPeriod=${NEOPS_LOG_RETENTION:-30d}"
+    volumes:
+      - ${NEOPS_DATA_DIR:-./data}/logs/victoria:/vlogs
+    # No healthcheck: the image is distroless, with no shell or HTTP client to run one. Nothing
+    # waits for it to be healthy; the engine queues and spools while it is away.
+    networks:
+      - logs
+    logging: *logging
+    restart: unless-stopped
+
+  grafana:
+    environment:
+      GF_PLUGINS_PREINSTALL_SYNC: victoriametrics-logs-datasource@0.33.1
+    volumes:
+      - ./logs/grafana/datasources/victorialogs.yml:/etc/grafana/provisioning/datasources/victorialogs.yml:ro
+    networks: *log-store-networks
+    depends_on:
+      victorialogs:
+        condition: service_started
+
+  engine:
+    environment: *log-store-env
+    networks: *log-store-networks
+    depends_on:
+      # service_started, not service_healthy: the store is not a start dependency of the engine.
+      victorialogs:
+        condition: service_started
+
+  cms-init:
+    environment: *log-store-env
+    networks: *log-store-networks
+
+  cms:
+    environment: *log-store-env
+    networks: *log-store-networks
+
+  cms-worker:
+    environment: *log-store-env
+    networks: *log-store-networks
+
+  cms-beat:
+    environment: *log-store-env
+    networks: *log-store-networks

@@ -16,7 +16,19 @@ x-logging: &logging
     max-size: "20m"
     max-file: "5"
 
+# The log store, read alike by the engine and the CMS. `db` keeps the CMS's task logs in its own
+# database and means "no store" to the engine; compose.logs.yaml points both at VictoriaLogs.
+# A store of your own: set NEOPS_LOG_BACKEND (victorialogs or loki) and NEOPS_LOG_URL in .env.
+x-log-env: &log-env
+  NEOPS_LOG_BACKEND: ${NEOPS_LOG_BACKEND:-db}
+  NEOPS_LOG_URL: ${NEOPS_LOG_URL:-}
+  NEOPS_LOG_USERNAME: ${NEOPS_LOG_USERNAME:-}
+  NEOPS_LOG_PASSWORD: ${NEOPS_LOG_PASSWORD:-}
+  NEOPS_LOG_TENANT: ${NEOPS_LOG_TENANT:-}
+  NEOPS_LOG_ENV: ${NEOPS_LOG_ENV:-}
+
 x-core-env: &core-env
+  <<: *log-env
   DEBUG: "False"
   DATABASE_URL: postgres://neops:${NEOPS_CMS_DB_PASSWORD}@postgres-cms:5432/neops
   REDIS_URL: redis://redis:6379/0
@@ -30,9 +42,10 @@ x-core-env: &core-env
   NEOPS_JWT_PRIVATE_KEY_PATH: /etc/neops/jwt/private.pem
   NEOPS_JWT_PUBLIC_KEY_PATH: /etc/neops/jwt/public.pem
   NEOPS_PUBLIC_URL: ${NEOPS_CMS_URL}
-  NEOPS_LOGGER_CLASS: ${NEOPS_LOGGER_CLASS:-neops.core.log.loggers.db.DbLogger}
-  EXECUTION_LOG_RETENTION_ENABLED: ${EXECUTION_LOG_RETENTION_ENABLED:-False}
-  EXECUTION_LOG_RETENTION_DAYS: ${EXECUTION_LOG_RETENTION_DAYS:-90}
+  NEOPS_LOG_CLASS: ${NEOPS_LOG_CLASS:-}
+  # Deletes executions older than NEOPS_LOG_RETENTION with their results, not only their logs.
+  NEOPS_LOG_RETENTION_ENABLED: ${NEOPS_LOG_RETENTION_ENABLED:-False}
+  NEOPS_LOG_RETENTION: ${NEOPS_LOG_RETENTION:-30d}
   FACT_CLEANUP_ENABLED: ${FACT_CLEANUP_ENABLED:-False}
   NEOPS_EXECUTION_CLEANUP_ENABLED: ${NEOPS_EXECUTION_CLEANUP_ENABLED:-False}
   NORNIR_THREADS: ${NORNIR_THREADS:-50}
@@ -228,9 +241,10 @@ services:
   engine:
     image: *engine-image
     environment:
+      <<: *log-env
       NODE_ENV: production
       PORT: "3030"
-      LOG_FORMAT: json
+      NEOPS_LOG_FORMAT: json
       NEOPS_CMS_URL: http://cms:8000/graphql
       POSTGRES_HOST: postgres-engine
       POSTGRES_PORT: "5432"

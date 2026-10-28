@@ -168,6 +168,28 @@ def test_the_keycloak_and_grafana_loopback_ports_are_reserved_in_both_proxy_mode
     assert all(address == "10.0.0.5" for address, _ in expose)
 
 
+def test_the_grafana_port_is_reserved_with_the_grafana_overlay_alone(tmp_path):
+    """The logs overlay brings Grafana without metrics; its loopback port is a collision too."""
+    ports = ports_for(
+        tmp_path, "COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.grafana.yaml:compose.logs.yaml\n"
+    )
+    assert ports == [("0.0.0.0", 80), ("127.0.0.1", 3000)]
+
+
+def test_a_metrics_env_from_the_previous_release_skips_the_port_check_while_its_stack_runs(
+    tmp_repo, monkeypatch
+):
+    """The first up after the upgrade loads the un-migrated metrics .env; its stack is running,
+    so its own ports are busy and must not be reported as a collision."""
+    metrics = GOOD.replace("compose.tls-files.yaml", "compose.tls-files.yaml:compose.metrics.yaml")
+    (tmp_repo / ".env").write_text(metrics)
+    env = Env(tmp_repo / ".env")
+    monkeypatch.setattr(preflight, "_cmd", fake_cmd({"docker compose": (0, "5.4.0")}))
+    compose = FakeCompose(running=("grafana", "cms", "postgres-cms"))
+    checks = preflight.run_checks(env, Scenario.from_env(env), tmp_repo, tmp_repo / "data", compose, False)
+    assert detail_for(checks, "ports") == ["skipped: the stack is running"]
+
+
 def test_report_format():
     checks = [preflight.Check("docker", True, "29.7.2"), preflight.Check("ports", False, "443 is in use")]
     text = preflight.format_report(checks)

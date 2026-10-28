@@ -15,6 +15,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DUMMY_SECRET = "dummy0123456789abcdef"
+# The directories the compose files bind-mount from the repo itself.
+LINKED_DIRS = ("metrics", "logs", "cms")
 
 
 def _fill_secrets(text: str, keys: tuple[str, ...]) -> str:
@@ -28,8 +30,9 @@ def _fill_secrets(text: str, keys: tuple[str, ...]) -> str:
     return pattern.sub(lambda m: f"{m.group(1)}={DUMMY_SECRET}", text)
 
 
-def main() -> int:
-    sys.path.insert(0, str(REPO))
+def prepare(scratch: Path, env_text: str) -> None:
+    """A repo root in `scratch` with the shipped files linked in, `env_text` as .env with every
+    blank secret filled, and generated/ rendered: what `docker compose config` needs."""
     from neops_compose import secrets
     from neops_compose.env import Env
     from neops_compose.paths import Paths
@@ -37,6 +40,31 @@ def main() -> int:
     from neops_compose.rules import ALL_SECRET_KEYS
     from neops_compose.scenario import Scenario
 
+    for f in [*REPO.glob("compose*.yaml"), *(REPO / d for d in LINKED_DIRS)]:
+        (scratch / f.name).symlink_to(f)
+    (scratch / "certs").mkdir()
+    (scratch / "cust-cert").mkdir()
+    for name in ("cert.pem", "key.pem"):
+        (scratch / "certs" / name).write_text("placeholder")
+    (scratch / ".env").write_text(_fill_secrets(env_text, ALL_SECRET_KEYS))
+    env = Env(scratch / ".env")
+    paths = Paths.for_repo(scratch, env)
+    for d in paths.data_dirs():
+        d.mkdir(parents=True, exist_ok=True)
+    secrets.ensure_jwt(paths.jwt_dir)
+    secrets.ensure_keycloak_client_secret(paths.keycloak_client_env)
+    if env.flag("NEOPS_TLS_SELF_SIGNED"):
+        secrets.ensure_selfsigned(paths.tls_dir, ["neops.example.com"])
+    paths.engine_env.write_text("NEOPS_CMS_TOKEN=dummy\n")
+    render(env, Scenario.from_env(env), paths)
+
+
+def compose_config(scratch: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["docker", "compose", "config", *args], cwd=scratch, capture_output=True, text=True)
+
+
+def main() -> int:
+    sys.path.insert(0, str(REPO))
     examples = sorted((REPO / "examples").glob("*.env"))
     if not examples:
         print("no examples/*.env found")
@@ -47,27 +75,8 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             scratch = Path(tmp) / "repo"
             scratch.mkdir()
-            for f in list(REPO.glob("compose*.yaml")) + [REPO / "metrics", REPO / "cms"]:
-                (scratch / f.name).symlink_to(f)
-            (scratch / "certs").mkdir()
-            (scratch / "cust-cert").mkdir()
-            for name in ("cert.pem", "key.pem"):
-                (scratch / "certs" / name).write_text("placeholder")
-            text = _fill_secrets(example.read_text(), ALL_SECRET_KEYS)
-            (scratch / ".env").write_text(text)
-            env = Env(scratch / ".env")
-            paths = Paths.for_repo(scratch, env)
-            for d in paths.data_dirs():
-                d.mkdir(parents=True, exist_ok=True)
-            secrets.ensure_jwt(paths.jwt_dir)
-            secrets.ensure_keycloak_client_secret(paths.keycloak_client_env)
-            if env.flag("NEOPS_TLS_SELF_SIGNED"):
-                secrets.ensure_selfsigned(paths.tls_dir, ["neops.example.com"])
-            paths.engine_env.write_text("NEOPS_CMS_TOKEN=dummy\n")
-            render(env, Scenario.from_env(env), paths)
-            result = subprocess.run(
-                ["docker", "compose", "config", "--quiet"], cwd=scratch, capture_output=True, text=True
-            )
+            prepare(scratch, example.read_text())
+            result = compose_config(scratch, "--quiet")
             status = "ok  " if result.returncode == 0 else "FAIL"
             print(f"{status} {example.name}")
             if result.returncode != 0:

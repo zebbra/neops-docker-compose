@@ -1,0 +1,32 @@
+# Overlay: Grafana, shared by compose.metrics.yaml and compose.logs.yaml, which each mount their
+# own datasource. Loopback only; routed publicly only when NEOPS_GRAFANA_URL is set.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  grafana:
+    image: grafana/grafana:12.4.9
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${NEOPS_GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${NEOPS_GRAFANA_URL:-http://localhost:3000}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      # Must be owned by uid 472; ./neops migrate (0002_grafana_data_owner) takes care of it.
+      # Under metrics/ for historical reasons: moving it would move a mount under a running Grafana.
+      - ${NEOPS_DATA_DIR:-./data}/metrics/grafana:/var/lib/grafana
+    ports:
+      - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_GRAFANA_PORT:-3000}:3000"
+    healthcheck:
+      # First boot runs the whole sqlite migration set and installs plugins before it listens,
+      # so without this `up --wait` returns early and doctor probes a closed port.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+    logging: *logging
+    restart: unless-stopped

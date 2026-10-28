@@ -28,3 +28,19 @@ def test_profiles_are_comma_separated_and_trimmed(tmp_path):
     scenario = scenario_from(tmp_path, "COMPOSE_PROFILES= other , cms-tasks\n")
     assert scenario.profiles == ("other", "cms-tasks")
     assert scenario.cms_tasks
+
+
+def test_the_grafana_and_logs_overlays_are_known(tmp_path):
+    scenario = scenario_from(
+        tmp_path, "COMPOSE_FILE=compose.yaml:compose.expose.yaml:compose.grafana.yaml:compose.logs.yaml\n"
+    )
+    assert scenario.unknown_files == ()
+    assert scenario.grafana and scenario.logs and not scenario.metrics
+
+
+def test_grafana_runs_with_its_own_overlay_or_with_the_previous_releases_metrics_overlay(tmp_path):
+    """compose.metrics.yaml carries a complete grafana for one release, so an un-migrated
+    metrics .env runs Grafana too and every Grafana-keyed rule must still apply to it."""
+    assert scenario_from(tmp_path, "COMPOSE_FILE=compose.yaml:compose.metrics.yaml\n").runs_grafana
+    assert scenario_from(tmp_path, "COMPOSE_FILE=compose.yaml:compose.grafana.yaml\n").runs_grafana
+    assert not scenario_from(tmp_path, "COMPOSE_FILE=compose.yaml:compose.expose.yaml\n").runs_grafana

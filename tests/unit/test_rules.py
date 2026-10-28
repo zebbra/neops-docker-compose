@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from neops_compose.env import Env
-from neops_compose.rules import problems
+from neops_compose.rules import problems, warnings
 from neops_compose.scenario import Scenario
 
 GOOD = """
@@ -158,6 +158,9 @@ def test_engine_path_must_not_collide_with_core_or_web_paths(tmp_repo):
     assert any("NEOPS_ENGINE_URL" in p and "reserved" in p for p in problems(env, sc, tmp_repo))
 
 
+LOGS_NEEDS_GRAFANA = "compose.logs.yaml requires compose.grafana.yaml"
+
+
 @pytest.mark.parametrize(
     "compose_file,needle",
     [
@@ -167,6 +170,8 @@ def test_engine_path_must_not_collide_with_core_or_web_paths(tmp_repo):
         ("compose.yaml:compose.traefik.yaml:compose.tls-files.yaml:compose.tls-acme.yaml", "one of"),
         ("compose.yaml:compose.traefik.yaml:compose.keycloak.yaml", "compose.oidc.yaml"),
         ("compose.yaml:compose.traefik.yaml:compose.nope.yaml", "does not exist"),
+        ("compose.yaml:compose.traefik.yaml:compose.logs.yaml", LOGS_NEEDS_GRAFANA),
+        ("compose.yaml:compose.traefik.yaml:compose.metrics.yaml:compose.logs.yaml", LOGS_NEEDS_GRAFANA),
     ],
 )
 def test_overlay_combination_rules(tmp_repo, compose_file, needle):
@@ -479,3 +484,75 @@ def test_trusted_proxies_with_a_tls_overlay_keep_the_strict_url_rules(tmp_repo):
 def test_proxy_bind_address_must_be_a_plain_ip(tmp_repo, bind, ok):
     env, sc = make(tmp_repo, UPSTREAM_TLS + f"NEOPS_PROXY_BIND_ADDRESS={bind}\n")
     assert (problems(env, sc, tmp_repo) == []) is ok
+
+
+GRAFANA_ENV = METRICS_ENV.replace("compose.metrics.yaml", "compose.grafana.yaml:compose.metrics.yaml")
+LOGS_ENV = METRICS_ENV.replace("compose.metrics.yaml", "compose.grafana.yaml:compose.logs.yaml")
+
+
+def test_the_metrics_overlay_without_grafana_warns_and_never_fails(tmp_repo):
+    """The previous release's metrics .env names no compose.grafana.yaml; check() runs before
+    migration 0003 adds it, so a failure here would refuse every metrics upgrade."""
+    env, sc = make(tmp_repo, METRICS_ENV)
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == [
+        "compose.metrics.yaml requires compose.grafana.yaml; migration 0003 adds it to COMPOSE_FILE"
+    ]
+
+
+@pytest.mark.parametrize("text", [GRAFANA_ENV, LOGS_ENV, GOOD], ids=["metrics", "logs", "neither"])
+def test_a_complete_overlay_list_has_no_warning(tmp_repo, text):
+    env, sc = make(tmp_repo, text)
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == []
+
+
+def test_logs_alone_still_needs_the_grafana_admin_password(tmp_repo):
+    env, sc = make(tmp_repo, LOGS_ENV.replace("NEOPS_GRAFANA_ADMIN_PASSWORD=a1b2c3d4e5f6a1b2c3d4e5fb\n", ""))
+    assert any("NEOPS_GRAFANA_ADMIN_PASSWORD is required" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_logs_alone_validates_the_grafana_url(tmp_repo):
+    env, sc = make(
+        tmp_repo,
+        LOGS_ENV.replace("https://grafana.neops.example.com", "https://grafana.neops.example.com/?x"),
+    )
+    assert any("NEOPS_GRAFANA_URL" in p for p in problems(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize("value", ["30d", "2w", "365d"])
+def test_log_retention_with_a_unit_is_accepted(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"NEOPS_LOG_RETENTION={value}\n")
+    assert problems(env, sc, tmp_repo) == []
+
+
+@pytest.mark.parametrize("value", ["30", "0d", "1y", "12h", "30 d", "1M"])
+def test_log_retention_without_a_day_or_week_unit_fails(tmp_repo, value):
+    """A bare integer means days to core and months to VictoriaLogs, so neither is guessed."""
+    env, sc = make(tmp_repo, GOOD + f"NEOPS_LOG_RETENTION={value}\n")
+    assert any(p.startswith("NEOPS_LOG_RETENTION") for p in problems(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ["NEOPS_LOG_BACKEND=db\n", "NEOPS_LOG_BACKEND=loki\nNEOPS_LOG_URL=http://loki.example.com:3100\n"],
+)
+def test_a_log_backend_of_your_own_is_accepted(tmp_repo, extra):
+    env, sc = make(tmp_repo, GOOD + extra)
+    assert problems(env, sc, tmp_repo) == []
+
+
+def test_an_unknown_log_backend_fails(tmp_repo):
+    env, sc = make(tmp_repo, GOOD + "NEOPS_LOG_BACKEND=elastic\n")
+    assert any(p.startswith("NEOPS_LOG_BACKEND=elastic") for p in problems(env, sc, tmp_repo))
+
+
+def test_a_log_store_of_your_own_needs_its_url(tmp_repo):
+    """The engine refuses to boot on a remote backend without a URL; say so before it starts."""
+    env, sc = make(tmp_repo, GOOD + "NEOPS_LOG_BACKEND=victorialogs\n")
+    assert any(p.startswith("NEOPS_LOG_URL is required") for p in problems(env, sc, tmp_repo))
+
+
+def test_the_logs_overlay_brings_its_own_store_url(tmp_repo):
+    env, sc = make(tmp_repo, LOGS_ENV + "NEOPS_LOG_BACKEND=victorialogs\n")
+    assert problems(env, sc, tmp_repo) == []
