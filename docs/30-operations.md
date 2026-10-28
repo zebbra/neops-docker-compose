@@ -176,10 +176,13 @@ rebuild is `manage.py elastic_index --rebuild`, plus `--sync-lookups` on a core 
 lookup indices, and its output streams to your terminal. It deletes the indices before it
 recreates them, so device and interface searches fail with `index_not_found_exception` for a
 moment and then return partial results until it finishes. If the rebuild fails, `up` stops before
-recording the start, so the next `./neops up` tries it again. While a document Elasticsearch
-refuses remains, every retry fails the same way: `rows rejected by Elasticsearch` under
-[Search index out of sync](50-troubleshooting.md#search-index-out-of-sync) says how to fix it.
-To run the rebuild by hand:
+recording the start, so the next `./neops up` tries it again, and search stays partial until a
+rebuild succeeds. A document Elasticsearch refuses fails every retry the same way. The rebuild
+stops at the first type with refused documents, and its output names each of them by `_id`
+(`device-6` is device 6), with Elasticsearch's reason. Such a row is not marked `rejected`, so
+neither `index_sync_status` nor `./neops doctor` shows it: correct its data and save it, then
+run `./neops up` again, which may stop at refused documents of a later type. To run the rebuild
+by hand:
 
 ```bash
 ./neops compose -- exec cms python manage.py elastic_index --rebuild --force

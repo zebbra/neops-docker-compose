@@ -168,13 +168,14 @@ automation that has been dormant since.
   the log line. `index_sync_status --list rejected` names the rows, and
   `docker compose logs cms cms-worker | grep 'Elasticsearch rejected the document of'` gives the
   reason (both containers sweep, and their logs rotate after 100 MB). If a manual
-  `resync_unsynced_rows` run set the row aside, the reason is in that run's output instead, and
-  nothing logs it again. A rejected row stays out of the index until it changes again. A search
-  index rebuild (`elastic_index --rebuild`, see [Operations](30-operations.md#upgrades)) does not
-  clear it: a single document Elasticsearch refuses fails the whole rebuild, and locks that search
-  the index stay refused until a rebuild succeeds. Correct the rows' data and save them instead;
-  for a mapping bug, the upgrade rebuild of a release that fixes it indexes them, as long as no
-  other document is refused.
+  `resync_unsynced_rows` run set the row aside, that line is in the run's output instead; the
+  write that failed first logged the same reason, as `ES sync failed for <row>`, where the change
+  was made. A rejected row stays out of the index until it changes again, or until a search index
+  rebuild (`elastic_index --rebuild`, see [Operations](30-operations.md#upgrades)) finds
+  Elasticsearch accepting it. While Elasticsearch still refuses the document, the rebuild fails on
+  it, and search stays partial until a rebuild succeeds. Correct the rows' data and save them
+  instead; for a mapping bug, the upgrade rebuild of a release that fixes it indexes them, as long
+  as no other document is refused.
 - `rows pending` or `group index writes` longer than the threshold: nothing has swept them. Run
   `resync_unsynced_rows`.
 - `unlocks have waited`: locks that search the index are refused with `INDEX_SYNC_PENDING`
