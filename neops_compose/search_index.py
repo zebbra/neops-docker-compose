@@ -34,7 +34,8 @@ def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
     elif images_moved(last_up, running):
         ctx.log(
             f"neops-core or Elasticsearch changed: rebuilding the search index; {DO_NOT_INTERRUPT}, "
-            f"and the next ./neops up would start a second one beside it {SEE_DOCS}"
+            "and the next ./neops up would start a second one beside it: let it finish, or stop it "
+            f"with ./neops restart cms, before running ./neops up again {SEE_DOCS}"
         )
         lookups = ["--sync-lookups"] if "--sync-lookups" in usage else []
         _stream(ctx, "--rebuild", "--force", *lookups)
