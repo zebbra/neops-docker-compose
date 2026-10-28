@@ -22,6 +22,7 @@ ENABLED = "NEOPS_LOG_RETENTION_ENABLED"
 OLD_DAYS = "EXECUTION_LOG_RETENTION_DAYS"
 RETENTION = "NEOPS_LOG_RETENTION"
 PREVIOUS_DEFAULT_HORIZON = "90d"
+CMS_TRUE_STRINGS = {"true", "on", "ok", "y", "yes", "1"}
 
 
 def apply(ctx) -> None:
@@ -71,9 +72,17 @@ def _carry_retention_over(ctx) -> None:
 def _previous_horizon(env) -> str:
     if env.is_set(OLD_DAYS):
         return f"{env.get(OLD_DAYS).strip()}d"
-    if env.flag(ENABLED):
+    if _cms_reads_as_on(env.get(ENABLED)):
         return PREVIOUS_DEFAULT_HORIZON
     return ""
+
+
+def _cms_reads_as_on(value: str) -> bool:
+    """django-environ's env.bool, the CMS's reader for this toggle; wider than Env.flag."""
+    try:
+        return int(value) != 0
+    except ValueError:
+        return value.strip().lower() in CMS_TRUE_STRINGS
 
 
 def _move(env, old: str, new: str) -> None:

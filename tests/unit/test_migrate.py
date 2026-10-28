@@ -236,6 +236,26 @@ def test_0003_never_lets_an_enabled_retention_fall_to_the_new_30_day_default(tmp
     assert env.get("NEOPS_LOG_RETENTION") == "90d"
 
 
+@pytest.mark.parametrize(
+    "toggle,horizon",
+    [
+        ("EXECUTION_LOG_RETENTION_ENABLED=y", "90d"),
+        ("EXECUTION_LOG_RETENTION_ENABLED=OK", "90d"),
+        ("EXECUTION_LOG_RETENTION_ENABLED=2", "90d"),
+        ("EXECUTION_LOG_RETENTION_ENABLED=-1", "90d"),
+        ("NEOPS_LOG_RETENTION_ENABLED=ok", "90d"),
+        ("EXECUTION_LOG_RETENTION_ENABLED=0", ""),
+        ("EXECUTION_LOG_RETENTION_ENABLED=n", ""),
+        ("EXECUTION_LOG_RETENTION_ENABLED=off", ""),
+    ],
+)
+def test_0003_counts_the_retention_toggle_as_on_exactly_when_the_cms_does(tmp_path, toggle, horizon):
+    """The CMS reads the toggle with django-environ's env.bool, where y, ok and any non-zero
+    integer are on too; each of those must keep the 90-day horizon."""
+    env, _, _ = run_0003(tmp_path, f"{toggle}\n")
+    assert env.get("NEOPS_LOG_RETENTION") == horizon
+
+
 def test_0003_keeps_a_retention_the_operator_already_set_in_the_new_name(tmp_path):
     text = "NEOPS_LOG_RETENTION_ENABLED=True\nNEOPS_LOG_RETENTION=2w\nEXECUTION_LOG_RETENTION_DAYS=90\n"
     env, _, _ = run_0003(tmp_path, text)
