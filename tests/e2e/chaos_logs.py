@@ -6,6 +6,7 @@ C13 need loadgen.py or a skewed worker clock and are not here yet. C15 only repo
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -63,8 +64,9 @@ OLD_WORKER_IMAGE = "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.8"
 OLD_ENGINE_IMAGE = "quay.io/zebbra/neops-workflow-engine:0.43.0-beta.4"
 # What neops_worker.py of 0.2.0-beta.8 logs when it refuses to start, lowercased.
 REFUSAL_MARKER = "is not compatible with this engine"
-# An engine built without NEOPS_VERSION reports `develop` and answers every client compatible.
-GATING_ENGINE_LINE = "0.44."
+# An engine built without NEOPS_VERSION reports `develop` and answers every client compatible,
+# so C12a judges only an engine stamped with the major.minor compose.yaml pins.
+ENGINE_PIN = re.compile(r"neops-workflow-engine:\$\{NEOPS_ENGINE_TAG:-([^}]+)\}")
 # A seq hole of the engine is expected wherever its store fails: a failed probe takes a seq
 # and is never spooled. The worker's series must stay whole.
 OUTAGE_HOLE_SERVICES = (logrecords.WORKER_SERVICE,)
@@ -369,18 +371,27 @@ def worker_refused(stack: Stack) -> tuple[bool, str]:
     return parse_worker_exit(out)
 
 
-def engine_gates_old_clients(version: str) -> bool:
-    return version.removeprefix("v").startswith(GATING_ENGINE_LINE)
+def pinned_engine_tag(compose_yaml: str) -> str:
+    match = ENGINE_PIN.search(compose_yaml)
+    if match is None:
+        raise ValueError("compose.yaml pins no neops-workflow-engine tag")
+    return match.group(1)
+
+
+def engine_gates_old_clients(version: str, pinned_tag: str) -> bool:
+    line = ".".join(pinned_tag.split(".")[:2]) + "."
+    return version.removeprefix("v").startswith(line)
 
 
 def step_old_worker(report: Report, stack: Stack) -> None:
     """C12a: a 0.2 worker against the 0.44 engine is told it is incompatible and exits."""
     version = workflows.engine_version(stack.deployment)
-    if not engine_gates_old_clients(version):
+    pinned = pinned_engine_tag((stack.clone / "compose.yaml").read_text())
+    if not engine_gates_old_clients(version, pinned):
         report.add(
             False,
-            f"precondition: the engine reports {version!r}, not {GATING_ENGINE_LINE}x; "
-            "build it with --build-arg NEOPS_VERSION=v0.44.0-beta.1",
+            f"precondition: the engine reports {version!r}, not the pinned {pinned}; "
+            f"build it with --build-arg NEOPS_VERSION=v{pinned}",
         )
         return
     since = utc_now()

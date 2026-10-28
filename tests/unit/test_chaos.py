@@ -221,4 +221,9 @@ def test_the_outage_push_is_a_valid_worker_push_so_only_the_outage_can_refuse_it
     ],
 )
 def test_c12a_needs_an_engine_stamped_with_a_0_44_version(version, gates):
-    assert chaos_logs.engine_gates_old_clients(version) is gates
+    assert chaos_logs.engine_gates_old_clients(version, "0.44.0-beta.1") is gates
+
+
+def test_the_c12a_gate_follows_the_engine_pin_of_compose_yaml():
+    pinned = chaos_logs.pinned_engine_tag((run_scenario.REPO / "compose.yaml").read_text())
+    assert chaos_logs.engine_gates_old_clients(f"v{pinned}", pinned)

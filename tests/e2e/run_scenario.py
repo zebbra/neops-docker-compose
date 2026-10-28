@@ -36,6 +36,7 @@ import inside  # noqa: E402
 import logrecords  # noqa: E402
 import upgrade_hook  # noqa: E402
 import workflows  # noqa: E402
+from guards import SHELL_COMPOSE_KEYS, shell_compose_refusal  # noqa: E402,F401
 
 from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from neops_compose.backup import ARCHIVE_NAME  # noqa: E402
@@ -123,8 +124,6 @@ E2E_EXAMPLES = REPO / "tests" / "e2e" / "examples"
 GRAFANA_AND_LOGS_MIGRATION = "0003_grafana_and_logs_layout"
 NOT_CONFIGURED = "LOGS_NOT_CONFIGURED"
 E2E_PROJECT_PREFIX = "neops-e2e-"
-# Docker Compose prefers these from the shell over .env, and Compose.run passes the shell on.
-SHELL_COMPOSE_KEYS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE", "COMPOSE_ENV_FILES")
 OVERRIDE_MARKER = "# Written by tests/e2e/run_scenario.py"
 OVERRIDE_YAML = f"""{OVERRIDE_MARKER}: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
@@ -1061,14 +1060,6 @@ def clone_refusal(clone: Path, environ: Mapping[str, str]) -> str | None:
     if not override.is_file() or not override.read_text().startswith(OVERRIDE_MARKER):
         return f"refusing: {override} was not written by tests/e2e/run_scenario.py"
     return None
-
-
-def shell_compose_refusal(environ: Mapping[str, str], clone: Path) -> str | None:
-    """Why a compose run from this shell would not act on `clone` alone, or None."""
-    inherited = [key for key in SHELL_COMPOSE_KEYS if key in environ]
-    if not inherited:
-        return None
-    return f"refusing: {', '.join(inherited)} is set in the shell and would win over {clone}/.env"
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

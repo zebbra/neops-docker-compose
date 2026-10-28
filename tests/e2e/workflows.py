@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -24,6 +25,7 @@ from urllib.parse import urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from guards import shell_compose_refusal  # noqa: E402
 from logrecords import RunLines  # noqa: E402
 
 from cms import GROUP_UPSERT, gql  # noqa: E402
@@ -311,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--connect", help="connect to this address instead of resolving the public hostnames")
     ap.add_argument("--insecure", action="store_true", help="accept a self-signed certificate")
     args = ap.parse_args(argv)
+    if refusal := shell_compose_refusal(os.environ, args.base):
+        print(refusal, file=sys.stderr)
+        return 2
 
     deployment = load_deployment(args.base.resolve(), args.connect, args.insecure)
     engine = Engine(deployment, lambda: admin_token(deployment))

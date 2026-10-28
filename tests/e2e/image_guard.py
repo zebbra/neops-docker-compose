@@ -15,11 +15,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from guards import shell_compose_refusal  # noqa: E402
 
 from neops_compose.compose import Compose  # noqa: E402
 
@@ -87,6 +91,9 @@ def main(argv: list[str] | None = None) -> int:
         "--ref", action="append", default=[], help="record only this image reference (repeatable)"
     )
     args = ap.parse_args(argv)
+    if refusal := shell_compose_refusal(os.environ, args.base):
+        print(refusal, file=sys.stderr)
+        return 2
     if args.action == "record":
         return record(args.base.resolve(), args.ids, args.ref)
     return verify(args.base.resolve(), args.ids)
