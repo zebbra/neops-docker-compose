@@ -210,9 +210,9 @@ command that lists them
 (`./neops compose -- exec cms python manage.py index_sync_status --list rejected`), and records
 the start as usual. Keep the rebuild's output: it is where the reason for each refusal is printed.
 Those rows stay out of search until their data is corrected and the row saved, or until a later
-rebuild finds Elasticsearch accepting them; see
-[Search index out of sync](50-troubleshooting.md#search-index-out-of-sync) for what to do about
-them.
+rebuild finds Elasticsearch accepting them. What to do about them is in the
+[rows rejected by Elasticsearch](50-troubleshooting.md#search-index-out-of-sync) bullet of
+*Search index out of sync*.
 
 A full rebuild took 57 s for 2,000 devices, 20,000 interfaces and 50 groups; plan an upgrade that
 rebuilds as a short maintenance window, because while it runs:
