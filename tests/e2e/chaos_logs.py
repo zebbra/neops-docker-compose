@@ -57,12 +57,14 @@ BLACKHOLE_URL = "http://10.255.255.1:9428"
 OUTBOX_CAP = "2000"
 OUTBOX_CAP_THREADS = 4
 OUTBOX_DROP_MARKER = "dropped its oldest lines"
-# The newest 0.2 worker: SDKs from 0.2.0-beta.7 ask the engine and exit on an incompatible
-# answer; 0.2.0-beta.5 and beta.6 never ask.
+# The newest 0.2 worker. SDK 0.2.0-beta.6 and later ask the engine and exit on an incompatible
+# answer; 0.2.0-beta.5 never asks.
 OLD_WORKER_IMAGE = "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.8"
 OLD_ENGINE_IMAGE = "quay.io/zebbra/neops-workflow-engine:0.43.0-beta.4"
 # What neops_worker.py of 0.2.0-beta.8 logs when it refuses to start, lowercased.
 REFUSAL_MARKER = "is not compatible with this engine"
+# An engine built without NEOPS_VERSION reports `develop` and answers every client compatible.
+GATING_ENGINE_LINE = "0.44."
 # A seq hole of the engine is expected wherever its store fails: a failed probe takes a seq
 # and is never spooled. The worker's series must stay whole.
 OUTAGE_HOLE_SERVICES = (logrecords.WORKER_SERVICE,)
@@ -367,8 +369,20 @@ def worker_refused(stack: Stack) -> tuple[bool, str]:
     return parse_worker_exit(out)
 
 
+def engine_gates_old_clients(version: str) -> bool:
+    return version.removeprefix("v").startswith(GATING_ENGINE_LINE)
+
+
 def step_old_worker(report: Report, stack: Stack) -> None:
     """C12a: a 0.2 worker against the 0.44 engine is told it is incompatible and exits."""
+    version = workflows.engine_version(stack.deployment)
+    if not engine_gates_old_clients(version):
+        report.add(
+            False,
+            f"precondition: the engine reports {version!r}, not {GATING_ENGINE_LINE}x; "
+            "build it with --build-arg NEOPS_VERSION=v0.44.0-beta.1",
+        )
+        return
     since = utc_now()
     try:
         with env_values(stack, {"NEOPS_WORKER_IMAGE": OLD_WORKER_IMAGE}):

@@ -187,9 +187,9 @@ def test_every_log_check_a_store_asks_for_has_an_assertion(values):
     assert set(logrecords.log_checks(values)) <= set(assertions)
 
 
-@pytest.mark.parametrize("key", ["COMPOSE_PROJECT_NAME", "COMPOSE_FILE"])
+@pytest.mark.parametrize("key", ["COMPOSE_PROJECT_NAME", "COMPOSE_FILE", "COMPOSE_ENV_FILES"])
 def test_a_scenario_refuses_compose_settings_in_the_shell(tmp_path, key):
-    assert key in run_scenario.shell_compose_refusal({key: "neops-docker-compose"}, tmp_path)
+    assert key in run_scenario.shell_compose_refusal({key: "neops-e2e-sentinel"}, tmp_path)
 
 
 def test_a_clean_shell_is_no_reason_to_refuse(tmp_path):
@@ -197,6 +197,21 @@ def test_a_clean_shell_is_no_reason_to_refuse(tmp_path):
 
 
 def test_main_stops_before_cloning_when_the_shell_names_a_compose_project(tmp_path, monkeypatch):
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "neops-docker-compose")
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("the shell guard let main() reach a clone or a compose call")
+
+    monkeypatch.setattr(run_scenario, "prepare_clone", must_not_run)
+    monkeypatch.setattr(run_scenario, "neops", must_not_run)
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "neops-e2e-sentinel-not-a-real-project")
     assert run_scenario.main(["local", "--workdir", str(tmp_path / "work")]) == 2
     assert not (tmp_path / "work").exists()
+
+
+def test_extra_env_cannot_point_a_scenario_at_another_project():
+    with pytest.raises(SystemExit, match="COMPOSE_PROJECT_NAME"):
+        run_scenario.build_env(
+            run_scenario.chosen_example("local"),
+            "local",
+            run_scenario.Ports(18000),
+            {"COMPOSE_PROJECT_NAME": "some-other-project"},
+        )

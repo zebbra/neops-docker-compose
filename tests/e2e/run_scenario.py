@@ -124,7 +124,7 @@ GRAFANA_AND_LOGS_MIGRATION = "0003_grafana_and_logs_layout"
 NOT_CONFIGURED = "LOGS_NOT_CONFIGURED"
 E2E_PROJECT_PREFIX = "neops-e2e-"
 # Docker Compose prefers these from the shell over .env, and Compose.run passes the shell on.
-SHELL_COMPOSE_KEYS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE")
+SHELL_COMPOSE_KEYS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE", "COMPOSE_ENV_FILES")
 OVERRIDE_MARKER = "# Written by tests/e2e/run_scenario.py"
 OVERRIDE_YAML = f"""{OVERRIDE_MARKER}: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
@@ -317,6 +317,8 @@ def build_env(example: Path, name: str, ports: Ports, extra: dict[str, str]) -> 
     values["COMPOSE_FILE"] = values["COMPOSE_FILE"] + ":" + OVERRIDE_FILE
     values["COMPOSE_PROJECT_NAME"] = f"{E2E_PROJECT_PREFIX}{name}-{ports.base}"
     values.update(extra)
+    if not values["COMPOSE_PROJECT_NAME"].startswith(E2E_PROJECT_PREFIX):
+        raise SystemExit(f"refusing: --extra-env sets COMPOSE_PROJECT_NAME outside {E2E_PROJECT_PREFIX}*")
     return values
 
 
@@ -370,7 +372,7 @@ def _check_out(clone: Path, commit: str, override: str) -> None:
 def prepare_clone(
     work: Path, values: dict[str, str], rev: str = "HEAD", override: str = OVERRIDE_YAML
 ) -> Path:
-    clone = work / "repo"
+    clone = clone_dir(work)
     work.mkdir(parents=True, exist_ok=True)
     if not clone.exists():
         sh(["git", "clone", "-q", str(REPO), str(clone)], cwd=work)
@@ -1039,6 +1041,28 @@ def remove_work(work: Path) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
+def clone_dir(work: Path) -> Path:
+    return work / "repo"
+
+
+def clone_refusal(clone: Path, environ: Mapping[str, str]) -> str | None:
+    """Why a harness step must not act on `clone`, or None for a stack this script left behind.
+    Chaos and the proxy check stop, swap and rewrite services, so anything else, the live
+    checkout first of all, is refused."""
+    if refusal := shell_compose_refusal(environ, clone):
+        return refusal
+    env = Env(clone / ".env")
+    if not env.exists:
+        return f"{clone} does not look like an installed deployment: no .env"
+    project = env.get("COMPOSE_PROJECT_NAME")
+    if not project.startswith(E2E_PROJECT_PREFIX):
+        return f"refusing: COMPOSE_PROJECT_NAME {project!r} is no harness project ({E2E_PROJECT_PREFIX}*)"
+    override = clone / OVERRIDE_FILE
+    if not override.is_file() or not override.read_text().startswith(OVERRIDE_MARKER):
+        return f"refusing: {override} was not written by tests/e2e/run_scenario.py"
+    return None
+
+
 def shell_compose_refusal(environ: Mapping[str, str], clone: Path) -> str | None:
     """Why a compose run from this shell would not act on `clone` alone, or None."""
     inherited = [key for key in SHELL_COMPOSE_KEYS if key in environ]
@@ -1104,7 +1128,7 @@ def main(argv: list[str] | None = None) -> int:
     name = example.stem
     ports = Ports(args.port_base)
     work = args.workdir or Path(f"/tmp/neops-e2e/{name}-{ports.base}")
-    if refusal := shell_compose_refusal(os.environ, work):
+    if refusal := shell_compose_refusal(os.environ, clone_dir(work)):
         print(refusal, file=sys.stderr)
         return 2
     extra = parse_extra_env(args.extra_env)

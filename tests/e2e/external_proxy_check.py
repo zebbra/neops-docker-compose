@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import ssl
 import subprocess
@@ -27,7 +28,7 @@ from pathlib import Path
 E2E = Path(__file__).resolve().parent
 sys.path.insert(0, str(E2E))
 
-from run_scenario import CONNECT, Report, failing_probe_names, neops  # noqa: E402
+from run_scenario import CONNECT, Report, clone_refusal, failing_probe_names, neops  # noqa: E402
 
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import Http  # noqa: E402
@@ -274,6 +275,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--caddy-port", type=int, default=22443)
     ap.add_argument("--keep", action="store_true", help="leave the caddy container running")
     args = ap.parse_args(argv)
+    if refusal := clone_refusal(args.clone.resolve(), os.environ):
+        print(refusal, file=sys.stderr)
+        return 2
 
     name = f"neops-e2e-caddy-{args.caddy_port}"
     try:

@@ -208,3 +208,17 @@ def test_the_outage_push_is_a_valid_worker_push_so_only_the_outage_can_refuse_it
     body = json.loads(chaos_logs.outage_push_body("2026-10-28T09:00:00.000Z"))
     (entry,) = body["entries"]
     assert set(entry) == {"seq", "timestamp", "level", "message"} and entry["level"] == "info"
+
+
+@pytest.mark.parametrize(
+    ("version", "gates"),
+    [
+        ("v0.44.0-beta.1", True),
+        ("0.44.0-beta.1", True),
+        ("develop", False),
+        ("0.43.0-beta.9", False),
+        ("", False),
+    ],
+)
+def test_c12a_needs_an_engine_stamped_with_a_0_44_version(version, gates):
+    assert chaos_logs.engine_gates_old_clients(version) is gates

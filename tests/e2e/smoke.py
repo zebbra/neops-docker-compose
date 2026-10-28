@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -29,7 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inside  # noqa: E402
 import logrecords  # noqa: E402
 import workflows  # noqa: E402
-from run_scenario import REPO, grafana_dashboards, grafana_datasource_types, neops  # noqa: E402
+from run_scenario import (  # noqa: E402
+    REPO,
+    grafana_dashboards,
+    grafana_datasource_types,
+    neops,
+    shell_compose_refusal,
+)
 
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import LOGS_PROBE, NAME_WIDTH  # noqa: E402
@@ -316,6 +323,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if refusal := shell_compose_refusal(os.environ, args.base):
+        print(refusal, file=sys.stderr)
+        return 2
     deployment = workflows.load_deployment(args.base.resolve(), args.connect, args.insecure)
     engine = workflows.Engine(deployment, lambda: workflows.admin_token(deployment))
     smoke = Smoke(deployment, engine, args, logrecords.store_of(deployment.values))

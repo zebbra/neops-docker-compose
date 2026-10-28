@@ -254,13 +254,21 @@ def run_once(engine: Engine, target: Target, timeout: float = RUN_TIMEOUT, inter
     return Run(execution_id, status, time.monotonic() - started)
 
 
-def engine_logs_status(deployment: Deployment) -> dict:
-    """The `logs` object of GET /version: the engine's own account of its log store."""
+def engine_version_payload(deployment: Deployment) -> dict:
     status, text = deployment.http.request(deployment.engine, "/version")
     payload = parse_json(text)
     if status != 200 or not isinstance(payload, dict):
         raise WorkflowError(f"GET /version answered {status}: {text[:200]}")
-    return payload.get("logs") or {}
+    return payload
+
+
+def engine_logs_status(deployment: Deployment) -> dict:
+    """The `logs` object of GET /version: the engine's own account of its log store."""
+    return engine_version_payload(deployment).get("logs") or {}
+
+
+def engine_version(deployment: Deployment) -> str:
+    return str(engine_version_payload(deployment).get("version", ""))
 
 
 def online_worker(engine: Engine) -> tuple[int, str | None]:

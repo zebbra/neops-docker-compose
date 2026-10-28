@@ -28,7 +28,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,17 +48,13 @@ from chaos_kit import (  # noqa: E402
 from chaos_logs import LOG_STEPS  # noqa: E402
 from run_scenario import (  # noqa: E402
     CONNECT,
-    E2E_PROJECT_PREFIX,
-    OVERRIDE_MARKER,
     Report,
+    clone_refusal,
     grafana_datasource_types,
     neops,
-    shell_compose_refusal,
 )
 
 from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
-from neops_compose.env import Env  # noqa: E402
-from neops_compose.scenario import OVERRIDE_FILE  # noqa: E402
 
 BASE_KILL_SERVICES = ("cms", "engine", "redis", "postgres-cms", "worker", "traefik")
 LOG_KILL_SERVICES = ("victorialogs", "grafana")
@@ -335,24 +331,6 @@ def selected_steps(only: list[str] | None, prune: bool, logs: bool = False) -> l
         return only
     base = [("prune" if name == "restart" and prune else name) for name in DEFAULT_STEPS]
     return base + (list(LOG_STEPS) if logs else [])
-
-
-def clone_refusal(clone: Path, environ: Mapping[str, str]) -> str | None:
-    """Why chaos must not run against `clone`, or None for a stack run_scenario.py left behind.
-    The steps stop, swap and disconnect services, so anything else, the live checkout first of
-    all, is refused."""
-    if refusal := shell_compose_refusal(environ, clone):
-        return refusal
-    env = Env(clone / ".env")
-    if not env.exists:
-        return f"{clone} does not look like an installed deployment: no .env"
-    project = env.get("COMPOSE_PROJECT_NAME")
-    if not project.startswith(E2E_PROJECT_PREFIX):
-        return f"refusing: COMPOSE_PROJECT_NAME {project!r} is no harness project ({E2E_PROJECT_PREFIX}*)"
-    override = clone / OVERRIDE_FILE
-    if not override.is_file() or not override.read_text().startswith(OVERRIDE_MARKER):
-        return f"refusing: {override} was not written by tests/e2e/run_scenario.py"
-    return None
 
 
 def run_steps(report: Report, stack: Stack, names: list[str]) -> None:

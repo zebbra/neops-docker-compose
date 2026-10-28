@@ -283,7 +283,7 @@ implemented.
 | `c7b` | `compose kill -s KILL engine` there instead | outbox rows survive, no duplicate seq; the holes of the killed process are printed, not failed |
 | `c8` | `NEOPS_LOG_OUTBOX_MAX_ROWS=2000`, a `c2` outage on four threads | `outbox.dropped` > 0, the engine logs the drop, the newest run's lines are kept |
 | `c10` | `postgres-engine` and `victorialogs` stopped 30 s under load | the engine keeps running and answers a worker push 503, everything recovers; the SDK's retry is not asserted until its push sink defines the line it logs |
-| `c12a` | `NEOPS_WORKER_IMAGE=…neops-worker-sdk:0.2.0-beta.5` | the old worker exits and logs `Client version incompatible with backend`; the current one runs again |
+| `c12a` | `NEOPS_WORKER_IMAGE=…neops-worker-sdk:0.2.0-beta.8` | precondition: GET /version reports 0.44.x (an engine built without `NEOPS_VERSION` reports `develop` and accepts every client); the old worker exits and logs `… is not compatible with this engine`; the current one runs again |
 | `c15` | `pkill -f celery.*worker` in `cms-worker` during a run | report only, and only with the `cms-tasks` profile |
 | `c16` | 10 baseline runs, then 10 runs with `victorialogs` paused for 100 s | no run slower than the baseline's worst plus 1 s |
 | `c14` | `victorialogs` paused; the engine swapped to `0.43.0-beta.4` and back | the old engine boots on the new schema and leaves `log_outbox` alone; the rows replay after the re-upgrade |
