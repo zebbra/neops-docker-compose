@@ -9,6 +9,12 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
+
+from neops_compose.doctor import DENY_LOG_PROBE, DENY_PROBE
+from neops_compose.env import Env
+from neops_compose.rules import problems
+from neops_compose.scenario import OVERRIDE_FILE, Scenario
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "e2e"))
 
@@ -59,3 +65,106 @@ def test_an_upgrade_run_starts_on_the_older_ref_and_moves_to_the_checkout_head(s
     run_scenario.move_to_head(clone)
     assert git(clone, "rev-parse", "HEAD") == head
     assert (clone / ".env").read_text() == "A=1\n"
+
+
+LOKI = run_scenario.E2E_EXAMPLES / "loki.env"
+LOKI_OVERLAY = "tests/e2e/compose.loki-test.yaml"
+
+
+def test_a_scenario_is_a_shipped_example_an_e2e_example_or_a_path():
+    assert run_scenario.example_path("logs") == run_scenario.REPO / "examples" / "logs.env"
+    assert run_scenario.example_path("loki") == LOKI
+    assert run_scenario.example_path("tests/e2e/examples/loki.env") == LOKI
+
+
+def test_the_overlay_key_is_taken_out_of_the_env():
+    values = {"A": "1", run_scenario.HARNESS_OVERLAYS: f"{LOKI_OVERLAY}:other.yaml"}
+    assert run_scenario.pop_overlays(values) == [LOKI_OVERLAY, "other.yaml"]
+    assert values == {"A": "1"}
+
+
+def test_merge_merges_mappings_and_replaces_everything_else():
+    base = {"services": {"es": {"environment": ["a"]}, "engine": {"image": "x"}}}
+    overlay = {"services": {"engine": {"networks": ["logs"]}, "es": {"environment": ["b"]}}}
+    assert run_scenario.merge(base, overlay) == {
+        "services": {"es": {"environment": ["b"]}, "engine": {"image": "x", "networks": ["logs"]}}
+    }
+
+
+def test_without_overlays_the_override_is_the_harness_fragment():
+    assert run_scenario.override_text([]) == run_scenario.OVERRIDE_YAML
+
+
+def test_the_loki_overlay_reaches_compose_through_the_override_file():
+    merged = yaml.safe_load(run_scenario.override_text([LOKI_OVERLAY]))
+    services = merged["services"]
+    assert services["loki"]["image"].startswith("grafana/loki:")
+    assert services["loki"]["networks"] == ["logs"]
+    assert "logs" in services["engine"]["networks"] and "worker" not in services
+    assert (
+        services["elasticsearch"] == yaml.safe_load(run_scenario.OVERRIDE_YAML)["services"]["elasticsearch"]
+    )
+
+
+def test_the_loki_scenario_passes_check_without_the_logs_overlay(tmp_path: Path):
+    values = run_scenario.build_env(LOKI, "loki", run_scenario.Ports(22500), {})
+    overlays = run_scenario.pop_overlays(values)
+    env_file = tmp_path / ".env"
+    env_file.write_text("".join(f"{k}={v}\n" for k, v in values.items()))
+    (tmp_path / OVERRIDE_FILE).write_text(run_scenario.override_text(overlays))
+    for f in run_scenario.REPO.glob("compose*.yaml"):
+        (tmp_path / f.name).symlink_to(f)
+    env = Env(env_file)
+    scenario = Scenario.from_env(env)
+    assert overlays == [LOKI_OVERLAY]
+    assert not scenario.logs and env.get("NEOPS_LOG_BACKEND") == "loki"
+    assert problems(env, scenario, tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("warned", "older", "ok"),
+    [
+        ([DENY_PROBE, DENY_LOG_PROBE], False, True),
+        ([DENY_PROBE], False, False),
+        ([DENY_PROBE], True, True),
+        ([DENY_PROBE, DENY_LOG_PROBE], True, True),
+        (["engine log store"], True, False),
+    ],
+)
+def test_an_older_release_may_warn_about_the_job_routes_alone(warned, older, ok):
+    assert run_scenario.deny_warnings_ok(warned, older) is ok
+
+
+@pytest.mark.parametrize(
+    ("files", "warnings", "after"),
+    [
+        (
+            ("compose.yaml", "compose.traefik.yaml", "compose.metrics.yaml", OVERRIDE_FILE),
+            ["compose.grafana.yaml"],
+            (
+                "compose.yaml",
+                "compose.traefik.yaml",
+                "compose.grafana.yaml",
+                "compose.metrics.yaml",
+                OVERRIDE_FILE,
+            ),
+        ),
+        (
+            ("compose.yaml", "compose.expose.yaml", OVERRIDE_FILE),
+            [],
+            ("compose.yaml", "compose.expose.yaml", OVERRIDE_FILE),
+        ),
+    ],
+)
+def test_the_upgrade_oracle_per_shape(files, warnings, after):
+    """The live `local` shape upgrades without a warning and keeps COMPOSE_FILE as it was."""
+    assert run_scenario.expected_upgrade_warnings(Scenario(files)) == warnings
+    assert run_scenario.expected_files_after_upgrade(files) == after
+
+
+def test_warnings_match_needs_each_expected_warning_and_no_other():
+    line = "WARNING: compose.metrics.yaml requires compose.grafana.yaml; migration 0003 adds it"
+    assert run_scenario.warnings_match([line], ["compose.grafana.yaml"])
+    assert not run_scenario.warnings_match([line], [])
+    assert not run_scenario.warnings_match([], ["compose.grafana.yaml"])
+    assert run_scenario.warnings_match([], [])

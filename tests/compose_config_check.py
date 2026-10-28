@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""For every examples/*.env: fill dummy secrets, render generated/, run `docker compose config`.
+"""For every examples/*.env and tests/e2e/examples/*.env: fill dummy secrets, render generated/,
+run `docker compose config`.
 
 A cheap gate that catches a broken overlay merge or a missing interpolation before any container starts.
 Run from the repo root: uv run python tests/compose_config_check.py
@@ -15,8 +16,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DUMMY_SECRET = "dummy0123456789abcdef"
-# The directories the compose files bind-mount from the repo itself.
-LINKED_DIRS = ("metrics", "logs", "cms")
+E2E_EXAMPLES = REPO / "tests" / "e2e" / "examples"
+# The directories the compose files and the e2e overlays bind-mount from the repo itself.
+LINKED_DIRS = ("metrics", "logs", "cms", "tests")
 
 
 def _fill_secrets(text: str, keys: tuple[str, ...]) -> str:
@@ -28,6 +30,26 @@ def _fill_secrets(text: str, keys: tuple[str, ...]) -> str:
     """
     pattern = re.compile(r"^(" + "|".join(re.escape(k) for k in keys) + r")=$", re.MULTILINE)
     return pattern.sub(lambda m: f"{m.group(1)}={DUMMY_SECRET}", text)
+
+
+def with_test_overlays(scratch: Path, env_text: str) -> str:
+    """An e2e scenario's overlays go into compose.override.yaml, exactly as run_scenario.py
+    puts them there, and COMPOSE_FILE gains that file; any other .env is returned unchanged."""
+    sys.path.insert(0, str(REPO / "tests" / "e2e"))
+    import run_scenario
+
+    from neops_compose.scenario import OVERRIDE_FILE
+
+    lines = env_text.splitlines()
+    values = dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+    overlays = run_scenario.pop_overlays(values)
+    if not overlays:
+        return env_text
+    (scratch / OVERRIDE_FILE).write_text(run_scenario.override_text(overlays))
+    kept = [line for line in lines if not line.startswith(f"{run_scenario.HARNESS_OVERLAYS}=")]
+    return "".join(
+        (f"{line}:{OVERRIDE_FILE}" if line.startswith("COMPOSE_FILE=") else line) + "\n" for line in kept
+    )
 
 
 def prepare(scratch: Path, env_text: str) -> None:
@@ -46,7 +68,7 @@ def prepare(scratch: Path, env_text: str) -> None:
     (scratch / "cust-cert").mkdir()
     for name in ("cert.pem", "key.pem"):
         (scratch / "certs" / name).write_text("placeholder")
-    (scratch / ".env").write_text(_fill_secrets(env_text, ALL_SECRET_KEYS))
+    (scratch / ".env").write_text(_fill_secrets(with_test_overlays(scratch, env_text), ALL_SECRET_KEYS))
     env = Env(scratch / ".env")
     paths = Paths.for_repo(scratch, env)
     for d in paths.data_dirs():
@@ -65,7 +87,7 @@ def compose_config(scratch: Path, *args: str) -> subprocess.CompletedProcess:
 
 def main() -> int:
     sys.path.insert(0, str(REPO))
-    examples = sorted((REPO / "examples").glob("*.env"))
+    examples = sorted((REPO / "examples").glob("*.env")) + sorted(E2E_EXAMPLES.glob("*.env"))
     if not examples:
         print("no examples/*.env found")
         return 1
