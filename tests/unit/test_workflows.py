@@ -53,3 +53,17 @@ def test_the_held_result_carries_a_well_formed_lease_the_job_cannot_match():
     assert upgrade_hook.refused_for_missing_lease(403, '{"code":"LEASE_MISSING"}')
     assert not upgrade_hook.refused_for_missing_lease(403, '{"code":"LEASE_MISMATCH"}')
     assert not upgrade_hook.refused_for_missing_lease(400, "LEASE_MISSING")
+
+
+@pytest.mark.parametrize("status", ["completed", "failed_safe", "failed_unsafe", "running"])
+def test_a_run_is_not_settled_before_the_engine_has_unlocked_the_cms(status):
+    """The engine unlocks on the way to *_ack; a run counted done before that would start the
+    next run on a locked group and time a run without its unlock."""
+    assert status not in workflows.SETTLED
+    assert not workflows.Run("e", status, 1.0).succeeded
+
+
+def test_only_the_acknowledged_completion_succeeds():
+    assert workflows.SETTLED == {"completed_ack", "failed_safe_ack", "failed_unsafe_ack"}
+    assert workflows.Run("e", "completed_ack", 1.0).succeeded
+    assert not workflows.Run("e", "failed_safe_ack", 1.0).succeeded

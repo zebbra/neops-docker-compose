@@ -4,9 +4,9 @@
     uv run python tests/e2e/workflows.py <deployment dir> [--connect 127.0.0.1] [--insecure]
 
 The step is the worker's group_save_fact on a test device group, so one run produces engine
-and worker lines and, because the engine locks and unlocks the group in the CMS, core's lock
-and unlock lines too: every log assertion of the harness reads such a run. Prints the
-execution id; exit code 0 only when the run completed.
+and worker lines and, because the engine unlocks the group in the CMS with the fact as a
+db_update, core's audit line of the applied change too: every log assertion of the harness
+reads such a run. Prints the execution id; exit code 0 only when the run completed.
 """
 
 from __future__ import annotations
@@ -42,8 +42,10 @@ TEST_GROUP = "e2e-log-run"
 FACT_KEY = "e2e_log_run"
 # group_save_fact's `value` is a pydantic Json field: the parameter is the JSON text, not the value.
 FACT_VALUE = json.dumps({"source": "neops-docker-compose e2e"})
-SUCCEEDED = frozenset({"completed", "completed_ack"})
-SETTLED = SUCCEEDED | {"failed_safe", "failed_safe_ack", "failed_unsafe", "failed_unsafe_ack"}
+# The engine unlocks the CMS on the way from completed/failed_* to their *_ack: before that the
+# group is still locked and core has written nothing.
+SUCCEEDED = frozenset({"completed_ack"})
+SETTLED = SUCCEEDED | {"failed_safe_ack", "failed_unsafe_ack"}
 RUN_TIMEOUT = 90.0
 LINES_TIMEOUT = 30.0
 PAGE_LIMIT = 500
