@@ -80,6 +80,7 @@ METRICS_SERVICES = (
 )
 SCRAPE_JOBS = frozenset({"celery", "elasticsearch", "postgres", "redis", "victoriametrics", "vmalert"})
 GROUP_NAME = "e2e-admin-writes"
+SURVIVOR_GROUP = "e2e-upgrade-survivor"
 CMS_TASK_SERVICES = ("cms-worker", "cms-beat")
 LEGACY_DEVICE = "e2e-legacy-task"
 LEGACY_DEVICE_IP = "192.0.2.10"
@@ -520,12 +521,14 @@ def assert_idempotent(report: Report, clone: Path, expose: bool) -> None:
     report.add(before == after == 1, f"one API key before and after the second install ({before} -> {after})")
 
 
-def assert_backup(report: Report, clone: Path) -> None:
+def backup_archives(clone: Path) -> list[Path]:
     """backups/ also holds migrate's pre-migrate snapshots; only ARCHIVE_NAME names a backup."""
+    return sorted(p for p in (clone / "backups").iterdir() if p.is_dir() and ARCHIVE_NAME.fullmatch(p.name))
+
+
+def assert_backup(report: Report, clone: Path) -> None:
     neops(clone, "backup")
-    archives = sorted(
-        p for p in (clone / "backups").iterdir() if p.is_dir() and ARCHIVE_NAME.fullmatch(p.name)
-    )
+    archives = backup_archives(clone)
     if not report.add(len(archives) == 1, f"backup created one archive ({len(archives)})"):
         return
     cms_dump = archives[0] / "cms.dump"
@@ -953,22 +956,28 @@ def assert_env_migrated(report: Report, clone: Path, files_before: tuple[str, ..
     report.add(retention == "90d", f"NEOPS_LOG_RETENTION carries the old 90-day horizon ({retention!r})")
 
 
-def hold_job_before_upgrade(
-    report: Report, clone: Path, values: dict[str, str], work: Path
-) -> upgrade_hook.HeldJob | None:
-    """C12b, first half. The old core may predate the CMS-issued token, so this logs in."""
-    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
+def password_login(deployment: workflows.Deployment, values: dict[str, str]) -> Callable[[], str]:
+    """The old core may predate the CMS-issued token, so a hook on the old install logs in."""
     LOGINS.wait_out()
 
-    def password_login() -> str:
+    def token() -> str:
         LOGINS.mark()
         result = login(deployment.cms, deployment.http, deployment.admin_user, values["NEOPS_ADMIN_PASSWORD"])
         if not result.token:
             raise upgrade_hook.HookError(result.error)
         return result.token
 
+    return token
+
+
+def hold_job_before_upgrade(
+    report: Report, clone: Path, values: dict[str, str], work: Path
+) -> upgrade_hook.HeldJob | None:
+    """C12b, first half."""
+    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
     try:
-        held = upgrade_hook.hold_job(deployment, workflows.Engine(deployment, password_login), work)
+        engine = workflows.Engine(deployment, password_login(deployment, values))
+        held = upgrade_hook.hold_job(deployment, engine, work)
     except Exception as exc:
         report.add(False, f"C12b: hold a job on the old install as its worker ({exc}); C12b stays open")
         return None
@@ -995,6 +1004,36 @@ def assert_held_job_refused(
     )
 
 
+def write_survivor(report: Report, clone: Path, values: dict[str, str]) -> bool:
+    """A device group created on the old install, read back after the upgrade."""
+    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
+    token = password_login(deployment, values)()
+    created = gql(deployment.http, deployment.cms, token, GROUP_UPSERT, {"n": SURVIVOR_GROUP})
+    return report.add(
+        bool(created["deviceGroupUpsert"]["deviceGroup"]["id"]),
+        f"device group {SURVIVOR_GROUP} created on the old install",
+    )
+
+
+def assert_survivor(report: Report, clone: Path, values: dict[str, str]) -> None:
+    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
+    token = workflows.admin_token(deployment)
+    found = gql(deployment.http, deployment.cms, token, GROUP_READ, {"n": SURVIVOR_GROUP})["groups"][
+        "results"
+    ]
+    report.add(len(found) == 1, f"device group {SURVIVOR_GROUP} survived the upgrade ({found})")
+
+
+def backup_before_upgrade(report: Report, clone: Path) -> None:
+    """What an operator takes before `git pull`, and what a rollback restores."""
+    neops(clone, "backup")
+    archives = backup_archives(clone)
+    report.add(
+        bool(archives) and (archives[-1] / "cms.dump").exists() and (archives[-1] / "engine.dump").exists(),
+        f"backup of the old install before the upgrade ({archives[-1].name if archives else 'none'})",
+    )
+
+
 def run_upgrade(report: Report, clone: Path, values: dict[str, str], plan: UpgradePlan) -> None:
     """`git pull && ./neops up` on an install of `plan.ref`, and nothing else."""
     scenario = scenario_of(values)
@@ -1002,6 +1041,8 @@ def run_upgrade(report: Report, clone: Path, values: dict[str, str], plan: Upgra
         return
     before = grafana_dashboards(clone, values) if scenario.runs_grafana else []
     held = hold_job_before_upgrade(report, clone, values, plan.work) if plan.hold_job else None
+    survivor = write_survivor(report, clone, values)
+    backup_before_upgrade(report, clone)
     move_to_head(clone, plan.override)
     assert_check_warnings(report, clone, expected_upgrade_warnings(scenario))
     code = neops(clone, "up", "--connect", CONNECT, "--insecure", check=False).returncode
@@ -1010,6 +1051,8 @@ def run_upgrade(report: Report, clone: Path, values: dict[str, str], plan: Upgra
     ):
         return
     assert_env_migrated(report, clone, scenario.files)
+    if survivor:
+        assert_survivor(report, clone, values)
     if held:
         assert_held_job_refused(report, clone, values, held)
     if not scenario.runs_grafana:
