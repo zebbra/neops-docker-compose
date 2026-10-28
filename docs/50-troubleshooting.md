@@ -167,11 +167,11 @@ automation that has been dormant since.
   its mapping cannot take. That is a data or mapping bug in Neops, not an outage: report it with
   the log line. `index_sync_status --list rejected` names the rows, and
   `docker compose logs cms cms-worker | grep 'Elasticsearch rejected the document of'` gives the
-  reason (both containers sweep, and their logs rotate after 100 MB); a row a manual
-  `resync_unsynced_rows` set aside has its reason in that run's output instead, since it is not
-  tried again until it changes. A rejected row stays out of
-  the index until it changes again, or until a search index rebuild (`elastic_index --rebuild`,
-  see [Operations](30-operations.md#upgrades)) on a release that fixes the cause indexes it.
+  reason (both containers sweep, and their logs rotate after 100 MB). If a manual
+  `resync_unsynced_rows` run set the row aside, the reason is in that run's output instead, and
+  nothing logs it again. A rejected row stays out of the index until it changes again, or until a
+  search index rebuild (`elastic_index --rebuild`, see [Operations](30-operations.md#upgrades)) on
+  a release that fixes the cause indexes it.
 - `rows pending` or `group index writes` longer than the threshold: nothing has swept them. Run
   `resync_unsynced_rows`.
 - `unlocks have waited`: locks that search the index are refused with `INDEX_SYNC_PENDING`
