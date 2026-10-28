@@ -5,7 +5,9 @@ C13 need loadgen.py or a skewed worker clock and are not here yet. C15 only repo
 
 from __future__ import annotations
 
+import json
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -49,16 +51,19 @@ STATE_TIMEOUT = 90.0
 REPLAY_TIMEOUT = 600.0
 READABLE_SAMPLE = 3
 # The engine answers its own unknown routes 404, which the push classifies as `configuration`.
-MISCONFIGURED_URL = "http://engine:3030"
+MISCONFIGURED_URL = inside.ENGINE_IN_STACK
 VICTORIALOGS_PUSH = "/insert/loki/api/v1/push?disable_message_parsing=1"
 BLACKHOLE_URL = "http://10.255.255.1:9428"
 OUTBOX_CAP = "2000"
 OUTBOX_CAP_THREADS = 4
-OUTBOX_DROP_MARKER = "dropped"
-PUSH_UNAVAILABLE_MARKER = "503"
+OUTBOX_DROP_MARKER = "dropped its oldest lines"
 OLD_WORKER_IMAGE = "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.5"
 OLD_ENGINE_IMAGE = "quay.io/zebbra/neops-workflow-engine:0.43.0-beta.4"
-REFUSAL_MARKERS = ("compatib", "version")
+# What neops_worker.py of 0.2.0-beta.5 logs when it refuses to start, lowercased.
+REFUSAL_MARKER = "client version incompatible with backend"
+# A seq hole of the engine is expected wherever its store fails: a failed probe takes a seq
+# and is never spooled. The worker's series must stay whole.
+OUTAGE_HOLE_SERVICES = (logrecords.WORKER_SERVICE,)
 WORKER_EXIT_TIMEOUT = 120.0
 SLOW_STORE_RUNS = 10
 SLOW_STORE_PAUSE = 100.0
@@ -130,12 +135,20 @@ def assert_runs_readable(report: Report, stack: Stack, load: LoadResult) -> None
         report.add(not lines.problems(), f"run {run.execution_id} is readable after the replay ({lines})")
 
 
-def assert_series(report: Report, stack: Stack, start: str, holes: bool = True) -> list[str]:
+def assert_series(
+    report: Report, stack: Stack, start: str, holes_in: tuple[str, ...] = OUTAGE_HOLE_SERVICES
+) -> None:
+    """Fails on a duplicate anywhere and on a hole in `holes_in`; the other holes are printed."""
     records = store_records(stack, start, utc_now())
-    problems = logrecords.seq_problems(records, holes=holes)
-    what = "duplicate or missing" if holes else "duplicate"
-    report.add(not problems, f"no {what} seq per series in {len(records)} stored records ({problems[:4]})")
-    return problems
+    checked = logrecords.seq_problems(records, holes_in)
+    report.add(
+        not checked,
+        f"no duplicate seq, and no hole in {', '.join(holes_in) or 'no series'}, "
+        f"in {len(records)} stored records ({checked[:4]})",
+    )
+    unchecked = [p for p in logrecords.seq_problems(records) if p not in checked]
+    if unchecked:
+        print(f"report only: seq holes outside {holes_in}: {unchecked[:8]}", flush=True)
 
 
 def step_store_down_under_load(report: Report, stack: Stack) -> None:
@@ -271,11 +284,7 @@ def step_engine_kill_mid_outage(report: Report, stack: Stack) -> None:
     midway = carried_rows(report, stack, lambda: kill_engine(stack), "a SIGKILL")
     outage = outage_under_load(report, stack, lambda: store_stopped(stack), OUTAGE_SECONDS, midway=midway)
     report.add(outage.recovered, f"the outbox drains after the kill ({outage.after.get('outbox')})")
-    assert_series(report, stack, outage.start, holes=False)
-    lost = [
-        p for p in logrecords.seq_problems(store_records(stack, outage.start, utc_now())) if "missing" in p
-    ]
-    print(f"C7b (report only): seq holes from the killed process: {lost or 'none'}", flush=True)
+    assert_series(report, stack, outage.start)
 
 
 def step_outbox_cap(report: Report, stack: Stack) -> None:
@@ -300,9 +309,23 @@ def step_outbox_cap(report: Report, stack: Stack) -> None:
             report.add(not lines.problems(), f"the newest run's lines were kept ({lines})")
 
 
+def outage_push_body(timestamp: str) -> str:
+    """One valid worker line: validation passes, so only the outage can refuse the push."""
+    entry = {"seq": 0, "timestamp": timestamp, "level": "info", "message": "chaos c10 push"}
+    return json.dumps({"entries": [entry]})
+
+
+def push_during_outage(stack: Stack) -> tuple[int | None, str]:
+    """To an unknown worker id: the engine must look it up in its database, and with no database
+    answers 503 instead of the 404 it gives once the database is back."""
+    url = f"{inside.ENGINE_INTERNAL}/workers/{uuid.uuid4()}/logs"
+    return inside.from_engine(stack.clone, "POST", url, outage_push_body(utc_now()))
+
+
 def step_database_and_store_down(report: Report, stack: Stack) -> None:
-    """C10: with its database and the store gone, the engine answers pushes 503 and stays up."""
-    since = utc_now()
+    """C10: with its database and the store gone, the engine answers pushes 503 and stays up.
+    The engine's answer is read directly; the worker SDK's retry of it is not asserted until the
+    SDK's push sink (B1) defines the line it logs."""
     load = make_load(stack)
     load.start()
     try:
@@ -313,28 +336,33 @@ def step_database_and_store_down(report: Report, stack: Stack) -> None:
             report.add(
                 state == "running", f"the engine keeps running without its database and store ({state})"
             )
+            status, body = push_during_outage(stack)
+            report.add(status == 503, f"the engine answers a worker push 503 ({status}: {body[:120]})")
         finally:
             compose(stack, "start", "postgres-engine", stack.store.service)
     finally:
         result = load.stop()
-    report.add(wait_healthy(stack, "engine"), f"the engine is healthy again ({stack.health_of('engine')})")
-    worker_log = stack.logs_since("worker", since)
     report.add(
-        PUSH_UNAVAILABLE_MARKER in worker_log,
-        f"the worker logged a 503 from its pushes and retried "
-        f"({len(result.runs)} runs, {len(result.errors)} errors)",
+        wait_healthy(stack, "engine"),
+        f"the engine is healthy again ({stack.health_of('engine')}; "
+        f"{len(result.runs)} runs, {len(result.errors)} errors under the outage)",
     )
     recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
     report.add(recovered, "the store is ok and the outbox drained")
 
 
+def parse_worker_exit(inspect: str) -> tuple[bool, str]:
+    """`docker inspect` of status, exit code and restart count: refused means it exited
+    non-zero or was restarted."""
+    status, code, restarts = inspect.split()
+    refused = int(code) != 0 or int(restarts) > 0
+    return refused, f"{status}, exit {code}, {restarts} restarts"
+
+
 def worker_refused(stack: Stack) -> tuple[bool, str]:
     name = stack.container("worker")
-    out = docker(
-        "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.RestartCount}}", name
-    ).stdout.split()
-    status, code, restarts = out[0], int(out[1]), int(out[2])
-    return (code != 0 or restarts > 0), f"{status}, exit {code}, {restarts} restarts"
+    out = docker("inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.RestartCount}}", name).stdout
+    return parse_worker_exit(out)
 
 
 def step_old_worker(report: Report, stack: Stack) -> None:
@@ -346,9 +374,7 @@ def step_old_worker(report: Report, stack: Stack) -> None:
             refused = wait_for(lambda: worker_refused(stack)[0], WORKER_EXIT_TIMEOUT)
             report.add(refused, f"worker {OLD_WORKER_IMAGE} exits ({worker_refused(stack)[1]})")
             log = stack.logs_since("worker", since).lower()
-            report.add(
-                any(m in log for m in REFUSAL_MARKERS), f"its log names the version refusal {REFUSAL_MARKERS}"
-            )
+            report.add(REFUSAL_MARKER in log, f"its log names the version refusal ({REFUSAL_MARKER!r})")
     finally:
         recreate(stack, "worker")
     running = wait_for(lambda: stack.health_of("worker") == "running", WORKER_EXIT_TIMEOUT)

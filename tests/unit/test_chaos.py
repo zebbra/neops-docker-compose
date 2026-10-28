@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from neops_compose.rules import problems
@@ -19,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "e2e"))
 
 import chaos  # noqa: E402
 import chaos_kit  # noqa: E402
+import chaos_logs  # noqa: E402
 import run_scenario  # noqa: E402
 
 
@@ -140,3 +142,68 @@ def test_the_load_counts_a_failing_run_instead_of_raising(monkeypatch):
     load.start()
     result = load.stop()
     assert result.errors == ["RuntimeError: engine down"] and len(result.completed) == 1
+
+
+def make_clone(tmp_path: Path, project: str = "neops-e2e-logs-18000", override: str | None = None) -> Path:
+    (tmp_path / ".env").write_text(f"COMPOSE_FILE=compose.yaml\nCOMPOSE_PROJECT_NAME={project}\n")
+    text = run_scenario.OVERRIDE_YAML if override is None else override
+    (tmp_path / "compose.override.yaml").write_text(text)
+    return tmp_path
+
+
+def test_a_harness_clone_is_accepted(tmp_path):
+    assert chaos.clone_refusal(make_clone(tmp_path), {}) is None
+
+
+def test_the_harness_names_its_projects_with_the_prefix_the_guard_wants():
+    example = run_scenario.REPO / "examples" / "logs.env"
+    values = run_scenario.build_env(example, "logs", run_scenario.Ports(18000), {})
+    assert values["COMPOSE_PROJECT_NAME"].startswith(run_scenario.E2E_PROJECT_PREFIX)
+
+
+def test_a_directory_without_an_env_is_refused(tmp_path):
+    assert "no .env" in chaos.clone_refusal(tmp_path, {})
+
+
+def test_a_deployment_that_is_not_a_harness_project_is_refused(tmp_path):
+    """The live checkout: its own project name and no harness override."""
+    refusal = chaos.clone_refusal(make_clone(tmp_path, project="neops"), {})
+    assert "COMPOSE_PROJECT_NAME" in refusal and "neops-e2e-" in refusal
+
+
+def test_an_override_the_harness_did_not_write_is_refused(tmp_path):
+    refusal = chaos.clone_refusal(make_clone(tmp_path, override="services: {}\n"), {})
+    assert "compose.override.yaml" in refusal
+
+
+def test_an_override_with_an_injected_engine_fault_is_still_the_harness_s(tmp_path):
+    injected = chaos_kit.with_engine_env(run_scenario.OVERRIDE_YAML, {"NEOPS_LOG_URL": "http://x"})
+    assert chaos.clone_refusal(make_clone(tmp_path, override=injected), {}) is None
+
+
+@pytest.mark.parametrize("key", ["COMPOSE_PROJECT_NAME", "COMPOSE_FILE"])
+def test_compose_settings_in_the_shell_are_refused_because_they_beat_the_env(tmp_path, key):
+    refusal = chaos.clone_refusal(make_clone(tmp_path), {key: "neops"})
+    assert key in refusal
+
+
+@pytest.mark.parametrize(
+    ("inspect", "refused"),
+    [("exited 1 0", True), ("restarting 1 3", True), ("running 0 0", False), ("exited 0 0", False)],
+)
+def test_a_worker_counts_as_refused_when_it_exited_non_zero_or_restarted(inspect, refused):
+    assert chaos_logs.parse_worker_exit(inspect)[0] is refused
+
+
+def test_the_refusal_marker_is_the_compatibility_message_and_no_startup_banner():
+    banner = "NEOPS Worker starting... version 0.2.0-beta.5"
+    assert chaos_logs.REFUSAL_MARKER not in banner.lower()
+    assert chaos_logs.REFUSAL_MARKER in "Client version incompatible with backend. Please update.".lower()
+
+
+def test_the_outage_push_is_a_valid_worker_push_so_only_the_outage_can_refuse_it():
+    import json
+
+    body = json.loads(chaos_logs.outage_push_body("2026-10-28T09:00:00.000Z"))
+    (entry,) = body["entries"]
+    assert set(entry) == {"seq", "timestamp", "level", "message"} and entry["level"] == "info"

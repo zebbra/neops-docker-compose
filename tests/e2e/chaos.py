@@ -28,7 +28,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -46,9 +46,18 @@ from chaos_kit import (  # noqa: E402
     wait_logs,
 )
 from chaos_logs import LOG_STEPS  # noqa: E402
-from run_scenario import CONNECT, Report, grafana_datasource_types, neops  # noqa: E402
+from run_scenario import (  # noqa: E402
+    CONNECT,
+    E2E_PROJECT_PREFIX,
+    OVERRIDE_MARKER,
+    Report,
+    grafana_datasource_types,
+    neops,
+)
 
 from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
+from neops_compose.env import Env  # noqa: E402
+from neops_compose.scenario import OVERRIDE_FILE  # noqa: E402
 
 BASE_KILL_SERVICES = ("cms", "engine", "redis", "postgres-cms", "worker", "traefik")
 LOG_KILL_SERVICES = ("victorialogs", "grafana")
@@ -61,6 +70,8 @@ CHAOS_GROUP = "e2e-chaos-survivor"
 BASE_STEP_NAMES = ("kill", "restart", "prune", "env", "engine", "database")
 STEP_NAMES = BASE_STEP_NAMES + tuple(LOG_STEPS)
 DEFAULT_STEPS = tuple(name for name in BASE_STEP_NAMES if name != "prune")
+# Docker Compose prefers these from the shell over .env, and Compose.run passes the shell on.
+SHELL_COMPOSE_KEYS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE")
 PRUNE_WARNING = (
     "docker system prune -a --volumes removes every unused image, container and volume on "
     "this host, including other projects' (KIND, the lab)."
@@ -327,6 +338,25 @@ def selected_steps(only: list[str] | None, prune: bool, logs: bool = False) -> l
     return base + (list(LOG_STEPS) if logs else [])
 
 
+def clone_refusal(clone: Path, environ: Mapping[str, str]) -> str | None:
+    """Why chaos must not run against `clone`, or None for a stack run_scenario.py left behind.
+    The steps stop, swap and disconnect services, so anything else, the live checkout first of
+    all, is refused."""
+    inherited = [key for key in SHELL_COMPOSE_KEYS if key in environ]
+    if inherited:
+        return f"refusing: {', '.join(inherited)} is set in the shell and would win over {clone}/.env"
+    env = Env(clone / ".env")
+    if not env.exists:
+        return f"{clone} does not look like an installed deployment: no .env"
+    project = env.get("COMPOSE_PROJECT_NAME")
+    if not project.startswith(E2E_PROJECT_PREFIX):
+        return f"refusing: COMPOSE_PROJECT_NAME {project!r} is no harness project ({E2E_PROJECT_PREFIX}*)"
+    override = clone / OVERRIDE_FILE
+    if not override.is_file() or not override.read_text().startswith(OVERRIDE_MARKER):
+        return f"refusing: {override} was not written by tests/e2e/run_scenario.py"
+    return None
+
+
 def run_steps(report: Report, stack: Stack, names: list[str]) -> None:
     steps = steps_by_name(report, stack)
     for name in names:
@@ -351,8 +381,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     clone = args.clone.resolve()
-    if not (clone / ".env").is_file():
-        raise SystemExit(f"{clone} does not look like an installed deployment: no .env")
+    refusal = clone_refusal(clone, os.environ)
+    if refusal:
+        raise SystemExit(refusal)
 
     stack = load_stack(clone)
     report = Report()
