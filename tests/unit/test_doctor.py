@@ -631,7 +631,7 @@ def test_without_cms_tasks_the_warning_names_the_command_for_what_is_due():
     assert (
         doctor.RESYNC_UNLOCKS in unlocks_only[0].detail and doctor.RESYNC_ROWS not in unlocks_only[0].detail
     )
-    assert doctor.RESYNC_ROWS in both[0].detail and doctor.RESYNC_UNLOCKS in both[0].detail
+    assert f"{doctor.RESYNC_ROWS} && {doctor.RESYNC_UNLOCKS}" in both[0].detail, "pastes into a shell as one line"
 
 
 def test_with_cms_tasks_on_index_writes_due_for_the_sweep_are_not_a_warning():
