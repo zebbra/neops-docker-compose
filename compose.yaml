@@ -163,6 +163,8 @@ services:
       - |
         set -e
         python manage.py migrate --noinput
+        # --create's output is captured, and it waits for a rebuild an interrupted `up` left running.
+        echo "creating the search indices; this waits while a search index rebuild is still running"
         if ! out=$$(python manage.py elastic_index --create 2>&1); then
           echo "$$out" | grep -q resource_already_exists_exception || { echo "$$out"; exit 1; }
         fi
