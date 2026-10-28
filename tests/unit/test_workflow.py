@@ -303,7 +303,7 @@ class IndexedCompose(FakeCompose):
         help_fails: bool = False,
         sync_report: str = REJECTED_REPORT,
         sync_stderr: str = "rows are rejected",
-        sync_raises: bool = False,
+        sync_raises: BaseException | None = None,
     ):
         super().__init__(CORE)
         self.help_text = help_text
@@ -328,7 +328,7 @@ class IndexedCompose(FakeCompose):
         self.runs.append((args, capture))
         if args == INDEX_SYNC_REPORT:
             if self.sync_raises:
-                raise ComposeError(DOCKER_MISSING)
+                raise self.sync_raises
             return subprocess.CompletedProcess(args, 1, stdout=self.sync_report, stderr=self.sync_stderr)
         return subprocess.CompletedProcess(args, self.exits.get(args, 0))
 
@@ -396,11 +396,20 @@ def test_documents_set_aside_by_the_rebuild_warn_and_the_start_is_still_recorded
     assert rows == f"5 rows are now marked rejected; list them with: {search_index.LIST_REJECTED}"
 
 
+def test_the_warning_is_out_before_the_count_is_asked_for(tmp_path, monkeypatch):
+    """Nothing bounds the count call in time; an operator who gives up on it has the warning."""
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3}, sync_raises=KeyboardInterrupt())
+    logged: list[str] = []
+    with pytest.raises(KeyboardInterrupt):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+    assert logged[-1].startswith("WARNING:")
+
+
 def test_one_row_set_aside_is_counted_in_the_singular(tmp_path, monkeypatch):
     one = json.dumps({"version": 1, "models": {"core.Device": {"rejected": 1}}})
     _, _, logged = _set_aside(tmp_path, monkeypatch, sync_report=one)
 
-    assert logged[-1].startswith("1 row is now marked rejected")
+    assert logged[-1] == f"1 row is now marked rejected; list it with: {search_index.LIST_REJECTED}"
 
 
 @pytest.mark.parametrize(
@@ -416,15 +425,15 @@ def test_without_a_count_to_give_the_warning_still_points_at_the_listing(tmp_pat
     _, order, logged = _set_aside(tmp_path, monkeypatch, sync_report=sync_report)
 
     assert order[-1] == "finish"
-    assert logged[-1] == f"list the rows set aside with: {search_index.LIST_REJECTED}"
+    assert logged[-1] == search_index.LIST_SET_ASIDE
 
 
 def test_a_count_that_cannot_be_asked_for_still_lets_the_start_be_recorded(tmp_path, monkeypatch):
-    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_raises=True)
+    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_raises=ComposeError(DOCKER_MISSING))
 
     assert order[-1] == "finish"
     assert logged[-2].startswith("WARNING:")
-    assert logged[-1] == f"list the rows set aside with: {search_index.LIST_REJECTED}"
+    assert logged[-1] == search_index.LIST_SET_ASIDE
 
 
 def test_a_core_without_index_sync_status_is_sent_to_the_rebuild_output(tmp_path, monkeypatch):
@@ -432,6 +441,13 @@ def test_a_core_without_index_sync_status_is_sent_to_the_rebuild_output(tmp_path
 
     assert order[-1] == "finish"
     assert "only record" in logged[-1] and "index_sync_status --list" not in logged[-1]
+
+
+def test_a_deciding_core_is_asked_on_a_fresh_install_too(tmp_path, monkeypatch):
+    compose = IndexedCompose(DECIDING_CORE)
+    _up_after(tmp_path, monkeypatch, compose, None)
+
+    assert compose.streamed == [REBUILD_IF_STALE]
 
 
 def test_install_records_the_start_after_documents_were_set_aside(tmp_path, monkeypatch):

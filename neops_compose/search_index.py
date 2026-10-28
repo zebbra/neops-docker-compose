@@ -26,6 +26,7 @@ SET_ASIDE = 3
 INDEX_SYNC_REPORT = ("python", "manage.py", "index_sync_status", "--json")
 INDEX_SYNC_REPORT_VERSION = 1
 LIST_REJECTED = "./neops compose -- exec cms python manage.py index_sync_status --list rejected"
+LIST_SET_ASIDE = f"list the rows set aside with: {LIST_REJECTED}"
 SET_ASIDE_WARNING = (
     "WARNING: the search index was rebuilt, but Elasticsearch refused some documents and neops-core set "
     "them aside as rejected. They stay out of search until their data is corrected and the row saved, or "
@@ -85,7 +86,7 @@ def _rejected_rows_line(ctx: Ctx) -> str:
     try:
         result = ctx.compose.run("exec", "-T", "cms", *INDEX_SYNC_REPORT, capture=True, check=False)
     except ComposeError:
-        return f"list the rows set aside with: {LIST_REJECTED}"
+        return LIST_SET_ASIDE
     if "Unknown command" in (result.stderr or ""):
         return (
             "this neops-core has no index_sync_status command: the rebuild's output above is the only "
@@ -93,9 +94,10 @@ def _rejected_rows_line(ctx: Ctx) -> str:
         )
     count = _rejected_count(result.stdout or "")
     if not count:
-        return f"list the rows set aside with: {LIST_REJECTED}"
-    rows = "1 row is" if count == 1 else f"{count} rows are"
-    return f"{rows} now marked rejected; list them with: {LIST_REJECTED}"
+        return LIST_SET_ASIDE
+    if count == 1:
+        return f"1 row is now marked rejected; list it with: {LIST_REJECTED}"
+    return f"{count} rows are now marked rejected; list them with: {LIST_REJECTED}"
 
 
 def _rejected_count(stdout: str) -> int | None:

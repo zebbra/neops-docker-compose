@@ -205,9 +205,9 @@ which; to check yourself:
 
 On a core with `--rebuild-if-stale`, a document Elasticsearch refuses does not fail the rebuild:
 core finishes it, sets the refused documents aside and marks their rows `rejected`, and exits 3.
-`up` then prints a `WARNING`, how many rows are marked `rejected`, and the command that lists them
-(`./neops compose -- exec cms python manage.py index_sync_status --list rejected`), and records
-the start as usual. Keep the rebuild's output: it is where the reason for each refusal is printed.
+`up` then prints a `WARNING` and, where core can tell, how many rows are marked `rejected` and the
+command that lists them (`./neops compose -- exec cms python manage.py index_sync_status --list
+rejected`), and records the start as usual. Keep the rebuild's output: it is where the reason for each refusal is printed.
 Those rows stay out of search until their data is corrected and the row saved, or until a later
 rebuild finds Elasticsearch accepting them; see
 [Search index out of sync](50-troubleshooting.md#search-index-out-of-sync) for what to do about
