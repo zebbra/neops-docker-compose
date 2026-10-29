@@ -25,6 +25,25 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   engine has no store or the store refuses its pushes (`misconfigured`), and warns while the store
   is unreachable (`open`), when the engine spools lines to its database instead.
 
+## Reading a run's logs
+
+- **Workflow manager** (`NEOPS_WORKFLOWS_URL`): open **Runs**, then the run. Its **Logs** section
+  shows the run's lines with their source (Engine, Worker or CMS) and level. **Whose lines**
+  narrows them to one step or one job, **Minimum level** to warnings and errors. A line can
+  arrive a few seconds after the event; the panel picks it up on its next poll.
+- **Grafana** (`NEOPS_GRAFANA_URL`): **Explore**, datasource **VictoriaLogs**, query
+  `workflow_execution_id:"<run id>"`. Every line carries `service` (`neops-workflow-engine`,
+  `neops-worker`, `neops-core`) and `level`, so `workflow_execution_id:"<run id>" level:error`
+  finds a run's errors. Grafana reads the store directly, without the engine's permission
+  check, so give its accounts only to people who may read every run.
+- `./neops logs <service>` shows a container's stdout, not a run's lines. Use it when the stack
+  itself misbehaves.
+
+While the store is not answering, the Logs section shows *The log store is not answering*: the
+engine keeps new lines in its database and they appear once the store is back, so nothing is
+lost. *The log store refuses the engine* means new lines are not stored until the configuration
+is fixed (see `./neops doctor`). Without this overlay the section is absent.
+
 ## Grafana
 
 The datasource (`grafana/datasources/victorialogs.yml`) needs the
