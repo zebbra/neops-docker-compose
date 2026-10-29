@@ -27,9 +27,11 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
 
 ## Reading a run's logs
 
-- **Workflow manager**: sign in to the web client at `NEOPS_WEB_URL` first; the workflow manager
-  (`NEOPS_WORKFLOWS_URL`) has no sign-in of its own and, without a web-client session, shows
-  *You don't have access to any scope*. Then open **Runs**, then the run. Its **Logs** section
+- **Workflow manager**: sign in to the web client at `NEOPS_WEB_URL` first, then open the
+  workflow manager from it (`<NEOPS_WEB_URL>/monitor/overview`). The workflow manager has no
+  sign-in of its own: opened directly at `NEOPS_WORKFLOWS_URL` it asks you to open it from the web
+  client, and `/monitor/overview` before you sign in says *You don't have access to any scope*.
+  Then open **Runs**, then the run. Its **Logs** section
   shows the run's lines with their source (Engine, Worker or CMS) and level. **Whose lines**
   narrows them to one step or one job, **Minimum level** to warnings and errors. A line can
   arrive a few seconds after the event; the panel picks it up on its next poll.
