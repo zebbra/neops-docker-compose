@@ -38,12 +38,12 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   a few seconds after the event; the panel picks it up on its next poll.
 - **Grafana** (`NEOPS_GRAFANA_URL`): **Dashboards**, folder **neops**, **Run logs**. Paste a run
   id into **Run id**, a job id into **Job id**, or an entity into **Entity type** and **Entity
-  id** to see its lines, oldest first by time then `seq`; an empty box filters nothing. Each
+  id** to see its lines, newest first by time then `seq`; an empty box filters nothing. Each
   line is prefixed with its service, run, step, workflow, function block and entity, and the
   table below shows them as columns; click a run or job id there to filter by it. The workflow
   and function block dropdowns list the values seen in the selected time range, and *All*
-  filters nothing; **Service**, **Level** and **Step** narrow further. The panels show at most
-  5000 lines: narrow the time range for a busy one. For ad-hoc queries use **Explore** with the
+  filters nothing; **Service**, **Level** and **Step** narrow further. The panels show the newest
+  5000 lines: narrow the time range to reach earlier ones. For ad-hoc queries use **Explore** with the
   **VictoriaLogs** datasource, e.g. `workflow_execution_id:"<run id>" level:error`. Grafana
   reads the store directly, without the engine's permission check, so give its accounts only to
   people who may read every run.

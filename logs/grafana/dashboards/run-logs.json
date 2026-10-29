@@ -356,7 +356,7 @@
       "id": 1,
       "type": "logs",
       "title": "Lines",
-      "description": "Oldest first, by time then seq, at most 5000 lines: narrow the time range or the filters to see later ones. Each line is prefixed with its service, run, step, workflow, function block and entity.",
+      "description": "Newest first, by time then seq, at most 5000 lines: narrow the time range or the filters to see earlier ones. Each line is prefixed with its service, run, step, workflow, function block and entity.",
       "datasource": {
         "type": "victoriametrics-logs-datasource",
         "uid": "victorialogs"
@@ -376,7 +376,7 @@
         "enableLogDetails": true,
         "enableInfiniteScrolling": false,
         "dedupStrategy": "none",
-        "sortOrder": "Ascending"
+        "sortOrder": "Descending"
       },
       "targets": [
         {
@@ -387,7 +387,7 @@
           },
           "editorMode": "code",
           "queryType": "instant",
-          "expr": "(\"service${workflow_execution_id:percentencode}\":* or workflow_execution_id:in($workflow_execution_id)) (\"service${job_id:percentencode}\":* or job_id:in($job_id)) (\"service${entity_type:percentencode}\":* or entity_type:in($entity_type)) (\"service${entity_id:percentencode}\":* or entity_id:in($entity_id)) service:$service level:$level step_label:$step_label workflow_package:$workflow_package workflow_name:$workflow_name workflow_version:$workflow_version function_block_package:$function_block_package function_block_name:$function_block_name function_block_version:$function_block_version | sort by (_time, seq) limit 5000 | format if (entity_id:*) \"entity=<entity_type>/<entity_id> <_msg>\" as _msg | format if (function_block_name:*) \"fb=<function_block_package>/<function_block_name>:<function_block_version> <_msg>\" as _msg | format if (function_block_name:\"\" function_block_id:*) \"fb=<function_block_id> <_msg>\" as _msg | format if (workflow_name:*) \"wf=<workflow_package>/<workflow_name>:<workflow_version> <_msg>\" as _msg | format if (workflow_name:\"\" workflow_id:*) \"wf=<workflow_id> <_msg>\" as _msg | format if (step_label:*) \"step=<step_label> <_msg>\" as _msg | format if (workflow_execution_id:*) \"run=<workflow_execution_id> <_msg>\" as _msg | format if (service:*) \"[<service>] <_msg>\" as _msg",
+          "expr": "(\"service${workflow_execution_id:percentencode}\":* or workflow_execution_id:in($workflow_execution_id)) (\"service${job_id:percentencode}\":* or job_id:in($job_id)) (\"service${entity_type:percentencode}\":* or entity_type:in($entity_type)) (\"service${entity_id:percentencode}\":* or entity_id:in($entity_id)) service:$service level:$level step_label:$step_label workflow_package:$workflow_package workflow_name:$workflow_name workflow_version:$workflow_version function_block_package:$function_block_package function_block_name:$function_block_name function_block_version:$function_block_version | sort by (_time desc, seq desc) limit 5000 | format if (entity_id:*) \"entity=<entity_type>/<entity_id> <_msg>\" as _msg | format if (function_block_name:*) \"fb=<function_block_package>/<function_block_name>:<function_block_version> <_msg>\" as _msg | format if (function_block_name:\"\" function_block_id:*) \"fb=<function_block_id> <_msg>\" as _msg | format if (workflow_name:*) \"wf=<workflow_package>/<workflow_name>:<workflow_version> <_msg>\" as _msg | format if (workflow_name:\"\" workflow_id:*) \"wf=<workflow_id> <_msg>\" as _msg | format if (step_label:*) \"step=<step_label> <_msg>\" as _msg | format if (workflow_execution_id:*) \"run=<workflow_execution_id> <_msg>\" as _msg | format if (service:*) \"[<service>] <_msg>\" as _msg",
           "maxLines": 5000
         }
       ]
@@ -412,7 +412,13 @@
         "cellHeight": "sm",
         "footer": {
           "show": false
-        }
+        },
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ]
       },
       "fieldConfig": {
         "defaults": {
@@ -540,7 +546,7 @@
           },
           "editorMode": "code",
           "queryType": "instant",
-          "expr": "(\"service${workflow_execution_id:percentencode}\":* or workflow_execution_id:in($workflow_execution_id)) (\"service${job_id:percentencode}\":* or job_id:in($job_id)) (\"service${entity_type:percentencode}\":* or entity_type:in($entity_type)) (\"service${entity_id:percentencode}\":* or entity_id:in($entity_id)) service:$service level:$level step_label:$step_label workflow_package:$workflow_package workflow_name:$workflow_name workflow_version:$workflow_version function_block_package:$function_block_package function_block_name:$function_block_name function_block_version:$function_block_version | sort by (_time, seq) limit 5000",
+          "expr": "(\"service${workflow_execution_id:percentencode}\":* or workflow_execution_id:in($workflow_execution_id)) (\"service${job_id:percentencode}\":* or job_id:in($job_id)) (\"service${entity_type:percentencode}\":* or entity_type:in($entity_type)) (\"service${entity_id:percentencode}\":* or entity_id:in($entity_id)) service:$service level:$level step_label:$step_label workflow_package:$workflow_package workflow_name:$workflow_name workflow_version:$workflow_version function_block_package:$function_block_package function_block_name:$function_block_name function_block_version:$function_block_version | sort by (_time desc, seq desc) limit 5000",
           "maxLines": 5000
         }
       ]
