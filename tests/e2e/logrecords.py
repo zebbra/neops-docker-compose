@@ -50,7 +50,7 @@ STORES = {
         "/health",
         "victoriametrics-logs-datasource",
     ),
-    "loki": LogStore("loki", "loki", "http://loki:3100", "/ready", None, LOKI_INGEST_KEYS),
+    "loki": LogStore("loki", "loki", "http://loki:3100", "/ready", "loki", LOKI_INGEST_KEYS),
 }
 
 
@@ -71,7 +71,7 @@ def log_checks(values: Mapping[str, str]) -> tuple[str, ...]:
     if store is None:
         return ("not-queryable",)
     checks = ["store-running", "sole-store", "store-isolated", "engine-store-ok", "run-lines", "worker-lines"]
-    if store.datasource_type:
+    if store.datasource_type and Scenario.from_env(values).grafana:
         checks.append("grafana-datasource")
     if store.ingest_keys:
         checks.append("no-ingest-keys")
@@ -143,6 +143,37 @@ def is_unlock_audit(record: Mapping) -> bool:
     return record.get("service") == CORE_SERVICE and bool(UNLOCK_AUDIT.match(str(record.get("message", ""))))
 
 
+WORKFLOW_IDENTITY = ("workflow_package", "workflow_name", "workflow_version")
+# Logged before the engine resolves the workflow, with the run id only when the client chose it
+# (workflow-execution.controller.ts in the engine).
+UNRESOLVED_RUN_MESSAGE = "Creating workflow execution"
+FUNCTION_BLOCK_IDENTITY = ("function_block_package", "function_block_name", "function_block_version")
+
+
+def identity_keys(record: Mapping) -> tuple[str, ...]:
+    """The engine stamps a run's workflow on every engine and worker line of the run, and a
+    job's function block on every line of the job, the worker's pushed ones included."""
+    if record.get("service") not in (ENGINE_SERVICE, WORKER_SERVICE):
+        return ()
+    if record.get("service") == ENGINE_SERVICE and record.get("message") == UNRESOLVED_RUN_MESSAGE:
+        return ()
+    if record.get("job_id"):
+        return WORKFLOW_IDENTITY + FUNCTION_BLOCK_IDENTITY
+    if record.get("workflow_execution_id"):
+        return WORKFLOW_IDENTITY
+    return ()
+
+
+def identity_problems(records: Iterable[Mapping]) -> list[str]:
+    """RunLines passes only the checked run's lines, so an engine line about an id that names no
+    run (a 404 on /workflow-execution/:id/...) never reaches this."""
+    missing: Counter[tuple[str, str]] = Counter()
+    for record in records:
+        service = str(record.get("service"))
+        missing.update((service, key) for key in identity_keys(record) if not record.get(key))
+    return [f"{key} missing on {n} {service} lines" for (service, key), n in sorted(missing.items())]
+
+
 @dataclass(frozen=True)
 class RunLines:
     """What one run's log page holds, by producer."""
@@ -151,6 +182,7 @@ class RunLines:
     worker: int
     core_unlock_audit: int
     foreign: int
+    unidentified: tuple[str, ...] = field(default=(), repr=False)
 
     @classmethod
     def count(cls, records: list[Mapping], execution_id: str) -> RunLines:
@@ -160,6 +192,7 @@ class RunLines:
             worker=sum(r.get("service") == WORKER_SERVICE for r in own),
             core_unlock_audit=sum(map(is_unlock_audit, own)),
             foreign=len(records) - len(own),
+            unidentified=tuple(identity_problems(own)),
         )
 
     def problems(self) -> list[str]:
@@ -171,7 +204,7 @@ class RunLines:
         out = [f"no {name} line" for name, n in wanted.items() if n < 1]
         if self.foreign:
             out.append(f"{self.foreign} lines of another run")
-        return out
+        return out + list(self.unidentified)
 
 
 def level_problems(records: Iterable[Mapping], minimum: frozenset[str] = WARN_LEVELS) -> list[str]:

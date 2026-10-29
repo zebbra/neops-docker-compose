@@ -41,3 +41,7 @@ services:
 
   cms-beat:
     networks: [default, logs]
+
+  # ./neops render gives Grafana a datasource for a Loki of your own, which it reaches as the engine does.
+  grafana:
+    networks: [default, logs]

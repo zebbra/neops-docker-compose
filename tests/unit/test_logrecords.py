@@ -62,8 +62,10 @@ def test_victorialogs_checks_include_its_grafana_datasource():
 LOKI = {"COMPOSE_FILE": "compose.yaml:compose.expose.yaml", "NEOPS_LOG_BACKEND": "loki"}
 
 
-def test_loki_skips_the_victorialogs_only_checks_and_asks_loki_for_readiness():
+def test_loki_asks_loki_for_readiness_and_grafana_for_its_datasource_only_when_grafana_runs():
     assert "grafana-datasource" not in logrecords.log_checks(LOKI)
+    with_grafana = {**LOKI, "COMPOSE_FILE": LOKI["COMPOSE_FILE"] + ":compose.grafana.yaml"}
+    assert "grafana-datasource" in logrecords.log_checks(with_grafana)
     assert logrecords.store_of(LOKI).ready_url == "http://loki:3100/ready"
 
 
@@ -137,15 +139,82 @@ def test_key_set_names_producer_fields_apart():
 UNLOCK_AUDIT = "lock wf:3f2a:1: applied PATCH on group 3 -- actor: neops (id=1), agent: neops-workflow-engine"
 
 
+WORKFLOW = {
+    "workflow_package": "wf.e2e.neops.io",
+    "workflow_name": "group_save_fact",
+    "workflow_version": "1.1.0",
+}
+JOB = {
+    **WORKFLOW,
+    "job_id": "j",
+    "function_block_package": "fb.base.neops.io",
+    "function_block_name": "group_save_fact",
+    "function_block_version": "0.1.0",
+}
+
+
 def test_run_lines_need_every_producer_and_no_other_run():
     records = [
-        {"service": "neops-workflow-engine", "workflow_execution_id": RUN},
-        {"service": "neops-worker", "workflow_execution_id": RUN},
+        {"service": "neops-workflow-engine", "workflow_execution_id": RUN, **WORKFLOW},
+        {"service": "neops-worker", "workflow_execution_id": RUN, **JOB},
         {"service": "neops-core", "workflow_execution_id": RUN, "message": UNLOCK_AUDIT},
     ]
     assert logrecords.RunLines.count(records, RUN).problems() == []
     leaked = records[1:] + [{"service": "neops-worker", "workflow_execution_id": OTHER_RUN}]
     assert logrecords.RunLines.count(leaked, RUN).problems() == ["no engine line", "1 lines of another run"]
+
+
+def test_run_lines_name_each_identity_key_a_line_lacks():
+    records = [
+        {"service": "neops-workflow-engine", "workflow_execution_id": RUN},
+        {"service": "neops-workflow-engine", "workflow_execution_id": RUN, **WORKFLOW, "job_id": "j"},
+        {"service": "neops-worker", "workflow_execution_id": RUN, **{**JOB, "function_block_version": ""}},
+        {"service": "neops-core", "workflow_execution_id": RUN, "message": UNLOCK_AUDIT},
+    ]
+    assert logrecords.RunLines.count(records, RUN).problems() == [
+        "function_block_version missing on 1 neops-worker lines",
+        "function_block_name missing on 1 neops-workflow-engine lines",
+        "function_block_package missing on 1 neops-workflow-engine lines",
+        "function_block_version missing on 1 neops-workflow-engine lines",
+        "workflow_name missing on 1 neops-workflow-engine lines",
+        "workflow_package missing on 1 neops-workflow-engine lines",
+        "workflow_version missing on 1 neops-workflow-engine lines",
+    ]
+
+
+def test_lines_outside_a_run_and_a_job_and_core_s_lines_need_no_identity():
+    assert logrecords.identity_keys({"service": "neops-workflow-engine"}) == ()
+    core = {"service": "neops-core", "workflow_execution_id": RUN, "job_id": "j"}
+    assert logrecords.identity_keys(core) == ()
+
+
+def test_the_engine_line_logged_before_the_workflow_is_resolved_needs_no_identity():
+    creating = {
+        "service": "neops-workflow-engine",
+        "workflow_execution_id": RUN,
+        "message": "Creating workflow execution",
+    }
+    assert logrecords.identity_keys(creating) == ()
+    other = {**creating, "message": "Workflow execution created"}
+    assert logrecords.identity_keys(other) == logrecords.WORKFLOW_IDENTITY
+    from_worker = {**creating, "service": "neops-worker"}
+    assert logrecords.identity_keys(from_worker) == logrecords.WORKFLOW_IDENTITY
+
+
+def test_a_line_about_an_id_that_names_no_run_is_not_judged_with_the_checked_run():
+    records = [
+        {"service": "neops-workflow-engine", "workflow_execution_id": RUN, **WORKFLOW},
+        {"service": "neops-worker", "workflow_execution_id": RUN, **JOB},
+        {"service": "neops-core", "workflow_execution_id": RUN, "message": UNLOCK_AUDIT},
+        {
+            "service": "neops-workflow-engine",
+            "workflow_execution_id": OTHER_RUN,
+            "message": "Abort requested for workflow execution",
+        },
+    ]
+    lines = logrecords.RunLines.count(records, RUN)
+    assert lines.unidentified == ()
+    assert lines.problems() == ["1 lines of another run"]
 
 
 def test_core_s_unlock_audit_line_is_recognised_by_its_shape():
@@ -167,8 +236,8 @@ def test_other_core_lines_mentioning_locks_are_not_the_audit_line(message):
 
 def test_a_run_without_core_s_audit_line_names_it():
     records = [
-        {"service": "neops-workflow-engine", "workflow_execution_id": RUN},
-        {"service": "neops-worker", "workflow_execution_id": RUN},
+        {"service": "neops-workflow-engine", "workflow_execution_id": RUN, **WORKFLOW},
+        {"service": "neops-worker", "workflow_execution_id": RUN, **JOB},
         {"service": "neops-core", "workflow_execution_id": RUN, "message": "Lock refused for group 3"},
     ]
     assert logrecords.RunLines.count(records, RUN).problems() == ["no core unlock audit line"]
