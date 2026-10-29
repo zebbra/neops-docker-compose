@@ -37,6 +37,8 @@ services:
   grafana:
     environment:
       GF_PLUGINS_PREINSTALL_SYNC: victoriametrics-logs-datasource@0.33.1
+      # Logs Drilldown reads Loki only and shows "no Loki datasource configured" here.
+      GF_PLUGINS_DISABLE_PLUGINS: grafana-lokiexplore-app
     volumes:
       - ./logs/grafana/datasources/victorialogs.yml:/etc/grafana/provisioning/datasources/victorialogs.yml:ro
       - ./logs/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/logs.yml:ro
