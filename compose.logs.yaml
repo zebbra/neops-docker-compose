@@ -1,6 +1,7 @@
-# Overlay: VictoriaLogs as the log store of the engine and the CMS, and Grafana's datasource for
-# it. Requires compose.grafana.yaml. The store sits on its own `logs` network, which the worker
-# never joins: function-block code could otherwise write lines for any run and read all of them.
+# Overlay: VictoriaLogs as the log store of the engine and the CMS, and Grafana's plugin and
+# dashboard for it; ./neops render writes the datasource. Requires compose.grafana.yaml. The store
+# sits on its own `logs` network, which the worker never joins: function-block code could
+# otherwise write lines for any run and read all of them.
 x-logging: &logging
   driver: json-file
   options:
@@ -37,10 +38,7 @@ services:
   grafana:
     environment:
       GF_PLUGINS_PREINSTALL_SYNC: victoriametrics-logs-datasource@0.33.1
-      # Logs Drilldown reads Loki only and shows "no Loki datasource configured" here.
-      GF_PLUGINS_DISABLE_PLUGINS: grafana-lokiexplore-app
     volumes:
-      - ./logs/grafana/datasources/victorialogs.yml:/etc/grafana/provisioning/datasources/victorialogs.yml:ro
       - ./logs/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/logs.yml:ro
       - ./logs/grafana/dashboards:/etc/grafana/dashboards/logs:ro
     networks: *log-store-networks

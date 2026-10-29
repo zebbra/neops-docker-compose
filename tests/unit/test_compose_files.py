@@ -89,6 +89,7 @@ def test_no_interpolation_of_generated_only_keys():
         "SESSION_COOKIE_SECURE",
         "CSRF_COOKIE_SECURE",
         "MONITOR_BASE_PATH",
+        "GF_PLUGINS_DISABLE_PLUGINS",
     }
     for f in COMPOSE_FILES:
         for key in generated_only:
@@ -280,13 +281,21 @@ def test_every_data_bind_mount_sits_in_a_directory_the_migrations_create():
                 assert rel in created or rel.parent in created, f"{f.name}: {name} mounts {src}"
 
 
-def test_grafana_alone_depends_on_nothing_and_provisions_nothing():
+def test_grafana_alone_depends_on_nothing_and_provisions_only_the_rendered_log_datasource():
     """A logs-only file list must load, and a dependency on victoriametrics, which only the
-    metrics overlay defines, fails `docker compose config`. Each overlay mounts its own
-    datasource, so the shared file mounts none."""
+    metrics overlay defines, fails `docker compose config`. The metrics overlay mounts its own
+    datasource; the log datasource follows the backend, so ./neops render writes it."""
     grafana = load(REPO / "compose.grafana.yaml")["services"]["grafana"]
     assert "depends_on" not in grafana
-    assert not any("/etc/grafana/provisioning" in v for v in grafana["volumes"])
+    provisioned = [v for v in grafana["volumes"] if "/etc/grafana/provisioning" in v]
+    assert provisioned == [
+        "./generated/grafana/log-datasources.yml:/etc/grafana/provisioning/datasources/neops-logs.yml:ro"
+    ]
+
+
+def test_only_render_decides_which_grafana_apps_run():
+    for f in COMPOSE_FILES:
+        assert "GF_PLUGINS_DISABLE_PLUGINS" not in f.read_text(), f.name
 
 
 def test_the_worker_is_never_put_on_the_log_store_network():

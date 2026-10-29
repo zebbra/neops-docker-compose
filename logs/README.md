@@ -55,8 +55,9 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   - everything that touched one device across workflows: **Entity type** `device`, **Entity id**
     its CMS id (not its hostname).
 
-  **Logs Drilldown** is switched off (`GF_PLUGINS_DISABLE_PLUGINS`): it reads Loki only, so use
-  this dashboard or Explore.
+  The dashboard's **Explore logs** link opens Explore on VictoriaLogs for the same time range.
+  **Logs Drilldown** is switched off: it reads Loki only (see [Grafana per
+  backend](#grafana-per-backend)).
 - `./neops logs <service>` shows a container's stdout, not a run's lines. Use it when the stack
   itself misbehaves.
 
@@ -77,8 +78,23 @@ VictoriaLogs stay in `data/logs/victoria` until you delete it.
 
 ## Grafana
 
-The datasource (`grafana/datasources/victorialogs.yml`) needs the
-`victoriametrics-logs-datasource` plugin, which Grafana installs on start
+### Grafana per backend
+
+`./neops render` writes Grafana's log datasource (`generated/grafana/log-datasources.yml`) and
+the apps it enables (`generated/grafana.env`) from the store the engine writes to, so a change of
+backend takes effect on the next `./neops up`. The datasource is Grafana's default unless
+`compose.metrics.yaml` is on, whose VictoriaMetrics stays the default: Grafana allows one.
+
+| Backend | Grafana datasource | Read logs in | Logs Drilldown |
+|---|---|---|---|
+| `compose.logs.yaml` (VictoriaLogs) | VictoriaLogs | **Run logs** dashboard, Explore | off |
+| `NEOPS_LOG_BACKEND=loki` (your own) | Loki at `NEOPS_LOG_URL`, with `NEOPS_LOG_USERNAME` / `NEOPS_LOG_PASSWORD` as basic auth and `NEOPS_LOG_TENANT` as `X-Scope-OrgID` | Logs Drilldown, Explore; the Run logs dashboard is LogsQL-only and not mounted | on |
+| `NEOPS_LOG_BACKEND=victorialogs` (your own) | none: add it yourself | Explore, once added | off |
+| `db` | none | the workflow manager's **Logs** section (the monitor) | off |
+
+Grafana reaches a store of your own at `NEOPS_LOG_URL`, as the engine does.
+
+The VictoriaLogs datasource needs the `victoriametrics-logs-datasource` plugin, which Grafana installs on start
 (`GF_PLUGINS_PREINSTALL_SYNC`) and refuses to start without. **The first start of this overlay
 therefore needs outbound internet** from the Grafana container. The plugin then lives in
 `data/metrics/grafana/plugins`, and later starts work offline.

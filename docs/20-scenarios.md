@@ -283,4 +283,5 @@ Without this overlay the engine stores no logs (its log routes answer `503`) and
 task logs in its database (`NEOPS_LOG_BACKEND=db`). To use a VictoriaLogs or Loki you run yourself
 instead, set `NEOPS_LOG_BACKEND` and `NEOPS_LOG_URL` (and, as needed, `NEOPS_LOG_USERNAME`,
 `NEOPS_LOG_PASSWORD`, `NEOPS_LOG_TENANT`) in `.env`; it must be reachable from the engine and the CMS
-and must not be reachable from the worker.
+and must not be reachable from the worker. With `compose.grafana.yaml`, a Loki of your own also
+becomes a Grafana datasource, with Logs Drilldown; see `logs/README.md`.
