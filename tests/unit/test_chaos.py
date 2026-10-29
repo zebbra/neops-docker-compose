@@ -389,3 +389,12 @@ def test_an_overflow_fails_when_the_newest_burst_line_never_reached_the_store():
 )
 def test_a_service_with_or_without_a_healthcheck_counts_as_up(health, up):
     assert chaos_kit.Stack.is_up(SimpleNamespace(health_of=lambda _service: health), "worker") is up
+
+
+def test_a_slow_store_baseline_is_its_worst_run():
+    assert chaos_logs.slow_store_baseline([22.0, 22.6, 21.8]) == 22.6
+
+
+def test_a_slow_store_baseline_ignores_a_run_far_slower_than_the_rest():
+    """One stalled baseline run must not lift the bound past anything a paused store causes."""
+    assert chaos_logs.slow_store_baseline([22.0, 22.2, 90.4, 22.5]) == 22.5

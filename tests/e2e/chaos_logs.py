@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
 import time
 import uuid
 from collections.abc import Callable, Mapping
@@ -81,6 +82,7 @@ WORKER_EXIT_TIMEOUT = 120.0
 SLOW_STORE_RUNS = 10
 SLOW_STORE_PAUSE = 100.0
 SLOW_STORE_SLACK = 1.0
+SLOW_STORE_OUTLIER = 2.0
 # neops-core log/loggers/log_store.py: what core logs when it gives a batch up after three attempts.
 CORE_DROP_MARKER = "Failed to write"
 FINE_POLL = 0.25
@@ -610,6 +612,13 @@ def core_reached_store(lines: Mapping[str, logrecords.RunLines], cms_log: str) -
     return not runs_without_audit(lines) or CORE_DROP_MARKER in cms_log
 
 
+def slow_store_baseline(seconds: list[float]) -> float:
+    """The worst unpaused run, leaving out any run over twice the median: one run that stalls
+    for its own reasons would otherwise lift the bound past anything a paused store causes."""
+    ceiling = SLOW_STORE_OUTLIER * statistics.median(seconds)
+    return max(s for s in seconds if s <= ceiling)
+
+
 def step_slow_store_at_unlock(report: Report, stack: Stack) -> None:
     """C16: core's push to a store that hangs must not hold the unlock up. A run's duration
     covers its unlock, so every run with the store paused stays within the baseline's worst; and
@@ -617,7 +626,7 @@ def step_slow_store_at_unlock(report: Report, stack: Stack) -> None:
     dropped the batch, so the fault reached core. The store accepts each timed-out attempt once
     it resumes, so it holds those lines up to three times; the engine's read returns them once."""
     target = workflows.prepare(stack.deployment, stack.engine)
-    baseline = max(run.seconds for run in timed_runs(stack, target, SLOW_STORE_RUNS))
+    baseline = slow_store_baseline([run.seconds for run in timed_runs(stack, target, SLOW_STORE_RUNS)])
     since = utc_now()
     with store_paused(stack):
         paused = time.monotonic()
