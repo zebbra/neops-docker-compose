@@ -361,6 +361,15 @@
         },
         "options": [],
         "sort": 1
+      },
+      {
+        "type": "adhoc",
+        "name": "filters",
+        "label": "Filters",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        }
       }
     ]
   },

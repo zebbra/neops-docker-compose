@@ -78,6 +78,12 @@ VictoriaLogs stay in `data/logs/victoria` until you delete it.
 
 ## Grafana
 
+The Explore **Code** editor offers no LogsQL autocomplete (upstream
+VictoriaMetrics/victorialogs-datasource#338). For suggestions, use **Builder** mode, *Filter for
+value* in a line's details, the dashboard's **Filters** bar, or **Stream filters**, which only
+works while the query parses (e.g. `*`). The plugin lists at most 25 values per filter key, so type
+a run id into **Run id** rather than picking it from **Filters**.
+
 ### Grafana per backend
 
 `./neops render` writes Grafana's log datasource (`generated/grafana/log-datasources.yml`) and
