@@ -25,7 +25,7 @@ SEE_DOCS = "(docs/30-operations.md#upgrades)"
 SET_ASIDE = 3
 INDEX_SYNC_REPORT = ("python", "manage.py", "index_sync_status", "--json")
 INDEX_SYNC_REPORT_VERSION = 1
-LIST_REJECTED = "./neops compose -- exec cms python manage.py index_sync_status --list rejected"
+LIST_REJECTED = "./neops compose -- exec -T cms python manage.py index_sync_status --list rejected --limit 0"
 LIST_SET_ASIDE = f"list the rows set aside with: {LIST_REJECTED}"
 SET_ASIDE_WARNING = (
     "WARNING: the search index was rebuilt, but Elasticsearch refused some documents and neops-core set "
