@@ -114,6 +114,14 @@ Persist it (the CLI's message includes this) so it survives a reboot:
 echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-neops.conf
 ```
 
+### A log line appears twice in Grafana
+
+After VictoriaLogs (or Loki) hung rather than went down, Grafana can show some lines two or
+three times. A push that timed out against the hung store was still accepted once it
+resumed, and the producer's retry stored the same lines again. Nothing is lost. The monitor
+app and the engine's log routes return each line once; only queries straight against the
+store, such as Grafana's, see the copies.
+
 ### Monitor app blank (same origin)
 
 The disabling logic lives in the web client, not the monitor app. The web client reads
