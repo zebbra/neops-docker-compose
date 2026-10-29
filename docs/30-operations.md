@@ -109,10 +109,9 @@ is stale: `up`'s `cms-init` recreates them empty, `up` then runs `--rebuild-if-s
 which refills all of them (groups, clients and the lookup indices included) from the restored data
 and stamps them, and the next `up` has nothing to do. That rebuild's exit 3 means it finished but
 set documents aside (see [Upgrades](#upgrades)). On a fresh host the delete finds nothing to
-delete. An older core has no
-stamps and rebuilds in `up` only when an image moved, so search can stay empty until its
-`--rebuild --force` refills every index. Do not use `--populate`: it keeps the documents of
-removed rows.
+delete. An older core has no stamps and rebuilds in `up` only when an image moved, so search can
+stay empty until its `--rebuild --force` refills every index. Do not use `--populate`: it keeps the
+documents of removed rows.
 
 Restoring onto a host whose `neops-core` image is *older* than the one the backup was taken with
 is not supported: Django migrations do not run backwards. Restore onto the same or a newer core
