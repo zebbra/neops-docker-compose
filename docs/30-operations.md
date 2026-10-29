@@ -107,8 +107,9 @@ they are current, so `up`'s `elastic_index --rebuild-if-stale` would leave them 
 and the engine's searching locks would answer from them until a rebuild ran. Deleted, every index
 is stale: `up`'s `cms-init` recreates them empty, `up` then runs `--rebuild-if-stale` in `cms`,
 which refills all of them (groups, clients and the lookup indices included) from the restored data
-and stamps them, and the next `up` has nothing to do. Its exit 3 means it finished but set documents aside (see
-[Upgrades](#upgrades)). On a fresh host the delete finds nothing to delete. An older core has no
+and stamps them, and the next `up` has nothing to do. That rebuild's exit 3 means it finished but
+set documents aside (see [Upgrades](#upgrades)). On a fresh host the delete finds nothing to
+delete. An older core has no
 stamps and rebuilds in `up` only when an image moved, so search can stay empty until its
 `--rebuild --force` refills every index. Do not use `--populate`: it keeps the documents of
 removed rows.
