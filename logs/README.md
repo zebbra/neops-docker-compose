@@ -12,8 +12,9 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   push to it; the CMS writes its task logs there instead of its database. The engine's log routes
   (`GET /workflow-execution/:id/logs`, `GET /blackboard/jobs/:jobId/logs`, `GET /workers/:uuid/logs`,
   and `GET /logs` across runs, which answers `400 LOG_FILTER_REQUIRED` without a narrowing
-  filter: workflow, function block, entity, worker or job type; level, step and service alone do
-  not narrow it) and the monitor's log panels read from it.
+  filter: workflow, function block, entity, worker or job type; level, step or the include flags
+  (`includeCore`/`includeEngine`) alone do not narrow it) and the monitor's log panels read from
+  it.
 - VictoriaLogs keeps lines for `NEOPS_LOG_RETENTION` (default `30d`; `<n>d` or `<n>w`, the unit is
   required, because a bare number means months to VictoriaLogs and days to the CMS). Its data
   lives in `data/logs/victoria`, which `./neops backup` does not copy: the store is
