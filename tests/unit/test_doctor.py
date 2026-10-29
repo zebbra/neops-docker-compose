@@ -1,6 +1,7 @@
 import contextlib
 import json
 import ssl
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -47,6 +48,28 @@ def test_container_probes_treat_completed_init_as_ok():
     probes = doctor.container_probes(rows, one_shots={"cms-init"})
     by = {p.name: p for p in probes}
     assert by["cms-init"].ok and by["cms"].ok and by["worker"].ok and not by["engine"].ok
+
+
+UNKNOWN_COMMAND = "Unknown command: 'index_sync_status'\nType 'manage.py help' for usage.\n"
+
+
+class IndexSyncCompose:
+    """Answers `exec cms python manage.py index_sync_status --json` as a core image would."""
+
+    def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0, fail: bool = False):
+        self.result = (returncode, stdout, stderr)
+        self.fail = fail
+        self.runs = []
+
+    def ps(self):
+        return []
+
+    def run(self, *args, capture=False, check=True, env=None, timeout=None):
+        self.runs.append((args, timeout))
+        if self.fail:
+            raise ComposeError("docker is not installed or not on PATH")
+        returncode, stdout, stderr = self.result
+        return subprocess.CompletedProcess(args, returncode, stdout, stderr)
 
 
 HEALTHY = {
@@ -190,7 +213,7 @@ def _ctx(tmp_path, compose_file: str) -> Ctx:
         env=env,
         paths=Paths.for_repo(tmp_path, env),
         scenario=Scenario.from_env(env),
-        compose=type("C", (), {"ps": staticmethod(lambda: [])})(),
+        compose=IndexSyncCompose(stderr=UNKNOWN_COMMAND, returncode=1),
         state=State(),
         log=lambda m: None,
     )
@@ -213,7 +236,7 @@ def _ctx_from(tmp_path) -> Ctx:
         env=env,
         paths=Paths.for_repo(tmp_path, env),
         scenario=Scenario.from_env(env),
-        compose=type("C", (), {"ps": staticmethod(lambda: [])})(),
+        compose=IndexSyncCompose(stderr=UNKNOWN_COMMAND, returncode=1),
         state=State(),
         log=lambda m: None,
     )
@@ -262,17 +285,15 @@ def _oidc_ctx(tmp_path, compose) -> Ctx:
     return ctx
 
 
-class MintingCompose:
+class MintingCompose(IndexSyncCompose):
     def __init__(self, fail: bool = False):
-        self.fail = fail
+        super().__init__(stderr=UNKNOWN_COMMAND, returncode=1)
+        self.fail_exec = fail
         self.execs = []
-
-    def ps(self):
-        return []
 
     def exec(self, service, *cmd, env=None):
         self.execs.append((service, env))
-        if self.fail:
+        if self.fail_exec:
             raise ComposeError("no container")
         return "TOKEN=minted.jwt\n"
 
@@ -514,3 +535,138 @@ def test_a_plain_doctor_run_does_not_wait_for_workers(monkeypatch):
     monkeypatch.setattr(doctor.time, "sleep", lambda s: pytest.fail("slept"))
     probe = doctor.settled_worker_probe(engine, SequencedHttp(["[]"]), doctor.Login(token="t"), grace=0)
     assert not probe.ok
+
+
+def index_sync_report(**overrides) -> str:
+    report = {
+        "version": 1,
+        "models": {
+            "core.device": {
+                "synced": 12,
+                "pending": 0,
+                "error": 0,
+                "rejected": 0,
+                "permission_pending": 0,
+                "awaiting_sweep": 0,
+                "stale_pending": 0,
+                "stale_error": 0,
+                "oldest_pending_age_seconds": None,
+                "oldest_error_age_seconds": None,
+            }
+        },
+        "group_writes": {"count": 0, "awaiting_sweep": 0, "oldest_age_seconds": None},
+        "unlocks": {
+            "waiting": 0,
+            "quarantined": 0,
+            "awaiting_sweep": 0,
+            "oldest_unquarantined_age_seconds": None,
+        },
+        "periodic_sweep_last_ran_at": "2026-10-27T18:00:00+00:00",
+        "max_pending_age_seconds": 600,
+        "max_error_age_seconds": 120,
+        "awaiting_sweep": 0,
+        "permission_pending": 0,
+        "problems": [],
+    }
+    return json.dumps(report | overrides)
+
+
+def index_sync_probes(cms_tasks: bool = True, **answer) -> list[doctor.Probe]:
+    return doctor.index_sync_probes(IndexSyncCompose(**answer), cms_tasks)
+
+
+def test_index_sync_asks_core_in_the_cms_container_and_does_not_wait_forever():
+    compose = IndexSyncCompose(stdout=index_sync_report())
+    doctor.index_sync_probes(compose, cms_tasks=True)
+    command = ("exec", "-T", "cms", "python", "manage.py", "index_sync_status", "--json")
+    assert compose.runs == [(command, doctor.INDEX_SYNC_TIMEOUT_SECONDS)]
+
+
+def test_a_core_image_without_the_status_command_skips_the_index_sync_probe():
+    probes = index_sync_probes(stderr=UNKNOWN_COMMAND, returncode=1)
+    assert [(p.ok, p.detail) for p in probes] == [(True, doctor.INDEX_SYNC_UNAVAILABLE)]
+
+
+def test_an_index_in_sync_reports_what_waits_and_when_the_sweep_last_ran():
+    (probe,) = index_sync_probes(stdout="neops.core ready\n" + index_sync_report(permission_pending=2) + "\n")
+    assert probe.ok
+    assert probe.detail == (
+        "0 index writes due for the sweep, 2 rows hidden from restricted users; "
+        "periodic sweep last ran: 2026-10-27T18:00:00+00:00"
+    )
+
+
+def test_each_problem_core_reports_is_a_warning_that_does_not_fail_doctor():
+    problems = ["core.device: 1 rows in error", "core.client: 2 rows rejected by Elasticsearch"]
+    probes = index_sync_probes(stdout=index_sync_report(problems=problems, awaiting_sweep=1), returncode=1)
+    assert [(p.ok, p.severity, p.detail) for p in probes] == [(False, "warn", text) for text in problems]
+    assert doctor.all_ok(probes)
+
+
+def test_index_writes_due_for_the_sweep_without_cms_tasks_are_a_warning():
+    probes = index_sync_probes(cms_tasks=False, stdout=index_sync_report(awaiting_sweep=3))
+    assert [p.detail for p in probes] == [doctor.CMS_TASKS_OFF.format(waiting=3, commands=doctor.RESYNC_ROWS)]
+    assert probes[0].severity == "warn"
+    assert probes[0].detail.endswith(doctor.RESYNC_ROWS), "the commands come last, so the tail pastes as is"
+
+
+def _due_unlocks(count: int) -> dict:
+    return {
+        "waiting": count,
+        "quarantined": 0,
+        "awaiting_sweep": count,
+        "oldest_unquarantined_age_seconds": 1.0,
+    }
+
+
+def test_without_cms_tasks_the_warning_names_the_command_for_what_is_due():
+    rows_only = index_sync_probes(cms_tasks=False, stdout=index_sync_report(awaiting_sweep=2))
+    unlocks_only = index_sync_probes(
+        cms_tasks=False, stdout=index_sync_report(awaiting_sweep=1, unlocks=_due_unlocks(1))
+    )
+    both = index_sync_probes(
+        cms_tasks=False, stdout=index_sync_report(awaiting_sweep=3, unlocks=_due_unlocks(1))
+    )
+
+    assert doctor.RESYNC_ROWS in rows_only[0].detail and doctor.RESYNC_UNLOCKS not in rows_only[0].detail
+    assert (
+        doctor.RESYNC_UNLOCKS in unlocks_only[0].detail and doctor.RESYNC_ROWS not in unlocks_only[0].detail
+    )
+    pastes_as_one_line = f"{doctor.RESYNC_ROWS}; {doctor.RESYNC_UNLOCKS}"
+    assert pastes_as_one_line in both[0].detail
+
+
+def test_with_cms_tasks_on_index_writes_due_for_the_sweep_are_not_a_warning():
+    (probe,) = index_sync_probes(cms_tasks=True, stdout=index_sync_report(awaiting_sweep=3))
+    assert probe.ok
+
+
+def test_without_cms_tasks_writes_still_on_their_way_are_fine():
+    """Core counts only what the sweep would take now, not rows whose own write is in flight."""
+    (probe,) = index_sync_probes(cms_tasks=False, stdout=index_sync_report())
+    assert probe.ok
+
+
+def test_a_cms_that_does_not_answer_with_a_report_is_a_one_line_warning():
+    traceback = "Traceback (most recent call last):\n  File x\npsycopg.OperationalError: connection refused\n"
+    probes = index_sync_probes(stderr=traceback, returncode=1)
+    assert [(p.ok, p.severity) for p in probes] == [(False, "warn")]
+    assert "\n" not in probes[0].detail
+    assert "connection refused" in probes[0].detail
+
+
+def test_a_report_without_the_keys_doctor_reads_is_not_mistaken_for_a_healthy_one():
+    for answer in ('{"models": {}}', index_sync_report(version=2), '{"version": 1, "problems": "none"}'):
+        probes = index_sync_probes(stdout=answer)
+        assert [(p.ok, p.severity) for p in probes] == [(False, "warn")], answer
+
+
+def test_a_compose_failure_or_timeout_is_a_warning():
+    probes = index_sync_probes(fail=True)
+    assert [(p.ok, p.severity) for p in probes] == [(False, "warn")]
+    assert "could not ask the CMS" in probes[0].detail
+
+
+def test_run_reports_the_index_sync(tmp_path, monkeypatch):
+    probes = _run_with(tmp_path, monkeypatch, "compose.yaml:compose.traefik.yaml")
+    assert [p.detail for p in probes if p.name == doctor.INDEX_SYNC_PROBE] == [doctor.INDEX_SYNC_UNAVAILABLE]

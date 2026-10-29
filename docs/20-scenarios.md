@@ -27,19 +27,16 @@ COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml
 
 The Celery worker and beat containers of core's 1.0 task path are not part of any scenario by
 default: a 2.0 deployment runs its automation through the engine and the worker SDK, and the CMS
-writes Elasticsearch on every save without them. A device, interface, group or client whose
-write failed is re-indexed on the engine's lock requests, up to 20 rows per request
-(`NEOPS_INDEX_RESYNC_INLINE_BUDGET`). A row whose write may still be running is left alone for a
-grace period first, and after Elasticsearch has been unreachable lock requests wait 60 s
-(`NEOPS_INDEX_RESYNC_INLINE_BACKOFF_SECONDS`) before they try again. With `cms-tasks`, `cms-beat`
-also sweeps them every minute; `manage.py resync_unsynced_rows` does all of them at once. A
-document Elasticsearch rejects (a mapping or parse error) is marked `rejected` and skipped until
-the row changes. A deployment that still runs 1.0 tasks or
+writes the search index itself without them. A deployment that still runs 1.0 tasks or
 cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with the next
 `./neops up`; removing the line and running `./neops down` then `./neops up` stops them again.
 `examples/local-legacy.env` is `examples/local.env` with that line: a task executed from the
 CMS is queued on Redis, `cms-worker` runs its provider and writes the result back, and
 `cms-beat` fires the cron jobs. Without the profile such an execution stays `PENDING` forever.
+On a neops-core that repairs failed search index writes with a sweep, `cms-beat` also has
+`cms-worker` run that sweep every minute; without them only lock requests do, a few rows each,
+and `./neops doctor` warns while writes wait for it (see
+[Troubleshooting](50-troubleshooting.md#search-index-out-of-sync)).
 
 Overlays combine freely, and `examples/` ships one complete `.env` per combination we test. Put
 anything of your own in `compose.override.yaml` (gitignored) and append it to `COMPOSE_FILE`;

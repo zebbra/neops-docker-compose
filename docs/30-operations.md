@@ -197,7 +197,7 @@ which; to check yourself:
   nothing. **The first `up` on such a core rebuilds every index once**, because indices built by
   compose or by a hand-run `--rebuild` carry no stamp. A fresh install builds its first, empty
   indices the same way, in seconds.
-- **An older neops-core** (2.2.0, pinned by this release, is one) cannot tell whether an upgrade
+- **An older neops-core** (2.2.1-beta.7, pinned by this release, is one) cannot tell whether an upgrade
   changed its indices, so `up` rebuilds every index whenever the core or the Elasticsearch image
   differs from the one the last successful `up` ran (`up` logs "neops-core or Elasticsearch
   changed: rebuilding the search index"). That is `manage.py elastic_index --rebuild --force`,
@@ -229,7 +229,13 @@ configured not to auto-create the Neops indices (`action.auto_create_index`), si
 auto-created one would carry a dynamic mapping that breaks search. The rebuild re-indexes those
 rows from the database anyway. If the rebuild fails, which is any non-zero exit other than
 `--rebuild-if-stale`'s exit 3 above (on an older core, any non-zero exit at all), `up` says so and
-stops before recording the start, so the next `./neops up` tries it again.
+stops before recording the start, so the next `./neops up` tries it again, and search stays
+partial until a rebuild succeeds. On an older core a document Elasticsearch refuses is such a
+failure, and fails every retry the same way. The rebuild stops at the first type with refused
+documents, and its output names each of them by `_id` (`device-6` is device 6), with
+Elasticsearch's reason. Such a row is not marked `rejected`, so neither `index_sync_status` nor
+`./neops doctor` shows it: correct its data and save it, then run `./neops up` again, which may
+stop at refused documents of a later type.
 
 **Do not interrupt a rebuild.** Ctrl-C stops `./neops up`, not the rebuild: `docker compose exec`
 cannot signal the process it started, so it keeps running inside `cms`. On a core with
