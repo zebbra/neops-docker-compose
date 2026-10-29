@@ -50,7 +50,7 @@ STORES = {
         "/health",
         "victoriametrics-logs-datasource",
     ),
-    "loki": LogStore("loki", "loki", "http://loki:3100", "/ready", None, LOKI_INGEST_KEYS),
+    "loki": LogStore("loki", "loki", "http://loki:3100", "/ready", "loki", LOKI_INGEST_KEYS),
 }
 
 
@@ -71,7 +71,7 @@ def log_checks(values: Mapping[str, str]) -> tuple[str, ...]:
     if store is None:
         return ("not-queryable",)
     checks = ["store-running", "sole-store", "store-isolated", "engine-store-ok", "run-lines", "worker-lines"]
-    if store.datasource_type:
+    if store.datasource_type and Scenario.from_env(values).grafana:
         checks.append("grafana-datasource")
     if store.ingest_keys:
         checks.append("no-ingest-keys")

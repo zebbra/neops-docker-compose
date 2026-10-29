@@ -62,8 +62,10 @@ def test_victorialogs_checks_include_its_grafana_datasource():
 LOKI = {"COMPOSE_FILE": "compose.yaml:compose.expose.yaml", "NEOPS_LOG_BACKEND": "loki"}
 
 
-def test_loki_skips_the_victorialogs_only_checks_and_asks_loki_for_readiness():
+def test_loki_asks_loki_for_readiness_and_grafana_for_its_datasource_only_when_grafana_runs():
     assert "grafana-datasource" not in logrecords.log_checks(LOKI)
+    with_grafana = {**LOKI, "COMPOSE_FILE": LOKI["COMPOSE_FILE"] + ":compose.grafana.yaml"}
+    assert "grafana-datasource" in logrecords.log_checks(with_grafana)
     assert logrecords.store_of(LOKI).ready_url == "http://loki:3100/ready"
 
 
