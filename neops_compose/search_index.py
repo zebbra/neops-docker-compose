@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 
 MANAGE = ("python", "manage.py", "elastic_index")
@@ -17,12 +18,34 @@ SCHEMA_HASH = re.compile(r"[0-9a-f]{64}")
 
 
 def read_schema(ctx: Ctx) -> str | None:
-    """The hash is the last line: manage.py prints plugin noise to stdout before it."""
-    result = ctx.compose.run("exec", "-T", "cms", *MANAGE, "--schema-hash", capture=True, check=False)
-    lines = result.stdout.split() if result.returncode == 0 else []
-    if lines and SCHEMA_HASH.fullmatch(lines[-1]):
-        return lines[-1]
-    return None
+    """None only for a core that rejects the flag. Any other failure raises: recording a start
+    without the hash would leave a schema change undetected for good."""
+    args = ("exec", "-T", "cms", *MANAGE, "--schema-hash")
+    result = ctx.compose.run(*args, capture=True, check=False)
+    if result.returncode != 0:
+        if "unrecognized arguments" in (result.stderr or ""):
+            return None
+        raise ComposeError(
+            f"elastic_index --schema-hash failed ({result.returncode}) {result.stderr.strip()}"
+        )
+    return _last_line_hash(result.stdout)
+
+
+def _last_line_hash(stdout: str) -> str:
+    """manage.py prints plugin noise to stdout before the hash, which is always the last line."""
+    lines = stdout.strip().splitlines()
+    last = lines[-1].strip() if lines else ""
+    if not SCHEMA_HASH.fullmatch(last):
+        raise ComposeError(f"elastic_index --schema-hash printed no hash; last line: {last!r}")
+    return last
+
+
+def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> str | None:
+    """Rebuilds a stale index and returns the schema the start is to be recorded with."""
+    schema = read_schema(ctx)
+    if is_stale(last_up, running, schema):
+        rebuild(ctx)
+    return schema
 
 
 def is_stale(last_up: dict | None, running: dict[str, str], schema: str | None) -> bool:

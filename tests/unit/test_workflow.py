@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 from neops_compose import preflight, search_index, secrets, workflow
+from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.paths import Paths
@@ -296,10 +297,11 @@ def test_a_fresh_install_has_no_stale_index():
 class IndexedCompose(FakeCompose):
     """manage.py prints plugin noise before the hash, as the real image does."""
 
-    def __init__(self, help_text: str, schema: str | None = SCHEMA_A):
+    def __init__(self, help_text: str, schema: str | None = SCHEMA_A, schema_result=None):
         super().__init__(CORE)
         self.help_text = help_text
         self.schema = schema
+        self.schema_result = schema_result
         self.runs: list[tuple[str, ...]] = []
 
     def ps(self):
@@ -311,6 +313,8 @@ class IndexedCompose(FakeCompose):
     def run(self, *args, capture=False, check=True, env=None):
         self.runs.append(args)
         if "--schema-hash" in args:
+            if self.schema_result is not None:
+                return self.schema_result
             if self.schema is None:
                 return super().run(*args)
             return subprocess.CompletedProcess(args, 0, stdout=f"schema imported\n{self.schema}\n")
@@ -359,6 +363,38 @@ def test_up_leaves_the_index_alone_when_neither_elasticsearch_nor_the_schema_mov
 
     assert "rebuild" not in order
     assert not any("--rebuild" in run for run in compose.runs)
+
+
+def test_a_schema_hash_that_fails_on_a_core_that_knows_the_flag_stops_up_before_it_records(
+    tmp_path, monkeypatch
+):
+    """Recording the new image without its hash would hide this release's schema change for good."""
+    crashed = subprocess.CompletedProcess((), 1, stdout="", stderr="elasticsearch.ConnectionError")
+    compose = IndexedCompose("--rebuild", schema_result=crashed)
+    with pytest.raises(ComposeError, match="schema-hash failed"):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(schema=SCHEMA_A))
+
+
+def test_a_schema_hash_run_that_prints_no_hash_stops_up(tmp_path, monkeypatch):
+    garbled = subprocess.CompletedProcess((), 0, stdout=f"{SCHEMA_A}\nschema imported\n", stderr="")
+    compose = IndexedCompose("--rebuild", schema_result=garbled)
+    with pytest.raises(ComposeError, match="no hash"):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(schema=SCHEMA_A))
+
+
+def test_install_on_a_live_deployment_rebuilds_a_stale_index_as_up_does(tmp_path, monkeypatch):
+    order: list[str] = []
+    _stub_up(monkeypatch, order)
+    monkeypatch.setattr(workflow, "check_images", lambda c: None)
+    monkeypatch.setattr(workflow, "_finish", lambda c, *a: order.append(f"finish:{a[-1]}"))
+    compose = IndexedCompose("--rebuild")
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    ctx.state.last_up = _last_up(schema=SCHEMA_A)
+
+    workflow.install(ctx)
+
+    assert compose.runs[-1] == REBUILD
+    assert order[-1] == f"finish:{SCHEMA_A}"
 
 
 def test_the_schema_hash_lands_in_last_up_and_is_omitted_when_core_has_none():

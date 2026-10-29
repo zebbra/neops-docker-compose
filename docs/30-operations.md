@@ -88,8 +88,7 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 
 # 3. Bring up the rest and rebuild the search index (not part of the backup).
 ./neops up
-# On a core whose `elastic_index --help` lists --sync-lookups, add it: only it fills the lookup indices.
-./neops compose -- exec cms python manage.py elastic_index --populate --models core.Device core.Interface
+./neops compose -- exec cms python manage.py elastic_index --rebuild --force
 
 # 4. Confirm.
 ./neops doctor
@@ -99,9 +98,11 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 against a schema that does not exist yet, and `pg_restore` ends with hundreds of errors and a
 non-zero exit while having loaded the data correctly — indistinguishable from a real failure.
 
-The indices themselves need no `elastic_index --create`: `up` runs `cms-init`, which creates
-them. Only the contents have to be rebuilt, which is what `--populate` does. Running `--create`
-after `up` fails with `resource_already_exists_exception`.
+The indices need no `elastic_index --create`: `up` runs `cms-init`, which creates any that are
+missing, and `--create` after it fails with `resource_already_exists_exception`. Use `--rebuild`,
+not `--populate`: on a host that was running before the restore the indices still hold documents
+for rows the restore removed, and only `--rebuild` drops those, fills every index (groups and
+clients included) and refills the lookup indices.
 
 Restoring onto a host whose `neops-core` image is *older* than the one the backup was taken with
 is not supported: Django migrations do not run backwards. Restore onto the same or a newer core
@@ -170,19 +171,33 @@ are certain the target schema is compatible.
 
 `up` rebuilds the search index once the stack is healthy when Elasticsearch's image differs from
 the one the last successful `up` ran, or when `neops-core` reports a different index layout
-(`manage.py elastic_index --schema-hash`) than it recorded then. A core upgrade that leaves the
-indices alone costs no rebuild, and a core too old to report its layout never triggers one. The
+(`manage.py elastic_index --schema-hash`) than it recorded then. That hash covers index names,
+mappings and settings, including the `ELASTICSEARCH_DSL_INDEX_*` values in `compose.yaml`'s
+`x-core-env` (shards, replicas, field limit), so changing one of those also rebuilds. It does not
+cover what core writes *into* the indices: a core release that changes indexed content without
+changing the layout rebuilds only if it bumps its own content version, which is part of the hash.
+A core too old to report a hash never triggers a rebuild. The
 rebuild is `manage.py elastic_index --rebuild`, plus `--sync-lookups` on a core that has ES|QL
-lookup indices, and its output streams to your terminal. It deletes the indices before it
-recreates them, so device and interface searches fail with `index_not_found_exception` for a
-moment and then return partial results until it finishes. If the rebuild fails, `up` stops before
-recording the start, so the next `./neops up` tries it again, and search stays partial until a
-rebuild succeeds. A document Elasticsearch refuses fails every retry the same way. The rebuild
-stops at the first type with refused documents, and its output names each of them by `_id`
-(`device-6` is device 6), with Elasticsearch's reason. Such a row is not marked `rejected`, so
-neither `index_sync_status` nor `./neops doctor` shows it: correct its data and save it, then
-run `./neops up` again, which may stop at refused documents of a later type. To run the rebuild
-by hand:
+lookup indices, and its output streams to your terminal. It took 57 s for 2,000 devices, 20,000
+interfaces and 50 groups; plan the upgrade as a short maintenance window, because while it runs:
+
+- it deletes the indices before it recreates them, so searches fail with
+  `index_not_found_exception` for a moment, then return partial results until it finishes;
+- the groups index stays empty until the end;
+- relation searches (`groups.*`), scope filters and workflow acquires fail for the whole rebuild,
+  because the lookup indices they join against are recreated last;
+- restricted users may see fewer results until the rebuild has stamped their rows as synced.
+
+A save that lands while an index is deleted fails instead of recreating it: Elasticsearch is
+configured not to auto-create the Neops indices (`action.auto_create_index`), since an
+auto-created one would carry a dynamic mapping that breaks search. The rebuild re-indexes those
+rows from the database anyway. If the rebuild fails, `up` stops before recording the start, so
+the next `./neops up` tries it again, and search stays partial until a rebuild succeeds. A
+document Elasticsearch refuses fails every retry the same way. The rebuild stops at the first type
+with refused documents, and its output names each of them by `_id` (`device-6` is device 6), with
+Elasticsearch's reason. Such a row is not marked `rejected`, so neither `index_sync_status` nor
+`./neops doctor` shows it: correct its data and save it, then run `./neops up` again, which may
+stop at refused documents of a later type. To run the rebuild by hand:
 
 ```bash
 ./neops compose -- exec cms python manage.py elastic_index --rebuild --force

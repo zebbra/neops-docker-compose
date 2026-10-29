@@ -99,6 +99,9 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
+      # A write in a rebuild's delete->create gap would auto-create a Neops index with a dynamic
+      # mapping that breaks search. Explicit creation is unaffected. devices/interfaces: older cores.
+      - action.auto_create_index=-network,-devices,-interfaces,-groups,-clients,-executions,-*_lookup,+*
       - bootstrap.memory_lock=true
       - ES_JAVA_OPTS=-Xms${NEOPS_ES_HEAP:-1g} -Xmx${NEOPS_ES_HEAP:-1g}
       - cluster.routing.allocation.disk.watermark.low=85%

@@ -33,9 +33,9 @@ cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with th
 `examples/local-legacy.env` is `examples/local.env` with that line: a task executed from the
 CMS is queued on Redis, `cms-worker` runs its provider and writes the result back, and
 `cms-beat` fires the cron jobs. Without the profile such an execution stays `PENDING` forever.
-On a neops-core that repairs failed search index writes with a sweep, the two also run that
-sweep every minute; without them only lock requests do, a few rows each, and `./neops doctor`
-warns while writes wait for it (see
+On a neops-core that repairs failed search index writes with a sweep, `cms-beat` also has
+`cms-worker` run that sweep every minute; without them only lock requests do, a few rows each,
+and `./neops doctor` warns while writes wait for it (see
 [Troubleshooting](50-troubleshooting.md#search-index-out-of-sync)).
 
 Overlays combine freely, and `examples/` ships one complete `.env` per combination we test. Put

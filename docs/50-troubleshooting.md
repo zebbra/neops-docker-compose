@@ -137,9 +137,12 @@ ran (the process died first) leaves it `pending`. The sweep re-indexes both. Unt
 searches answer with the row's old state, and a row whose access changed (its device groups, say)
 is hidden from restricted users.
 
-Every lock request sweeps a few rows, and a workflow execution takes locks, so the index heals
-while workflows run. With `COMPOSE_PROFILES=cms-tasks`, `cms-beat` also has `cms-worker` sweep
-every minute. To look, or to sweep once by hand:
+Every lock request sweeps up to 20 rows (`NEOPS_INDEX_RESYNC_INLINE_BUDGET`), and a workflow
+execution takes locks, so the index heals while workflows run. A row whose write may still be
+running is left alone for a grace period first, and after Elasticsearch has been unreachable lock
+requests wait 60 s (`NEOPS_INDEX_RESYNC_INLINE_BACKOFF_SECONDS`) before they sweep again. With
+`COMPOSE_PROFILES=cms-tasks`, `cms-beat` also has `cms-worker` sweep every minute. To look, or to
+sweep once by hand:
 
 ```bash
 ./neops compose -- exec cms python manage.py index_sync_status           # read-only report
