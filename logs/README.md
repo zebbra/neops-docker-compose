@@ -27,14 +27,15 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
 
 ## Reading a run's logs
 
-- **Workflow manager**: sign in to the web client at `NEOPS_WEB_URL` first, then open the
-  workflow manager from it (`<NEOPS_WEB_URL>/monitor/overview`). The workflow manager has no
-  sign-in of its own: opened directly at `NEOPS_WORKFLOWS_URL` it asks you to open it from the web
-  client, and `/monitor/overview` before you sign in says *You don't have access to any scope*.
-  Then open **Runs**, then the run. Its **Logs** section
-  shows the run's lines with their source (Engine, Worker or CMS) and level. **Whose lines**
-  narrows them to one step or one job, **Minimum level** to warnings and errors. A line can
-  arrive a few seconds after the event; the panel picks it up on its next poll.
+- **Workflow manager**: sign in to the web client at `NEOPS_WEB_URL`, then follow its
+  **Workflow manager** link in the header; it opens the workflow manager inside the web client,
+  with *Open in own tab* to leave the frame. The workflow manager has no sign-in of its own:
+  opened directly at `NEOPS_WORKFLOWS_URL` without a web-client session, it asks you to open it
+  from the web client. Then open **Runs**, then the run. Its **Logs** section shows the run's
+  lines with their source (Engine, Worker or CMS), the step for worker lines, and the level;
+  **Minimum level** narrows them to warnings and errors. To see one job's lines, open the job
+  from **Jobs**: its page adds **Whose lines** (whole run, its step, the job). A line can arrive
+  a few seconds after the event; the panel picks it up on its next poll.
 - **Grafana** (`NEOPS_GRAFANA_URL`): **Explore**, datasource **VictoriaLogs**, query
   `workflow_execution_id:"<run id>"`. Every line carries `service` (`neops-workflow-engine`,
   `neops-worker`, `neops-core`) and `level`, so `workflow_execution_id:"<run id>" level:error`
