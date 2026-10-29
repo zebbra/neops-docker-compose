@@ -111,3 +111,18 @@ def test_ensure_group_creates_the_group_when_none_exists(monkeypatch):
     calls = fake_cms(monkeypatch, existing=[])
     assert workflows.ensure_group(SimpleNamespace(http=None, cms=None), "t") == 41
     assert calls == [workflows.GROUP_READ, workflows.GROUP_UPSERT]
+
+
+def publish_answering(payload: dict) -> SimpleNamespace:
+    return SimpleNamespace(call=lambda _method, _path, _body: (201, payload))
+
+
+def test_a_publish_the_engine_says_no_run_can_take_fails_at_once():
+    finding = {"code": "FUNCTION_BLOCK_NOT_REGISTERED", "path": "/steps/0", "message": "no such block"}
+    with pytest.raises(workflows.WorkflowError, match="FUNCTION_BLOCK_NOT_REGISTERED"):
+        workflows.publish_document(publish_answering({"id": "wf", "findings": [finding]}), {})
+
+
+def test_a_publish_with_only_version_findings_passes():
+    finding = {"code": "FIELD_ADDED", "path": "/steps", "message": "informative"}
+    assert workflows.publish_document(publish_answering({"id": "wf", "findings": [finding]}), {}) == "wf"

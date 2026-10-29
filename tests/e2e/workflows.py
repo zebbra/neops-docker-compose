@@ -48,6 +48,11 @@ FACT_KEY = "e2e_log_run"
 SUCCEEDED = frozenset({"completed_ack"})
 SETTLED = SUCCEEDED | {"failed_safe_ack", "failed_unsafe_ack"}
 RUN_TIMEOUT = 90.0
+# The engine publishes despite these, but a run of the workflow cannot succeed: the harness
+# publishes after its worker registered, so a missing block is a renamed one, not a late one.
+UNRUNNABLE_STEP_FINDINGS = frozenset(
+    {"FUNCTION_BLOCK_NOT_REGISTERED", "STEP_PARAMETERS_UNKNOWN", "STEP_PARAMETERS_INVALID"}
+)
 ONLINE = "ONLINE"
 LINES_TIMEOUT = 30.0
 PAGE_LIMIT = 500
@@ -195,7 +200,15 @@ def publish_document(engine: Engine, document: dict) -> str:
     )
     if status not in (200, 201):
         raise WorkflowError(f"publish answered {status}: {str(payload)[:300]}")
+    unrunnable = [f for f in findings_of(payload) if f.get("code") in UNRUNNABLE_STEP_FINDINGS]
+    if unrunnable:
+        raise WorkflowError(f"no run could take this workflow: {unrunnable}")
     return (payload.get("id") if isinstance(payload, dict) else None) or declared_id(document)
+
+
+def findings_of(payload: object) -> list[dict]:
+    findings = payload.get("findings") if isinstance(payload, dict) else None
+    return [f for f in findings or [] if isinstance(f, dict)]
 
 
 def ensure_group(deployment: Deployment, token: str) -> int:
