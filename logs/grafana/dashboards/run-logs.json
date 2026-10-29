@@ -1,0 +1,577 @@
+{
+  "uid": "neops-run-logs",
+  "title": "Run logs",
+  "description": "Neops workflow run logs from VictoriaLogs, filterable by run, job, step and workflow / function block identity.",
+  "tags": [
+    "neops",
+    "logs"
+  ],
+  "editable": true,
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "refresh": "",
+  "graphTooltip": 0,
+  "links": [
+    {
+      "type": "link",
+      "title": "Explore logs",
+      "icon": "external link",
+      "tooltip": "Open Explore on the VictoriaLogs datasource for this time range",
+      "url": "/explore?schemaVersion=1&orgId=1&panes=%7B%22logs%22%3A%7B%22datasource%22%3A%22victorialogs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22victoriametrics-logs-datasource%22%2C%22uid%22%3A%22victorialogs%22%7D%2C%22editorMode%22%3A%22code%22%2C%22expr%22%3A%22%2A%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D",
+      "targetBlank": false,
+      "keepTime": false,
+      "includeVars": false,
+      "asDropdown": false,
+      "tags": []
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "textbox",
+        "name": "workflow_execution_id",
+        "label": "Run id",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [],
+        "description": "Exact value; leave empty for every line."
+      },
+      {
+        "type": "textbox",
+        "name": "job_id",
+        "label": "Job id",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [],
+        "description": "Exact value; leave empty for every line."
+      },
+      {
+        "type": "textbox",
+        "name": "entity_type",
+        "label": "Entity type",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [],
+        "description": "Exact value; leave empty for every line."
+      },
+      {
+        "type": "textbox",
+        "name": "entity_id",
+        "label": "Entity id",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [],
+        "description": "Exact value; leave empty for every line."
+      },
+      {
+        "type": "query",
+        "name": "service",
+        "label": "Service",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "service",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: service",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "level",
+        "label": "Level",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "level",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: level",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "step_label",
+        "label": "Step",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "step_label",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: step_label",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "workflow_package",
+        "label": "Workflow package",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "workflow_package",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: workflow_package",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "workflow_name",
+        "label": "Workflow name",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "workflow_name",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: workflow_name",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "workflow_version",
+        "label": "Workflow version",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "workflow_version",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: workflow_version",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "function_block_package",
+        "label": "Function block package",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "function_block_package",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: function_block_package",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "function_block_name",
+        "label": "Function block name",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "function_block_name",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: function_block_name",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "function_block_version",
+        "label": "Function block version",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "function_block_version",
+          "query": "*",
+          "limit": 1000
+        },
+        "definition": "field values: function_block_version",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "type": "adhoc",
+        "name": "filters",
+        "label": "Filters",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "logs",
+      "title": "Lines",
+      "description": "Newest first, by time then seq, at most 5000 lines: narrow the time range or the filters to see earlier ones. Each line is prefixed with its service, run, step, workflow, function block and entity.",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "enableInfiniteScrolling": false,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "queryType": "instant",
+          "expr": "(\"service${workflow_execution_id:percentencode}\":* or workflow_execution_id:in($workflow_execution_id)) (\"service${job_id:percentencode}\":* or job_id:in($job_id)) (\"service${entity_type:percentencode}\":* or entity_type:in($entity_type)) (\"service${entity_id:percentencode}\":* or entity_id:in($entity_id)) service:$service level:$level step_label:$step_label workflow_package:$workflow_package workflow_name:$workflow_name workflow_version:$workflow_version function_block_package:$function_block_package function_block_name:$function_block_name function_block_version:$function_block_version | sort by (_time desc, seq desc) limit 5000 | format if (entity_id:*) \"entity=<entity_type>/<entity_id> <_msg>\" as _msg | format if (function_block_name:*) \"fb=<function_block_package>/<function_block_name>:<function_block_version> <_msg>\" as _msg | format if (function_block_name:\"\" function_block_id:*) \"fb=<function_block_id> <_msg>\" as _msg | format if (workflow_name:*) \"wf=<workflow_package>/<workflow_name>:<workflow_version> <_msg>\" as _msg | format if (workflow_name:\"\" workflow_id:*) \"wf=<workflow_id> <_msg>\" as _msg | format if (step_label:*) \"step=<step_label> <_msg>\" as _msg | format if (workflow_execution_id:*) \"run=<workflow_execution_id> <_msg>\" as _msg | format if (service:*) \"[<service>] <_msg>\" as _msg",
+          "maxLines": 5000
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Lines with their context",
+      "description": "The same lines, one column per context field. Click a run id or job id to filter the dashboard by it.",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true,
+            "inspect": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "workflow_execution_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filter by this run",
+                    "url": "/d/neops-run-logs/run-logs?${__url_time_range}&var-workflow_execution_id=${__value.raw}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "job_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filter by this job",
+                    "url": "/d/neops-run-logs/run-logs?${__url_time_range}&var-job_id=${__value.raw}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Line"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "message"
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": false,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "Time",
+                "level",
+                "service",
+                "workflow_execution_id",
+                "step_label",
+                "job_id",
+                "workflow_package",
+                "workflow_name",
+                "workflow_version",
+                "workflow_id",
+                "function_block_package",
+                "function_block_name",
+                "function_block_version",
+                "function_block_id",
+                "entity_type",
+                "entity_id",
+                "Line"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "Time": 0,
+              "level": 1,
+              "service": 2,
+              "workflow_execution_id": 3,
+              "step_label": 4,
+              "job_id": 5,
+              "workflow_package": 6,
+              "workflow_name": 7,
+              "workflow_version": 8,
+              "workflow_id": 9,
+              "function_block_package": 10,
+              "function_block_name": 11,
+              "function_block_version": 12,
+              "function_block_id": 13,
+              "entity_type": 14,
+              "entity_id": 15,
+              "Line": 16
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "queryType": "instant",
+          "expr": "(\"service${workflow_execution_id:percentencode}\":* or workflow_execution_id:in($workflow_execution_id)) (\"service${job_id:percentencode}\":* or job_id:in($job_id)) (\"service${entity_type:percentencode}\":* or entity_type:in($entity_type)) (\"service${entity_id:percentencode}\":* or entity_id:in($entity_id)) service:$service level:$level step_label:$step_label workflow_package:$workflow_package workflow_name:$workflow_name workflow_version:$workflow_version function_block_package:$function_block_package function_block_name:$function_block_name function_block_version:$function_block_version | sort by (_time desc, seq desc) limit 5000",
+          "maxLines": 5000
+        }
+      ]
+    }
+  ]
+}

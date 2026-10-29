@@ -35,8 +35,8 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `elasticsearch` | `elasticsearch:8.19.23` | search index behind the CMS device/interface views |
 | `cms-init` | `neops-core` | one-shot: Django migrations, create the Elasticsearch indices, create the superuser |
 | `cms` | `neops-core` | the CMS web process (network CMS + GraphQL API at `/graphql`) |
-| `cms-worker` | `neops-core` | Celery worker for the 1.0 task path; off unless `COMPOSE_PROFILES=cms-tasks` |
-| `cms-beat` | `neops-core` | Celery beat scheduler for the same; off unless `COMPOSE_PROFILES=cms-tasks` |
+| `cms-worker` | `neops-core` | Celery worker for the 1.0 task path and, on a core that has one, the periodic search index sweep; off unless `COMPOSE_PROFILES=cms-tasks` |
+| `cms-beat` | `neops-core` | Celery beat scheduler for the same: the 1.0 cron jobs and the search index sweep every minute; off unless `COMPOSE_PROFILES=cms-tasks` |
 | `engine` | `neops-workflow-engine` | the 2.0 workflow engine (blackboard REST API) |
 | `monitor` | `neops-monitor-app` | the workflow manager UI (temporary, being folded into the web client) |
 | `worker` | `neops-worker-sdk` | polls the engine's blackboard and drives devices; base function blocks only |
@@ -84,9 +84,7 @@ under `generated/` is hand-edited; a stopped-and-restarted `./neops up` rebuilds
 
 Redis is the only stateful service with no directory of its own, on purpose: it holds Celery's
 work queue and Django's cache, and losing it on a wipe costs at most the tasks in flight.
-Elasticsearch is derived data; it is not part of `./neops backup`. Only its contents have to be
-rebuilt after a restore, with `manage.py elastic_index --populate` over every model (plus
-`--sync-lookups` on a core that has it); naming only `core.Device core.Interface` leaves groups,
-clients and executions out of search. The indices themselves need nothing: `cms-init` creates them on every start, and
-`--create` afterwards fails with `resource_already_exists_exception` (see
+Elasticsearch is derived data; it is not part of `./neops backup`. After a restore, delete the
+indices with `manage.py elastic_index --delete --force` before `./neops up`, which recreates and
+rebuilds them (on an older core, run `--rebuild --force` after it; see
 [Operations](30-operations.md#restore)).

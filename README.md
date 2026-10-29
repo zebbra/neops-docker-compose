@@ -75,7 +75,8 @@ Overlays combine: edit `COMPOSE_FILE` in `.env`; `./neops check` tells you if a 
 loses nothing.
 
 **Upgrades.** `git pull` (or check out the next release tag), then `./neops up`. Downgrading the CMS is
-refused (`Django migrations are not reversible`); restore a backup instead.
+refused; going back needs the database migrated back or a backup restored before
+`./neops up --allow-downgrade` (see `docs/30-operations.md#upgrades`).
 
 **Secrets.** Never edit a password in `.env` by hand once installed; use `./neops rotate`. For the three
 database passwords `check` notices a mismatch and names it, by connecting with the value in `.env` while

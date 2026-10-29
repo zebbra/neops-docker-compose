@@ -1,9 +1,11 @@
+import json
 import os
 import subprocess
 
 import pytest
 
 from neops_compose import preflight, search_index, secrets, workflow
+from neops_compose.compose import DOCKER_MISSING, ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import Env
 from neops_compose.paths import Paths
@@ -61,9 +63,12 @@ class FakeCompose:
     def up(self, *services, **kwargs):
         self.calls.append("up" if not services else "up:" + ",".join(services))
 
+    def exec(self, service, *cmd, env=None):
+        """`elastic_index --help` of a core older than --rebuild-if-stale and --sync-lookups."""
+        return "usage: manage.py elastic_index [--create] [--populate] [--delete] [--rebuild]"
+
     def run(self, *args, capture=False, check=True, env=None):
-        """A core without `elastic_index --schema-hash` rejects the flag."""
-        return subprocess.CompletedProcess(args, 2, stdout="", stderr="unrecognized arguments")
+        return subprocess.CompletedProcess(args, 0)
 
 
 def make_ctx(tmp_path, env_text="COMPOSE_FILE=compose.yaml\n", compose=None) -> Ctx:
@@ -88,7 +93,7 @@ def test_finish_records_the_running_images_before_doctor_runs(tmp_path, monkeypa
 
     monkeypatch.setattr(workflow, "doctor", exploding_doctor)
     with pytest.raises(RuntimeError, match="could not reach"):
-        workflow._finish(ctx, None, False, None)
+        workflow._finish(ctx, None, False)
     assert ctx.state.last_up["images"] == {"cms": "quay.io/zebbra/neops-core:2.1.0"}
     assert ctx.state.last_up["doctor_ok"] is False
     assert State.load(ctx.paths.state_file).last_up["images"]["cms"].endswith("2.1.0")
@@ -98,14 +103,14 @@ def test_finish_records_a_failed_doctor_and_still_blocks(tmp_path, monkeypatch):
     ctx = make_ctx(tmp_path)
     monkeypatch.setattr(workflow, "doctor", lambda *a, **k: False)
     with pytest.raises(workflow.Blocked):
-        workflow._finish(ctx, None, False, None)
+        workflow._finish(ctx, None, False)
     assert State.load(ctx.paths.state_file).last_up["doctor_ok"] is False
 
 
 def test_finish_marks_a_passing_doctor(tmp_path, monkeypatch):
     ctx = make_ctx(tmp_path)
     monkeypatch.setattr(workflow, "doctor", lambda *a, **k: True)
-    workflow._finish(ctx, None, False, None)
+    workflow._finish(ctx, None, False)
     assert State.load(ctx.paths.state_file).last_up["doctor_ok"] is True
 
 
@@ -269,111 +274,286 @@ def test_up_never_reaches_the_images_check_that_needs_a_rendered_generated_tree(
 ES_OLD = "docker.elastic.co/elasticsearch/elasticsearch:8.9.2"
 ES_NEW = "docker.elastic.co/elasticsearch/elasticsearch:8.19.23"
 CORE = "quay.io/zebbra/neops-core:2.1.0"
-CORE_NEXT = "quay.io/zebbra/neops-core:2.2.0"
-SCHEMA_A, SCHEMA_B = "a" * 64, "b" * 64
+CORE_PREV = "quay.io/zebbra/neops-core:2.0.0"
+DECIDING_CORE = "usage: manage.py elastic_index [--rebuild] [--rebuild-if-stale] [--sync-lookups]"
+OLD_CORE_WITH_LOOKUPS = "usage: manage.py elastic_index [--rebuild] [--sync-lookups]"
+ELASTIC_INDEX = ("python", "-u", "manage.py", "elastic_index")
+EXEC = ("exec", "-T", "cms", *ELASTIC_INDEX)
+REBUILD_IF_STALE = (*EXEC, "--rebuild-if-stale")
+REBUILD = (*EXEC, "--rebuild", "--force")
 
 
-def _last_up(cms=CORE, es=ES_OLD, schema=None) -> dict:
+def _last_up(cms=CORE, es=ES_NEW) -> dict:
     state = State()
-    state.record_up({"cms": cms, "elasticsearch": es}, doctor_ok=True, search_schema=schema)
+    state.record_up({"cms": cms, "elasticsearch": es}, doctor_ok=True)
     return state.last_up
 
 
-def test_an_elasticsearch_change_always_makes_the_index_stale():
-    assert search_index.is_stale(_last_up(), {"cms": CORE, "elasticsearch": ES_NEW}, None)
-    assert search_index.is_stale(_last_up(schema=SCHEMA_A), {"cms": CORE, "elasticsearch": ES_NEW}, SCHEMA_A)
+def test_images_moved_when_core_or_elasticsearch_changed():
+    assert search_index.images_moved(_last_up(es=ES_OLD), {"cms": CORE, "elasticsearch": ES_NEW})
+    assert search_index.images_moved(_last_up(cms=CORE_PREV), {"cms": CORE, "elasticsearch": ES_NEW})
+    assert not search_index.images_moved(_last_up(), {"cms": CORE, "elasticsearch": ES_NEW, "engine": "x"})
 
 
-def test_a_core_change_makes_the_index_stale_only_when_its_schema_moved():
-    running = {"cms": CORE_NEXT, "elasticsearch": ES_OLD}
-    assert not search_index.is_stale(_last_up(schema=SCHEMA_A), running, SCHEMA_A)
-    assert search_index.is_stale(_last_up(schema=SCHEMA_A), running, SCHEMA_B)
+def test_a_fresh_install_has_nothing_to_rebuild():
+    assert not search_index.images_moved(None, {"cms": CORE, "elasticsearch": ES_NEW})
 
 
-def test_a_core_without_a_schema_hash_never_makes_the_index_stale():
-    assert not search_index.is_stale(_last_up(), {"cms": CORE_NEXT, "elasticsearch": ES_OLD}, None)
-
-
-def test_the_first_core_with_a_schema_hash_rebuilds_since_nothing_vouches_for_the_old_indices():
-    assert search_index.is_stale(_last_up(), {"cms": CORE_NEXT, "elasticsearch": ES_OLD}, SCHEMA_A)
-    assert not search_index.is_stale(_last_up(), {"cms": CORE, "elasticsearch": ES_OLD}, SCHEMA_A)
-
-
-def test_a_fresh_install_has_no_stale_index():
-    assert not search_index.is_stale(None, {"cms": CORE, "elasticsearch": ES_NEW}, SCHEMA_A)
+INDEX_SYNC_REPORT = ("exec", "-T", "cms", "python", "manage.py", "index_sync_status", "--json")
+REJECTED_REPORT = "neops.enterprise.celery.cron loaded\n" + json.dumps(
+    {"version": 1, "models": {"core.Device": {"rejected": 2}, "core.Interface": {"rejected": 3}}}
+)
 
 
 class IndexedCompose(FakeCompose):
-    """manage.py prints plugin noise before the hash, as the real image does."""
-
-    def __init__(self, help_text: str, schema: str | None = SCHEMA_A):
+    def __init__(
+        self,
+        help_text: str,
+        exits: dict[tuple[str, ...], int] | None = None,
+        help_fails: bool = False,
+        sync_report: str = REJECTED_REPORT,
+        sync_stderr: str = "rows are rejected",
+        sync_raises: BaseException | None = None,
+    ):
         super().__init__(CORE)
         self.help_text = help_text
-        self.schema = schema
-        self.runs: list[tuple[str, ...]] = []
+        self.exits = exits or {}
+        self.help_fails = help_fails
+        self.sync_report = sync_report
+        self.sync_stderr = sync_stderr
+        self.sync_raises = sync_raises
+        self.execs: list[tuple[str, ...]] = []
+        self.runs: list[tuple[tuple[str, ...], bool]] = []
 
     def ps(self):
         return super().ps() + [{"Service": "elasticsearch", "Image": ES_NEW, "State": "running"}]
 
     def exec(self, service, *cmd, env=None):
+        self.execs.append((service, *cmd))
+        if self.help_fails:
+            raise ComposeError("docker compose exec -T cms ... failed (1) service cms is not running")
         return self.help_text
 
     def run(self, *args, capture=False, check=True, env=None):
-        self.runs.append(args)
-        if "--schema-hash" in args:
-            if self.schema is None:
-                return super().run(*args)
-            return subprocess.CompletedProcess(args, 0, stdout=f"schema imported\n{self.schema}\n")
-        return subprocess.CompletedProcess(args, 0)
+        self.runs.append((args, capture))
+        if args == INDEX_SYNC_REPORT:
+            if self.sync_raises:
+                raise self.sync_raises
+            return subprocess.CompletedProcess(args, 1, stdout=self.sync_report, stderr=self.sync_stderr)
+        return subprocess.CompletedProcess(args, self.exits.get(args, 0))
+
+    @property
+    def streamed(self) -> list[tuple[str, ...]]:
+        """Every elastic_index call must stream: a rebuild runs for minutes."""
+        rebuilds = [(args, capture) for args, capture in self.runs if args[: len(EXEC)] == EXEC]
+        assert all(capture is False for _, capture in rebuilds)
+        return [args for args, _ in rebuilds]
 
 
-def _up_after(tmp_path, monkeypatch, compose: IndexedCompose, last_up: dict) -> tuple[Ctx, list[str]]:
-    order: list[str] = []
+def _up_after(
+    tmp_path,
+    monkeypatch,
+    compose: IndexedCompose,
+    last_up: dict | None,
+    order: list[str] | None = None,
+    logged: list[str] | None = None,
+) -> list[str]:
+    order = [] if order is None else order
     _stub_up(monkeypatch, order)
-    rebuild = search_index.rebuild
+    run = compose.run
 
-    def recorded_rebuild(c: Ctx) -> None:
-        order.append("rebuild")
-        rebuild(c)
+    def recorded_run(*args, **kwargs):
+        order.append("run:" + " ".join(args[len(EXEC) :]))
+        return run(*args, **kwargs)
 
-    monkeypatch.setattr(search_index, "rebuild", recorded_rebuild)
-    monkeypatch.setattr(workflow, "_finish", lambda c, *a: order.append(f"finish:{a[-1]}"))
+    monkeypatch.setattr(compose, "run", recorded_run)
     ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
     ctx.state.last_up = last_up
+    if logged is not None:
+        ctx.log = logged.append
     workflow.up(ctx)
-    return ctx, order
+    return order
 
 
-REBUILD = ("exec", "-T", "cms", "python", "manage.py", "elastic_index", "--rebuild", "--force")
+def test_a_deciding_core_is_asked_on_every_up_and_before_the_start_is_recorded(tmp_path, monkeypatch):
+    """Core compares each index's stamp itself, so compose asks even when no image moved."""
+    compose = IndexedCompose(DECIDING_CORE)
+    logged: list[str] = []
+    order = _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+
+    assert compose.execs == [("cms", *ELASTIC_INDEX, "--help")]
+    assert compose.streamed == [REBUILD_IF_STALE]
+    assert order[-2:] == ["run:--rebuild-if-stale", "finish"]
+    assert not any("set aside" in line for line in logged)
+    assert all(args != INDEX_SYNC_REPORT for args, _ in compose.runs)
 
 
-def test_up_rebuilds_after_elasticsearch_moved_and_before_it_records_the_start(tmp_path, monkeypatch):
-    compose = IndexedCompose("--rebuild --sync-lookups")
-    _, order = _up_after(tmp_path, monkeypatch, compose, _last_up(schema=SCHEMA_A))
-
-    assert compose.runs[-1] == (*REBUILD, "--sync-lookups")
-    assert order[-2:] == ["rebuild", f"finish:{SCHEMA_A}"]
-
-
-def test_the_rebuild_leaves_out_lookup_sync_on_a_core_without_it(tmp_path, monkeypatch):
-    compose = IndexedCompose("--rebuild --populate", schema=None)
-    _, order = _up_after(tmp_path, monkeypatch, compose, _last_up())
-
-    assert compose.runs[-1] == REBUILD
-    assert order[-2:] == ["rebuild", "finish:None"]
+def _set_aside(tmp_path, monkeypatch, **compose_options) -> tuple[IndexedCompose, list[str], list[str]]:
+    """Exit 3: core rebuilt everything and set aside what Elasticsearch refused."""
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3}, **compose_options)
+    logged: list[str] = []
+    order = _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+    return compose, order, logged
 
 
-def test_up_leaves_the_index_alone_when_neither_elasticsearch_nor_the_schema_moved(tmp_path, monkeypatch):
-    compose = IndexedCompose("--rebuild --sync-lookups")
-    _, order = _up_after(tmp_path, monkeypatch, compose, _last_up(es=ES_NEW, schema=SCHEMA_A))
+def test_documents_set_aside_by_the_rebuild_warn_and_the_start_is_still_recorded(tmp_path, monkeypatch):
+    compose, order, logged = _set_aside(tmp_path, monkeypatch)
 
-    assert "rebuild" not in order
-    assert not any("--rebuild" in run for run in compose.runs)
+    assert order[-1] == "finish"
+    assert compose.runs[-1] == (INDEX_SYNC_REPORT, True)
+    warning, rows = logged[-2:]
+    assert warning.startswith("WARNING:") and "set them aside" in warning and "output above" in warning
+    assert rows == f"5 rows are now marked rejected; list them with: {search_index.LIST_REJECTED}"
 
 
-def test_the_schema_hash_lands_in_last_up_and_is_omitted_when_core_has_none():
-    assert _last_up(schema=SCHEMA_A)["search_schema"] == SCHEMA_A
-    assert "search_schema" not in _last_up()
+def test_the_warning_is_out_before_the_count_is_asked_for(tmp_path, monkeypatch):
+    """Nothing bounds the count call in time; an operator who gives up on it has the warning."""
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3}, sync_raises=KeyboardInterrupt())
+    logged: list[str] = []
+    with pytest.raises(KeyboardInterrupt):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(), logged=logged)
+    assert logged[-1].startswith("WARNING:")
+
+
+def test_one_row_set_aside_is_counted_in_the_singular(tmp_path, monkeypatch):
+    one = json.dumps({"version": 1, "models": {"core.Device": {"rejected": 1}}})
+    _, _, logged = _set_aside(tmp_path, monkeypatch, sync_report=one)
+
+    assert logged[-1] == f"1 row is now marked rejected; list it with: {search_index.LIST_REJECTED}"
+
+
+@pytest.mark.parametrize(
+    "sync_report",
+    [
+        json.dumps({"version": 2, "models": {"core.Device": {"rejected": 2}}}),
+        json.dumps({"version": 1, "models": {"core.Device": {"rejected": 0}}}),
+        "no report at all",
+    ],
+)
+def test_without_a_count_to_give_the_warning_still_points_at_the_listing(tmp_path, monkeypatch, sync_report):
+    """An unreadable report, or a row already re-indexed since, only costs the number."""
+    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_report=sync_report)
+
+    assert order[-1] == "finish"
+    assert logged[-1] == search_index.LIST_SET_ASIDE
+
+
+def test_a_count_that_cannot_be_asked_for_still_lets_the_start_be_recorded(tmp_path, monkeypatch):
+    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_raises=ComposeError(DOCKER_MISSING))
+
+    assert order[-1] == "finish"
+    assert logged[-2].startswith("WARNING:")
+    assert logged[-1] == search_index.LIST_SET_ASIDE
+
+
+def test_a_core_without_index_sync_status_is_sent_to_the_rebuild_output(tmp_path, monkeypatch):
+    _, order, logged = _set_aside(tmp_path, monkeypatch, sync_stderr="Unknown command: 'index_sync_status'")
+
+    assert order[-1] == "finish"
+    assert "only record" in logged[-1] and "index_sync_status --list" not in logged[-1]
+
+
+def test_a_deciding_core_is_asked_on_a_fresh_install_too(tmp_path, monkeypatch):
+    compose = IndexedCompose(DECIDING_CORE)
+    _up_after(tmp_path, monkeypatch, compose, None)
+
+    assert compose.streamed == [REBUILD_IF_STALE]
+
+
+def test_install_records_the_start_after_documents_were_set_aside(tmp_path, monkeypatch):
+    order: list[str] = []
+    _stub_up(monkeypatch, order)
+    monkeypatch.setattr(workflow, "check_images", lambda c: None)
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 3})
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    ctx.state.last_up = _last_up()
+
+    workflow.install(ctx)
+
+    assert order[-1] == "finish"
+    assert compose.runs[-1] == (INDEX_SYNC_REPORT, True)
+
+
+def test_a_failed_rebuild_stops_up_before_it_records_the_start(tmp_path, monkeypatch):
+    compose = IndexedCompose(DECIDING_CORE, exits={REBUILD_IF_STALE: 1})
+    order: list[str] = []
+    with pytest.raises(ComposeError, match=r"--rebuild-if-stale exited 1.*not recorded"):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(), order)
+    assert order[-1] == "run:--rebuild-if-stale"
+
+
+def test_a_failed_help_stops_up_before_it_records_the_start(tmp_path, monkeypatch):
+    compose = IndexedCompose(DECIDING_CORE, help_fails=True)
+    order: list[str] = []
+    with pytest.raises(ComposeError):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(), order)
+    assert "finish" not in order
+    assert compose.runs == []
+
+
+def test_an_older_core_is_rebuilt_whole_after_elasticsearch_moved(tmp_path, monkeypatch):
+    compose = IndexedCompose(OLD_CORE_WITH_LOOKUPS)
+    order = _up_after(tmp_path, monkeypatch, compose, _last_up(es=ES_OLD))
+
+    assert compose.streamed == [(*REBUILD, "--sync-lookups")]
+    assert order[-2:] == ["run:--rebuild --force --sync-lookups", "finish"]
+
+
+def test_an_older_core_is_rebuilt_whole_after_a_core_upgrade(tmp_path, monkeypatch):
+    """An older core cannot say whether its upgrade changed the indices, so it is rebuilt."""
+    compose = IndexedCompose("usage: manage.py elastic_index [--rebuild]")
+    _up_after(tmp_path, monkeypatch, compose, _last_up(cms=CORE_PREV))
+
+    assert compose.streamed == [REBUILD]
+
+
+def test_an_older_cores_full_rebuild_tolerates_no_exit_but_0(tmp_path, monkeypatch):
+    """Exit 3 means documents set aside only for --rebuild-if-stale; on --rebuild it is a failure."""
+    compose = IndexedCompose(OLD_CORE_WITH_LOOKUPS, exits={(*REBUILD, "--sync-lookups"): 3})
+    order: list[str] = []
+    with pytest.raises(ComposeError, match=r"--rebuild --force --sync-lookups exited 3.*not recorded"):
+        _up_after(tmp_path, monkeypatch, compose, _last_up(es=ES_OLD), order)
+    assert "finish" not in order
+
+
+def test_an_older_core_is_left_alone_while_neither_image_moved(tmp_path, monkeypatch):
+    compose = IndexedCompose(OLD_CORE_WITH_LOOKUPS)
+    _up_after(tmp_path, monkeypatch, compose, _last_up())
+
+    assert compose.runs == []
+
+
+def test_install_on_a_live_deployment_asks_core_as_up_does(tmp_path, monkeypatch):
+    order: list[str] = []
+    _stub_up(monkeypatch, order)
+    monkeypatch.setattr(workflow, "check_images", lambda c: None)
+    compose = IndexedCompose(DECIDING_CORE)
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    ctx.state.last_up = _last_up()
+
+    workflow.install(ctx)
+
+    assert compose.streamed == [REBUILD_IF_STALE]
+    assert order[-1] == "finish"
+
+
+def test_a_state_file_with_the_retired_search_schema_upgrades_and_loses_it(tmp_path, monkeypatch):
+    """state.json written by an earlier release recorded search_schema; it is ignored, then dropped."""
+    compose = IndexedCompose(DECIDING_CORE)
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=compose))
+    old = {"at": "2026-10-27T00:00:00Z", "images": {"cms": CORE, "elasticsearch": ES_NEW}, "doctor_ok": True}
+    ctx.paths.state_file.parent.mkdir(parents=True, exist_ok=True)
+    ctx.paths.state_file.write_text(json.dumps({"schema": 1, "last_up": {**old, "search_schema": "a" * 64}}))
+    ctx.state = State.load(ctx.paths.state_file)
+    finish = workflow._finish
+    _stub_up(monkeypatch, [])
+    monkeypatch.setattr(workflow, "_finish", finish)
+    monkeypatch.setattr(workflow, "doctor", lambda *a, **k: True)
+
+    workflow.up(ctx)
+
+    assert "search_schema" not in State.load(ctx.paths.state_file).last_up
+    assert compose.streamed == [REBUILD_IF_STALE]
 
 
 def _selfsigned_env(host: str) -> str:

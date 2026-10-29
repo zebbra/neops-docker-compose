@@ -42,10 +42,12 @@ rules in `vmalert/rules/`.
 ## Grafana provisioning
 
 Grafana 12 reads classic file provisioning (`apiVersion: 1`). This overlay mounts two things into
-it, file by file, so the logs overlay can add its own datasource next to them:
+it, file by file, so the log datasource `./neops render` writes and the logs overlay's dashboard
+can sit next to them:
 
 - `grafana/provisioning/datasources/prometheus.yml`: the VictoriaMetrics datasource (default).
-- `grafana/provisioning/dashboards/`: the dashboard providers, with the Neops dashboards in
+- `grafana/provisioning/dashboards/dashboards.yml`: the dashboard providers, mounted alone, and
+  the directory around it at `/etc/grafana/dashboards/metrics`, with the Neops dashboards in
   `neops/` (overview, custom metrics, per-task metrics). A `community/` directory next to it is
   picked up too; it is not shipped, and `bash metrics/fetch-dashboards.sh` fills it with the
   community dashboards for VictoriaMetrics, vmalert, Celery, Redis, PostgreSQL, Elasticsearch and

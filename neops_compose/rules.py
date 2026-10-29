@@ -185,6 +185,13 @@ def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     return []
 
 
+def log_backend(env: Env, scenario: Scenario) -> str:
+    """The store the engine writes to: compose.logs.yaml sets its own, else .env names it."""
+    if scenario.logs:
+        return "victorialogs"
+    return env.get(LOG_BACKEND) or "db"
+
+
 def _log_backend_problems(env: Env, scenario: Scenario) -> list[str]:
     """compose.logs.yaml sets the backend and its URL itself; without it they are the
     operator's own store, which the engine refuses to start without a URL for."""
