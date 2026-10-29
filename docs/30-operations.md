@@ -222,6 +222,9 @@ On the first `up`, `./neops check` prints one `WARNING:` that `compose.metrics.y
 `compose.grafana.yaml`; migration `0003` then adds it. The CMS's retention default drops from 90 to
 30 days for installs that never enabled retention; one that had it enabled keeps its horizon
 (`0003` writes it out).
+`./neops render` now writes Grafana's log datasource (`generated/grafana/log-datasources.yml`),
+following the log backend, in place of `logs/grafana/datasources/victorialogs.yml`, which is
+gone; `./neops up` renders it before Grafana starts, so there is nothing to do by hand.
 
 Elasticsearch upgrades its data directory in place on the first start of a newer image and cannot
 open it with an older one afterwards. Going back to a previous release therefore needs

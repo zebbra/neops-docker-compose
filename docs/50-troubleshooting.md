@@ -122,6 +122,19 @@ resumed, and the producer's retry stored the same lines again. Nothing is lost. 
 app and the engine's log routes return each line once; only queries straight against the
 store, such as Grafana's, see the copies.
 
+### `./neops render`: `... is a directory; docker created it`
+
+A plain `docker compose up` on a checkout that `./neops render` has not run on since this
+release makes Docker create the missing bind source `generated/grafana/log-datasources.yml` as a
+root-owned directory, and render then refuses to write over it. Stop Grafana, remove the
+directory, and start again through the CLI, which renders first:
+
+```bash
+./neops compose -- stop grafana
+sudo rm -rf generated/grafana/log-datasources.yml
+./neops up
+```
+
 ### Monitor app blank (same origin)
 
 The disabling logic lives in the web client, not the monitor app. The web client reads
