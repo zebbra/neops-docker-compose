@@ -78,6 +78,13 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 #    while Postgres is still initialising, and `up -d` returns before it is.
 ./neops render
 ./neops compose -- up -d --wait postgres-cms postgres-engine   # + postgres-keycloak, if used
+# Restoring an older release's backup onto databases a newer release has used: drop and
+# recreate both first. --clean drops only what the dump holds, so tables a newer release
+# added (log_outbox) would stay behind and fail the next upgrade's migration.
+./neops compose -- exec -T postgres-cms psql -U neops -d postgres \
+  -c 'DROP DATABASE neops WITH (FORCE)' -c 'CREATE DATABASE neops OWNER neops'
+./neops compose -- exec -T postgres-engine psql -U postgres -d postgres \
+  -c 'DROP DATABASE "neops-workflow" WITH (FORCE)' -c 'CREATE DATABASE "neops-workflow"'
 ./neops compose -- exec -T postgres-cms pg_restore -U neops -d neops --clean --if-exists \
   < backups/<timestamp>/cms.dump
 ./neops compose -- exec -T postgres-engine pg_restore -U postgres -d neops-workflow --clean --if-exists \
