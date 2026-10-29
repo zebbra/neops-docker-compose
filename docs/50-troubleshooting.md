@@ -96,6 +96,16 @@ For any other account, fix it from the CMS admin site at `<NEOPS_CMS_URL>/admin/
 visibility flags cover what they should see, then add the workflow rights with
 `grant_workflow_permissions`. [Install](10-install.md#adding-users) has the command.
 
+### `./neops up` stalls after the CMS database is up, or a search index rebuild never ends
+
+`up` rebuilds the search index inside the running `cms` container (see
+[Upgrades](30-operations.md#upgrades)). Interrupting `up` does not stop that rebuild, and on a
+neops-core with `elastic_index --rebuild-if-stale` the next `up` waits for it at `cms-init`
+without printing anything. `./neops logs cms-init` ends with "creating the search indices (...)",
+and `./neops compose -- top cms` lists the `elastic_index` process. Let it finish, or abort it with
+`./neops restart cms` and run `./neops up` again, which rebuilds what the aborted run left
+unfinished.
+
 ### Elasticsearch and `vm.max_map_count`
 
 Elasticsearch refuses to start below `vm.max_map_count = 262144` (the stock Linux default is
@@ -175,10 +185,11 @@ automation that has been dormant since.
   write that failed first logged the same reason, as `ES sync failed for <row>`, where the change
   was made. A rejected row stays out of the index until it changes again, or until a search index
   rebuild (`elastic_index --rebuild`, see [Operations](30-operations.md#upgrades)) finds
-  Elasticsearch accepting it. While Elasticsearch still refuses the document, the rebuild fails on
-  it, and search stays partial until a rebuild succeeds. Correct the rows' data and save them
-  instead; for a mapping bug, the upgrade rebuild of a release that fixes it indexes them, as long
-  as no other document is refused.
+  Elasticsearch accepting it. While Elasticsearch still refuses the document, a core with
+  `--rebuild-if-stale` sets the row aside again, and an older core's rebuild fails on it, so search
+  stays partial until a rebuild succeeds. Correct the rows' data and save them instead; for a
+  mapping bug, the upgrade rebuild of a release that fixes it indexes them (on an older core, as
+  long as no other document is refused).
 - `rows pending` or `group index writes` longer than the threshold: nothing has swept them. Run
   `resync_unsynced_rows`.
 - `unlocks have waited`: locks that search the index are refused with `INDEX_SYNC_PENDING`

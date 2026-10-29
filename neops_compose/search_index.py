@@ -1,77 +1,121 @@
-"""When the CMS's Elasticsearch indices must be rebuilt, and rebuilding them.
+"""Rebuilding the CMS's Elasticsearch indices once they no longer match neops-core or Elasticsearch.
 
-neops-core prints a hash of every index it manages (`elastic_index --schema-hash`), so a core
-upgrade costs a rebuild only when it changes the indices. Elasticsearch upgrades always cost
-one. A core without the flag reports no schema and is never the reason for a rebuild, except on
-the first start of a core that has one, which no recorded hash can vouch for.
+A neops-core with `elastic_index --rebuild-if-stale` decides that itself: it stamps every index
+with the definition hash and Elasticsearch version it was built for, and rebuilds exactly what is
+stale. An older core cannot say whether its indices changed, so compose rebuilds everything
+whenever the core or the Elasticsearch image moved.
 """
 
 from __future__ import annotations
 
-import re
+import json
 
 from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 
-MANAGE = ("python", "manage.py", "elastic_index")
-SCHEMA_HASH = re.compile(r"[0-9a-f]{64}")
+# -u: Python block-buffers a pipe, and the core image does not set PYTHONUNBUFFERED, so without it
+# a rebuild prints nothing until it exits.
+MANAGE = ("python", "-u", "manage.py", "elastic_index")
+REBUILD_OWNERS = ("cms", "elasticsearch")
+DO_NOT_INTERRUPT = (
+    "this can take minutes. Do not interrupt it: an interrupted rebuild keeps running inside cms"
+)
+SEE_DOCS = "(docs/30-operations.md#upgrades)"
+# --rebuild-if-stale finished the rebuild but set aside documents Elasticsearch refused.
+SET_ASIDE = 3
+INDEX_SYNC_REPORT = ("python", "manage.py", "index_sync_status", "--json")
+INDEX_SYNC_REPORT_VERSION = 1
+LIST_REJECTED = "./neops compose -- exec cms python manage.py index_sync_status --list rejected"
+LIST_SET_ASIDE = f"list the rows set aside with: {LIST_REJECTED}"
+SET_ASIDE_WARNING = (
+    "WARNING: the search index was rebuilt, but Elasticsearch refused some documents and neops-core set "
+    "them aside as rejected. They stay out of search until their data is corrected and the row saved, or "
+    "a later rebuild finds Elasticsearch accepting them. The rebuild's output above gives each reason; "
+    f"keep it {SEE_DOCS}"
+)
 
 
-def read_schema(ctx: Ctx) -> str | None:
-    """None only for a core that rejects the flag. Any other failure raises: recording a start
-    without the hash would leave a schema change undetected for good."""
-    args = ("exec", "-T", "cms", *MANAGE, "--schema-hash")
-    result = ctx.compose.run(*args, capture=True, check=False)
-    if result.returncode != 0:
-        if "unrecognized arguments" in (result.stderr or ""):
-            return None
-        raise ComposeError(
-            f"elastic_index --schema-hash failed ({result.returncode}) {result.stderr.strip()}"
+def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
+    """Runs against the healthy `cms`, not in cms-init: `cms` waits for cms-init, so a rebuild
+    there would take the whole CMS API down, not only search."""
+    usage = ctx.compose.exec("cms", *MANAGE, "--help")
+    if "--rebuild-if-stale" in usage:
+        ctx.log(
+            f"neops-core checks the search index and rebuilds what is stale; {DO_NOT_INTERRUPT}, "
+            f"and the next ./neops up waits for it at cms-init {SEE_DOCS}"
         )
-    return _last_line_hash(result.stdout)
+        if _stream(ctx, "--rebuild-if-stale", tolerated=(SET_ASIDE,)) == SET_ASIDE:
+            _report_set_aside(ctx)
+    elif images_moved(last_up, running):
+        ctx.log(
+            f"neops-core or Elasticsearch changed: rebuilding the search index; {DO_NOT_INTERRUPT}, "
+            "and the next ./neops up would start a second one beside it: let it finish, or stop it "
+            f"with ./neops restart cms, before running ./neops up again {SEE_DOCS}"
+        )
+        lookups = ["--sync-lookups"] if "--sync-lookups" in usage else []
+        _stream(ctx, "--rebuild", "--force", *lookups)
 
 
-def _last_line_hash(stdout: str) -> str:
-    """manage.py prints plugin noise to stdout before the hash, which is always the last line."""
-    lines = stdout.strip().splitlines()
-    last = lines[-1].strip() if lines else ""
-    if not SCHEMA_HASH.fullmatch(last):
-        raise ComposeError(f"elastic_index --schema-hash printed no hash; last line: {last!r}")
-    return last
-
-
-def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> str | None:
-    """Rebuilds a stale index and returns the schema the start is to be recorded with."""
-    schema = read_schema(ctx)
-    if is_stale(last_up, running, schema):
-        rebuild(ctx)
-    return schema
-
-
-def is_stale(last_up: dict | None, running: dict[str, str], schema: str | None) -> bool:
+def images_moved(last_up: dict | None, running: dict[str, str]) -> bool:
     """A fresh install has nothing to rebuild: cms-init has just created the indices empty."""
     if not last_up:
         return False
     before = last_up.get("images", {})
-    if before.get("elasticsearch") != running.get("elasticsearch"):
-        return True
-    if schema is None:
-        return False
-    recorded = last_up.get("search_schema")
-    if recorded is None:
-        return before.get("cms") != running.get("cms")
-    return recorded != schema
+    return any(before.get(service) != running.get(service) for service in REBUILD_OWNERS)
 
 
-def rebuild(ctx: Ctx) -> None:
-    """Streamed, not captured: it runs for minutes, and a failed populate prints its traceback."""
-    flags = ["--rebuild", "--force"]
-    if supports_sync_lookups(ctx):
-        flags.append("--sync-lookups")
-    ctx.log("the search index no longer matches neops-core or Elasticsearch: rebuilding it")
-    ctx.compose.run("exec", "-T", "cms", *MANAGE, *flags)
+def _stream(ctx: Ctx, *flags: str, tolerated: tuple[int, ...] = ()) -> int:
+    """Not captured: a rebuild runs for minutes, and a failed populate prints its traceback."""
+    code = ctx.compose.run("exec", "-T", "cms", *MANAGE, *flags, check=False).returncode
+    if code != 0 and code not in tolerated:
+        raise ComposeError(
+            f"elastic_index {' '.join(flags)} exited {code} (its output is above): the search index rebuild "
+            "failed and this start was not recorded; fix the cause and run ./neops up again"
+        )
+    return code
 
 
-def supports_sync_lookups(ctx: Ctx) -> bool:
-    """Only a neops-core with ES|QL lookup indices has the flag."""
-    return "--sync-lookups" in ctx.compose.exec("cms", *MANAGE, "--help")
+def _report_set_aside(ctx: Ctx) -> None:
+    """The warning goes out before the count is asked for, which nothing bounds in time."""
+    ctx.log(SET_ASIDE_WARNING)
+    ctx.log(_rejected_rows_line(ctx))
+
+
+def _rejected_rows_line(ctx: Ctx) -> str:
+    """index_sync_status exits 1 while rows are rejected, after it has printed its report."""
+    try:
+        result = ctx.compose.run("exec", "-T", "cms", *INDEX_SYNC_REPORT, capture=True, check=False)
+    except ComposeError:
+        return LIST_SET_ASIDE
+    if "Unknown command" in (result.stderr or ""):
+        return (
+            "this neops-core has no index_sync_status command: the rebuild's output above is the only "
+            "record of which documents were set aside"
+        )
+    count = _rejected_count(result.stdout or "")
+    if not count:
+        return LIST_SET_ASIDE
+    if count == 1:
+        return f"1 row is now marked rejected; list it with: {LIST_REJECTED}"
+    return f"{count} rows are now marked rejected; list them with: {LIST_REJECTED}"
+
+
+def _rejected_count(stdout: str) -> int | None:
+    """Only the number is at stake, so a report this release cannot read just leaves it out."""
+    report = _last_json_line(stdout)
+    if report.get("version") != INDEX_SYNC_REPORT_VERSION:
+        return None
+    try:
+        return sum(int(model["rejected"]) for model in report["models"].values())
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _last_json_line(stdout: str) -> dict:
+    """Core prints its report as the last line; Django may print startup lines before it."""
+    lines = [line for line in stdout.splitlines() if line.startswith("{")]
+    try:
+        report = json.loads(lines[-1])
+    except (IndexError, ValueError):
+        return {}
+    return report if isinstance(report, dict) else {}

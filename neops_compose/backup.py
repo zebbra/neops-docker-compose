@@ -15,7 +15,8 @@ from neops_compose.databases import DATABASES
 ARCHIVE_NAME = re.compile(r"\d{8}T\d{6}Z")
 RESTORE_NOTE = (
     "Elasticsearch is not backed up. cms-init creates the indices on every start, so after a "
-    "restore only their contents are missing: manage.py elastic_index --rebuild --force"
+    "restore only their contents are missing: manage.py elastic_index --delete --force, then "
+    "--rebuild-if-stale (on a core without that flag: --rebuild --force)"
 )
 
 
