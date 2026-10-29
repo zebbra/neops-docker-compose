@@ -7,6 +7,7 @@ steps "under load" use, before they rely on it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import statistics
 import time
@@ -67,9 +68,11 @@ OUTBOX_CAP = "2000"
 OUTBOX_CAP_THREADS = 4
 OUTBOX_DROP_MARKER = "dropped its oldest lines"
 # The newest 0.2 worker. SDK 0.2.0-beta.6 and later ask the engine and exit on an incompatible
-# answer; 0.2.0-beta.5 never asks.
-OLD_WORKER_IMAGE = "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.8"
-OLD_ENGINE_IMAGE = "quay.io/zebbra/neops-workflow-engine:0.43.0-beta.4"
+# answer; 0.2.0-beta.5 and 0.1.0 never ask. No 0.2 was released, so this prerelease expires on
+# 2026-11-17: point CHAOS_OLD_WORKER_IMAGE at a worker one minor behind the pinned engine then.
+OLD_WORKER_IMAGE = os.environ.get("CHAOS_OLD_WORKER_IMAGE", "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.8")
+# The last released engine before log_outbox: it boots on the 0.44 schema and never touches the table.
+OLD_ENGINE_IMAGE = os.environ.get("CHAOS_OLD_ENGINE_IMAGE", "quay.io/zebbra/neops-workflow-engine:0.42.1")
 # What neops_worker.py of 0.2.0-beta.8 logs when it refuses to start, lowercased.
 REFUSAL_MARKER = "is not compatible with this engine"
 # An engine built without NEOPS_VERSION reports `develop` and answers every client compatible,
@@ -559,7 +562,7 @@ def step_old_worker(report: Report, stack: Stack) -> None:
 
 
 def step_rollback_during_outage(report: Report, stack: Stack) -> None:
-    """C14: engine 0.43 boots on the 0.44 schema while the store hangs, leaves log_outbox
+    """C14: an older engine boots on the 0.44 schema while the store hangs, leaves log_outbox
     alone, and the re-upgraded engine replays it once the store answers again."""
     workflows.run_once(stack.engine, workflows.prepare(stack.deployment, stack.engine))
     with store_paused(stack):
