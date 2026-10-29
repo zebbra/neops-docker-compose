@@ -614,7 +614,8 @@ def step_slow_store_at_unlock(report: Report, stack: Stack) -> None:
     """C16: core's push to a store that hangs must not hold the unlock up. A run's duration
     covers its unlock, so every run with the store paused stays within the baseline's worst; and
     each of those runs' unlock audit line is read back after the pause, or core logged that it
-    dropped the batch, so the fault reached core."""
+    dropped the batch, so the fault reached core. The store accepts each timed-out attempt once
+    it resumes, so it holds those lines up to three times; the engine's read returns them once."""
     target = workflows.prepare(stack.deployment, stack.engine)
     baseline = max(run.seconds for run in timed_runs(stack, target, SLOW_STORE_RUNS))
     since = utc_now()
@@ -630,12 +631,18 @@ def step_slow_store_at_unlock(report: Report, stack: Stack) -> None:
     )
     recovered, _ = wait_logs(stack, drained, REPLAY_TIMEOUT)
     report.add(recovered, "the store is ok and the outbox drained after the pause")
-    lines = {run.execution_id: workflows.run_lines(stack.engine, run.execution_id)[0] for run in slow}
+    pages = {run.execution_id: workflows.run_lines(stack.engine, run.execution_id) for run in slow}
+    lines = {execution_id: run_lines for execution_id, (run_lines, _) in pages.items()}
     silent = runs_without_audit(lines)
     report.add(
         core_reached_store(lines, stack.logs_since("cms", since)),
         f"core pushed to the paused store: {len(lines) - len(silent)} of {len(lines)} unlock audit lines "
         f"read back after the pause, the rest {silent} in a batch core reports as dropped",
+    )
+    repeated = logrecords.seq_problems((r for _, items in pages.values() for r in items), holes_in=())
+    report.add(
+        not repeated,
+        f"the engine returns each line once though the store took core's retried batches ({repeated})",
     )
 
 
