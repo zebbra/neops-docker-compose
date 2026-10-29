@@ -44,6 +44,16 @@ engine keeps new lines in its database and they appear once the store is back, s
 lost. *The log store refuses the engine* means new lines are not stored until the configuration
 is fixed (see `./neops doctor`). Without this overlay the section is absent.
 
+## Turning logs off
+
+Remove `compose.logs.yaml` from `COMPOSE_FILE` and keep `compose.grafana.yaml`, run `./neops up`,
+then `./neops compose -- up -d --remove-orphans` to remove the `victorialogs` container. The engine
+and the CMS fall back to `NEOPS_LOG_BACKEND=db`, which migration `0003` wrote to `.env` and this
+overlay overrides while it is present, so leave that line as it is. Removing `compose.grafana.yaml`
+as well fails `./neops up` when `compose.override.yaml` still has a `grafana` entry, such as a
+`ports` override: without the overlay that entry is a service with no image. The lines already in
+VictoriaLogs stay in `data/logs/victoria` until you delete it.
+
 ## Grafana
 
 The datasource (`grafana/datasources/victorialogs.yml`) needs the
