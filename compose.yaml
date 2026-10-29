@@ -7,7 +7,7 @@ x-versions:
   # A core without `elastic_index --rebuild-if-stale` costs a full search index rebuild on every
   # core upgrade (neops_compose/search_index.py); the flag came with
   # https://github.com/zebbra/neops-core/pull/2412.
-  core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.2.1-beta.7}}
+  core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.2.1-beta.9}}
   engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.43.0-beta.10}}
   monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.43.0-beta.10}}
   worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.2.0-beta.8}}

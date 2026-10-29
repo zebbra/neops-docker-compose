@@ -178,7 +178,7 @@ automation that has been dormant since.
   `docker compose logs cms cms-worker | grep 'Re-indexing'` shows the sweep's own attempts.
 - `rows rejected by Elasticsearch`: Elasticsearch refused the document itself, usually a value
   its mapping cannot take. That is a data or mapping bug in Neops, not an outage: report it with
-  the log line. `index_sync_status --list rejected` names the rows, and
+  the log line. `index_sync_status --list rejected --limit 0` names the rows, and
   `docker compose logs cms cms-worker | grep 'Elasticsearch rejected the document of'` gives the
   reason (both containers sweep, and their logs rotate after 100 MB). If a manual
   `resync_unsynced_rows` run set the row aside, that line is in the run's output instead; the
