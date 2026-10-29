@@ -188,6 +188,35 @@ def test_lines_outside_a_run_and_a_job_and_core_s_lines_need_no_identity():
     assert logrecords.identity_keys(core) == ()
 
 
+def test_the_engine_line_logged_before_the_workflow_is_resolved_needs_no_identity():
+    creating = {
+        "service": "neops-workflow-engine",
+        "workflow_execution_id": RUN,
+        "message": "Creating workflow execution",
+    }
+    assert logrecords.identity_keys(creating) == ()
+    other = {**creating, "message": "Workflow execution created"}
+    assert logrecords.identity_keys(other) == logrecords.WORKFLOW_IDENTITY
+    from_worker = {**creating, "service": "neops-worker"}
+    assert logrecords.identity_keys(from_worker) == logrecords.WORKFLOW_IDENTITY
+
+
+def test_a_line_about_an_id_that_names_no_run_is_not_judged_with_the_checked_run():
+    records = [
+        {"service": "neops-workflow-engine", "workflow_execution_id": RUN, **WORKFLOW},
+        {"service": "neops-worker", "workflow_execution_id": RUN, **JOB},
+        {"service": "neops-core", "workflow_execution_id": RUN, "message": UNLOCK_AUDIT},
+        {
+            "service": "neops-workflow-engine",
+            "workflow_execution_id": OTHER_RUN,
+            "message": "Abort requested for workflow execution",
+        },
+    ]
+    lines = logrecords.RunLines.count(records, RUN)
+    assert lines.unidentified == ()
+    assert lines.problems() == ["1 lines of another run"]
+
+
 def test_core_s_unlock_audit_line_is_recognised_by_its_shape():
     assert logrecords.is_unlock_audit({"service": "neops-core", "message": UNLOCK_AUDIT})
     assert not logrecords.is_unlock_audit({"service": "neops-worker", "message": UNLOCK_AUDIT})

@@ -144,6 +144,9 @@ def is_unlock_audit(record: Mapping) -> bool:
 
 
 WORKFLOW_IDENTITY = ("workflow_package", "workflow_name", "workflow_version")
+# Logged before the engine resolves the workflow, with the run id only when the client chose it
+# (workflow-execution.controller.ts in the engine).
+UNRESOLVED_RUN_MESSAGE = "Creating workflow execution"
 FUNCTION_BLOCK_IDENTITY = ("function_block_package", "function_block_name", "function_block_version")
 
 
@@ -151,6 +154,8 @@ def identity_keys(record: Mapping) -> tuple[str, ...]:
     """The engine stamps a run's workflow on every engine and worker line of the run, and a
     job's function block on every line of the job, the worker's pushed ones included."""
     if record.get("service") not in (ENGINE_SERVICE, WORKER_SERVICE):
+        return ()
+    if record.get("service") == ENGINE_SERVICE and record.get("message") == UNRESOLVED_RUN_MESSAGE:
         return ()
     if record.get("job_id"):
         return WORKFLOW_IDENTITY + FUNCTION_BLOCK_IDENTITY
@@ -160,6 +165,8 @@ def identity_keys(record: Mapping) -> tuple[str, ...]:
 
 
 def identity_problems(records: Iterable[Mapping]) -> list[str]:
+    """RunLines passes only the checked run's lines, so an engine line about an id that names no
+    run (a 404 on /workflow-execution/:id/...) never reaches this."""
     missing: Counter[tuple[str, str]] = Counter()
     for record in records:
         service = str(record.get("service"))
