@@ -39,6 +39,8 @@ services:
       GF_PLUGINS_PREINSTALL_SYNC: victoriametrics-logs-datasource@0.33.1
     volumes:
       - ./logs/grafana/datasources/victorialogs.yml:/etc/grafana/provisioning/datasources/victorialogs.yml:ro
+      - ./logs/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/logs.yml:ro
+      - ./logs/grafana/dashboards:/etc/grafana/dashboards/logs:ro
     networks: *log-store-networks
     depends_on:
       victorialogs:

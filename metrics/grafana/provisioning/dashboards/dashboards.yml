@@ -4,10 +4,10 @@ providers:
     folder: neops
     type: file
     options:
-      path: /etc/grafana/provisioning/dashboards/neops
+      path: /etc/grafana/dashboards/metrics/neops
 
   - name: community
     folder: Community
     type: file
     options:
-      path: /etc/grafana/provisioning/dashboards/community
+      path: /etc/grafana/dashboards/metrics/community

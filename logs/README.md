@@ -36,11 +36,18 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   **Minimum level** narrows them to warnings and errors. To see one job's lines, open the job
   from **Jobs**: its page adds **Whose lines** (whole run, its step, the job). A line can arrive
   a few seconds after the event; the panel picks it up on its next poll.
-- **Grafana** (`NEOPS_GRAFANA_URL`): **Explore**, datasource **VictoriaLogs**, query
-  `workflow_execution_id:"<run id>"`. Every line carries `service` (`neops-workflow-engine`,
-  `neops-worker`, `neops-core`) and `level`, so `workflow_execution_id:"<run id>" level:error`
-  finds a run's errors. Grafana reads the store directly, without the engine's permission
-  check, so give its accounts only to people who may read every run.
+- **Grafana** (`NEOPS_GRAFANA_URL`): **Dashboards**, folder **neops**, **Run logs**. Paste a run
+  id into **Run id** (or a job id into **Job id**) to see that run's lines, oldest first by time
+  then `seq`; an empty box filters nothing. Each line is prefixed with its service, run, step,
+  workflow and function block, and the table below shows them as columns; click a run or job id
+  there to filter by it. To follow one workflow or function block across runs, leave the ids
+  empty and pick its **Workflow package / name / version** or **Function block package / name /
+  version**; the dropdowns list the values seen in the selected time range, and *All* filters
+  nothing. **Service**, **Level** and **Step** narrow further, e.g. **Level** `error` for a run's
+  errors. The panels show at most 5000 lines: narrow the time range for a busy one. For ad-hoc
+  queries use **Explore** with the **VictoriaLogs** datasource, e.g.
+  `workflow_execution_id:"<run id>" level:error`. Grafana reads the store directly, without the
+  engine's permission check, so give its accounts only to people who may read every run.
 - `./neops logs <service>` shows a container's stdout, not a run's lines. Use it when the stack
   itself misbehaves.
 
@@ -72,4 +79,7 @@ On a host without internet access, put the plugin there before the first start: 
 catalogue on another machine, unpack it into `data/metrics/grafana/plugins/`, and hand the
 directory to uid 472 like the rest of Grafana's data directory.
 
-No log dashboards are provisioned; use Grafana's Explore view with the VictoriaLogs datasource.
+The **Run logs** dashboard (`grafana/dashboards/run-logs.json`, provider
+`grafana/dashboards.yml`) is provisioned read-only; save a copy to change it. An empty id box
+must match lines that lack the field too, which no LogsQL filter on that field does, so the box
+reads `("service<id>":* or <field>:in(<id>))`: with no id, `"service":*` holds on every line.

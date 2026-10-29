@@ -358,6 +358,18 @@ def test_the_log_store_is_reachable_from_the_engine_and_core_only(tmp_path):
         assert set(services[name]["networks"]) == {"default", "logs"}, name
 
 
+@needs_docker
+def test_no_grafana_mount_lands_inside_a_read_only_directory_mount(tmp_path):
+    """Docker cannot create a mountpoint inside a read-only bind mount, so Grafana would not
+    start with both overlays if one mounted a whole provisioning directory the other adds to."""
+    services = merged(tmp_path, "compose.grafana.yaml:compose.metrics.yaml:compose.logs.yaml")["services"]
+    volumes = services["grafana"]["volumes"]
+    read_only = [v["target"] for v in volumes if v.get("read_only")]
+    for v in volumes:
+        nested = [ro for ro in read_only if v["target"].startswith(ro + "/")]
+        assert not nested, f"{v['target']} is inside {nested}"
+
+
 def test_no_compose_file_mounts_the_cms_metrics_route():
     """The CMS's /metrics discloses what the log store does; until the exporter has a network
     the worker cannot reach, compose gives the route no credential, so the CMS never mounts it."""

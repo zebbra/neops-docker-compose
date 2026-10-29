@@ -107,7 +107,10 @@ services:
     volumes:
       - ${NEOPS_DATA_DIR:-./data}/metrics/grafana:/var/lib/grafana
       - ./metrics/grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
-      - ./metrics/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # The provider file alone, not the directory: compose.logs.yaml mounts its own provider next
+      # to it, which a read-only directory mount would refuse.
+      - ./metrics/grafana/provisioning/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/metrics.yml:ro
+      - ./metrics/grafana/provisioning/dashboards:/etc/grafana/dashboards/metrics:ro
     ports:
       - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_GRAFANA_PORT:-3000}:3000"
     healthcheck:
