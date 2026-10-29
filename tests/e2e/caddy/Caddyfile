@@ -34,7 +34,7 @@ https://{$NEOPS_ENGINE_HOST}:{$NEOPS_PROXY_PORT} {
 	tls internal
 	@worker_api {
 		method POST
-		path_regexp (?i)^/(blackboard/job(/.*)?|workers/register/?|workers/[^/]+/(ping|unregister)/?|function-blocks/register/?)$
+		path_regexp (?i)^/(blackboard/job(/.*)?|workers/register/?|workers/[^/]+/(ping|unregister|logs)/?|function-blocks/register/?)$
 	}
 	respond @worker_api 403
 	reverse_proxy {$NEOPS_UPSTREAM_HOST}:{$NEOPS_ENGINE_PORT} {

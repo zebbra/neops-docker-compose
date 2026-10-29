@@ -78,6 +78,13 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 #    while Postgres is still initialising, and `up -d` returns before it is.
 ./neops render
 ./neops compose -- up -d --wait postgres-cms postgres-engine   # + postgres-keycloak, if used
+# Restoring an older release's backup onto databases a newer release has used: drop and
+# recreate both first. --clean drops only what the dump holds, so tables a newer release
+# added (log_outbox) would stay behind and fail the next upgrade's migration.
+./neops compose -- exec -T postgres-cms psql -U neops -d postgres \
+  -c 'DROP DATABASE neops WITH (FORCE)' -c 'CREATE DATABASE neops OWNER neops'
+./neops compose -- exec -T postgres-engine psql -U postgres -d postgres \
+  -c 'DROP DATABASE "neops-workflow" WITH (FORCE)' -c 'CREATE DATABASE "neops-workflow"'
 ./neops compose -- exec -T postgres-cms pg_restore -U neops -d neops --clean --if-exists \
   < backups/<timestamp>/cms.dump
 ./neops compose -- exec -T postgres-engine pg_restore -U postgres -d neops-workflow --clean --if-exists \
@@ -89,6 +96,7 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 # 3. Delete the search indices (not part of the backup), then bring up the rest, which rebuilds them.
 ./neops compose -- up -d --wait elasticsearch redis
 ./neops compose -- run --rm --no-deps cms python manage.py elastic_index --delete --force
+# After checking out an older release to restore its backup, `up` needs --allow-downgrade.
 ./neops up
 # On an older core, whose `elastic_index --help` does not list --rebuild-if-stale, also:
 ./neops compose -- exec cms python manage.py elastic_index --rebuild --force
@@ -146,8 +154,8 @@ long as the command runs. Omit the flag and type the password at the prompt on a
 `migrations/NNNN_<slug>.py`, applied once each, in numeric order, recorded in
 `data/.neops/state.json`. These are deployment-*layout* migrations (moving a data directory,
 renaming an `.env` key, a Postgres major-version upgrade), not the CMS's or the engine's own
-application migrations, which each container still runs on its own boot. There are two today, and
-both run on a fresh install as well as on an upgrade:
+application migrations, which each container still runs on its own boot. There are three today,
+and all run on a fresh install as well as on an upgrade:
 
 - `0001_initial_layout` creates the `data/` tree every bind mount points at, the state directory
   and `secrets/` at mode 0700, and hands `data/elasticsearch` to uid 1000, which the Elasticsearch
@@ -155,9 +163,16 @@ both run on a fresh install as well as on an upgrade:
 - `0002_grafana_data_owner` hands `data/metrics/grafana` to uid 472, which the Grafana image runs
   as and refuses to start without. It runs whether or not you use the metrics overlay, so turning
   that overlay on later needs nothing further.
+- `0003_grafana_and_logs_layout` creates `data/logs/victoria`, adds `compose.grafana.yaml` before
+  `compose.metrics.yaml` in `COMPOSE_FILE`, and moves the CMS's logging keys to their new names:
+  `NEOPS_LOGGER_CLASS` becomes `NEOPS_LOG_BACKEND=db` (an `OptimizedDbLogger` class is kept as
+  `NEOPS_LOG_CLASS`), and `EXECUTION_LOG_RETENTION_ENABLED` becomes `NEOPS_LOG_RETENTION_ENABLED`.
+  The retention horizon is carried over unchanged: `EXECUTION_LOG_RETENTION_DAYS=<n>` becomes
+  `NEOPS_LOG_RETENTION=<n>d`, and an enabled retention without a days value gets `90d`, the old
+  default, rather than the new `30d`.
 
-Both are idempotent, and both change ownership through a throwaway container rather than asking
-you for `sudo`.
+All three are idempotent, and the first two change ownership through a throwaway container rather
+than asking you for `sudo`.
 
 `./neops migrate` applies every pending migration; `--dry-run` prints what would run without
 changing anything; `--fake NAME` records one migration as applied without running it. You are
@@ -176,7 +191,7 @@ git pull        # or: git checkout <next release tag>
 `up` refuses to proceed if the pinned `neops-core` image would move to an *older* tag than the
 last successful `up` recorded: an older core does not undo the migrations a newer one applied, and
 may not run on them. `--allow-downgrade` lifts that refusal and nothing else; on its own it is not
-enough to go back. Going back from neops-core 2.2.1-beta.9, which this release pins, to an earlier
+enough to go back. Going back from neops-core 2.2.1-beta.9 to an earlier
 core is such a case: its migrations 0194 and 0195 add NOT NULL columns without a database default,
 so 2.2.1-beta.7 or 2.2.0 on the migrated database fails to create devices, interfaces, groups,
 clients and executions (`null value in column "elastic_version"`). Migrate the database back with
@@ -275,6 +290,34 @@ On a core with `--rebuild-if-stale`, `--rebuild` stamps the indices it rebuilt, 
 documents aside, so the next `up` leaves them alone; `--rebuild --models` stamps only those
 models' indices, and `--populate` stamps nothing. A hand-run `--rebuild-if-stale` that exits 3
 finished, but set documents aside as described above.
+
+### Upgrading to the release with centralized logging
+
+This release moves the engine to 0.44 and the worker to 0.3, which are compatible only with each
+other: a running 0.2 worker fails every job it reports to a 0.44 engine. Upgrade with no workflow
+run in progress, and stop the worker first:
+
+```bash
+DATA=${NEOPS_DATA_DIR:-./data}                         # the value from .env, if it sets one
+./neops compose -- stop worker
+./neops backup
+cp -a "$DATA/.neops/state.json" "$DATA/.neops/state.json.pre-upgrade"   # the backup does not carry it
+./neops compose -- stop grafana                                         # metrics installs only:
+sudo cp -a "$DATA/metrics/grafana" "$DATA/metrics/grafana.pre-upgrade"  # a stopped Grafana's copy
+git pull
+./neops up                                    # starts the new worker and Grafana again
+```
+
+Grafana moves from 11 to 12 and migrates `metrics/grafana` under the data directory on its first
+start; there is no way back to 11 on the migrated directory, so the copy above, taken while Grafana
+is stopped, is the only rollback for Grafana's state.
+On the first `up`, `./neops check` prints one `WARNING:` that `compose.metrics.yaml` requires
+`compose.grafana.yaml`; migration `0003` then adds it. The CMS's retention default drops from 90 to
+30 days for installs that never enabled retention; one that had it enabled keeps its horizon
+(`0003` writes it out).
+`./neops render` now writes Grafana's log datasource (`generated/grafana/log-datasources.yml`),
+following the log backend, in place of `logs/grafana/datasources/victorialogs.yml`, which is
+gone; `./neops up` renders it before Grafana starts, so there is nothing to do by hand.
 
 Elasticsearch upgrades its data directory in place on the first start of a newer image and cannot
 open it with an older one afterwards. Going back to a previous release therefore needs

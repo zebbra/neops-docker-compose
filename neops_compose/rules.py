@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +57,13 @@ ALL_SECRET_KEYS = (
 GENERATED_MIN_LENGTH = 16
 # The URLs that may carry a path prefix. NEOPS_CMS_URL never does (see _cms_rules).
 PREFIXED_URLS = ("NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL", "NEOPS_KEYCLOAK_URL", "NEOPS_GRAFANA_URL")
+LOG_BACKEND = "NEOPS_LOG_BACKEND"
+LOG_BACKENDS = ("victorialogs", "loki", "db")
+REMOTE_LOG_BACKENDS = ("victorialogs", "loki")
+LOG_RETENTION = "NEOPS_LOG_RETENTION"
+# The one shape the CMS and VictoriaLogs read alike: a bare number means days to the CMS's
+# retention task and months to VictoriaLogs' -retentionPeriod.
+LOG_RETENTION_RE = re.compile(r"^([1-9][0-9]*)([dw])$")
 MONITOR_SAME_ORIGIN_WHY = (
     " (for example /workflows): the web client treats a bare copy of its own origin as no "
     "workflow manager at all, and only relays its session to a monitor on another origin; "
@@ -70,7 +78,7 @@ def generated_secrets(scenario: Scenario) -> tuple[str, ...]:
     keys = BASE_SECRETS
     if scenario.keycloak:
         keys += KEYCLOAK_SECRETS
-    if scenario.metrics:
+    if scenario.runs_grafana:
         keys += (GRAFANA_ADMIN_PASSWORD,)
     return keys
 
@@ -122,11 +130,12 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
         kc, p = _parse_urls(env, ("NEOPS_KEYCLOAK_URL",))
         out += p
         urls.update(kc)
-    if scenario.metrics:
-        if env.is_set("NEOPS_GRAFANA_URL"):
-            gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
-            out += p
-            urls.update(gf)
+    if scenario.runs_grafana and env.is_set("NEOPS_GRAFANA_URL"):
+        gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
+        out += p
+        urls.update(gf)
+    out += _log_backend_problems(env, scenario)
+    out += _log_retention_problems(env)
     if all(key in urls for key in BASE_URLS):
         try:
             ports = _ports(env)
@@ -163,7 +172,45 @@ def _overlay_problems(scenario: Scenario, repo: Path) -> list[str]:
             out.append(f"{OVERLAYS[name]} requires compose.traefik.yaml")
     if scenario.keycloak and not scenario.oidc:
         out.append("compose.keycloak.yaml requires compose.oidc.yaml")
+    if scenario.logs and not scenario.grafana:
+        out.append("compose.logs.yaml requires compose.grafana.yaml")
     return out
+
+
+def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:
+    """What check() reports and still passes: the previous release's .env, before the
+    migration that brings it up to date has had its chance to run."""
+    if scenario.metrics and not scenario.grafana:
+        return ["compose.metrics.yaml requires compose.grafana.yaml; migration 0003 adds it to COMPOSE_FILE"]
+    return []
+
+
+def log_backend(env: Env, scenario: Scenario) -> str:
+    """The store the engine writes to: compose.logs.yaml sets its own, else .env names it."""
+    if scenario.logs:
+        return "victorialogs"
+    return env.get(LOG_BACKEND) or "db"
+
+
+def _log_backend_problems(env: Env, scenario: Scenario) -> list[str]:
+    """compose.logs.yaml sets the backend and its URL itself; without it they are the
+    operator's own store, which the engine refuses to start without a URL for."""
+    backend = env.get(LOG_BACKEND)
+    if backend and backend not in LOG_BACKENDS:
+        return [f"{LOG_BACKEND}={backend} must be one of {', '.join(LOG_BACKENDS)}"]
+    if scenario.logs or backend not in REMOTE_LOG_BACKENDS or env.is_set("NEOPS_LOG_URL"):
+        return []
+    return [f"NEOPS_LOG_URL is required with {LOG_BACKEND}={backend} (the base URL of your log store)"]
+
+
+def _log_retention_problems(env: Env) -> list[str]:
+    value = env.get(LOG_RETENTION)
+    if not value or LOG_RETENTION_RE.match(value):
+        return []
+    return [
+        f"{LOG_RETENTION}={value} must be a number of days or weeks with its unit, for example 30d "
+        "or 4w: a bare number means days to the CMS and months to VictoriaLogs"
+    ]
 
 
 def _required(

@@ -13,7 +13,9 @@ OVERLAYS: dict[str, str] = {
     "tls-acme": "compose.tls-acme.yaml",
     "oidc": "compose.oidc.yaml",
     "keycloak": "compose.keycloak.yaml",
+    "grafana": "compose.grafana.yaml",
     "metrics": "compose.metrics.yaml",
+    "logs": "compose.logs.yaml",
 }
 OVERRIDE_FILE = "compose.override.yaml"
 CMS_TASKS_PROFILE = "cms-tasks"
@@ -67,8 +69,23 @@ class Scenario:
         return self.has("keycloak")
 
     @property
+    def grafana(self) -> bool:
+        return self.has("grafana")
+
+    @property
     def metrics(self) -> bool:
         return self.has("metrics")
+
+    @property
+    def logs(self) -> bool:
+        return self.has("logs")
+
+    @property
+    def runs_grafana(self) -> bool:
+        """compose.metrics.yaml still carries a complete grafana for one release, so a metrics
+        .env that migration 0003 has not reached yet runs Grafana too. Drop the metrics half
+        together with that duplicate block."""
+        return self.grafana or self.metrics
 
     @property
     def cms_tasks(self) -> bool:

@@ -41,7 +41,7 @@ CORE_PREFIXES: tuple[str, ...] = (
 ENGINE_PUBLIC_WORKER_ROUTES: tuple[str, ...] = (
     "blackboard/job(/.*)?",
     "workers/register",
-    "workers/[^/]+/(ping|unregister)",
+    "workers/[^/]+/(ping|unregister|logs)",
     "function-blocks/register",
 )
 

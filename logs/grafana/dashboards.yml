@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: neops-logs
+    folder: neops
+    type: file
+    options:
+      path: /etc/grafana/dashboards/logs

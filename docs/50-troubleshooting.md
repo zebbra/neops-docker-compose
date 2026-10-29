@@ -21,8 +21,10 @@ below are keyed to those probe names and the messages `check` prints.
 | `engine health` | `<NEOPS_ENGINE_URL>/health` did not return 200: see *engine refuses to start* below |
 | `monitor config` | `<NEOPS_WORKFLOWS_URL>/config.js` did not embed the engine URL: see *monitor blank* below |
 | `keycloak realm` | the `neops` realm's OIDC discovery document did not come back (Keycloak overlay only) |
-| `grafana` | `/api/health` did not return 200 (metrics overlay only, and only when `NEOPS_GRAFANA_URL` is set) |
+| `grafana` | `/api/health` did not return 200 (Grafana overlay only, and only when `NEOPS_GRAFANA_URL` is set). With the logs overlay, a Grafana that never becomes healthy on its first start usually could not download its VictoriaLogs plugin: see `logs/README.md` |
 | `engine worker API denied` | a `POST /blackboard/job` from outside reached the engine instead of being refused: see [External proxy](40-external-proxy.md). Behind the bundled Traefik this fails `doctor`, because the deny rule is one the CLI rendered and it is not working. In external-proxy mode it is a `WARN` that does not fail `doctor`, because the deny belongs to a proxy the CLI knows nothing about and which may not be routing yet. The route must never be reachable either way, so a warning still standing once your proxy is up is a real problem. With the engine URL and `NEOPS_BIND_ADDRESS` both on loopback (`examples/local.env`) the probe is `skipped` and `OK`: there is no proxy and no network path |
+| `engine worker logs denied` | a `POST /workers/00000000-0000-0000-0000-000000000000/logs` from outside reached the engine instead of being refused; same severity rules as the probe above. Your proxy's deny list lacks `/workers/*/logs`: see [External proxy](40-external-proxy.md) |
+| `engine log store` (logs overlay only) | the engine's `GET /version` says it has no queryable log store, or that the store rejects its pushes (`misconfigured`, with the status and the store's answer). A `WARN` saying the store is unreachable does not fail `doctor`: the engine spools lines to its database and delivers them once VictoriaLogs answers again; check `./neops logs victorialogs` |
 | `cms login path` | a deliberately bad login answered 5xx instead of 4xx, or answered `internal error`, which is what core says while its database is unreachable: see *500 on login* below, and check `postgres-cms`. Under OIDC, where core refuses password login before it reaches its rate limiter or its database, doctor sends an OIDC code exchange with a well-formed code that was never issued instead, and expects `Invalid authorization code`; any other answer names what came back. That makes core log `exchangeOidcCode: code not found` on every OIDC doctor run, so do not alert on it. `rate limit, 20/min` behind an external proxy without `RATELIMIT_IP_META_KEY` means every user shares the proxy's address and its one bucket of code exchanges |
 | `worker registered` | asking the engine for `/workers` as the admin user did not find an `ONLINE` worker: check the `worker` container's logs. A 403 from the engine still passes the probe, since the request itself was accepted. Without OIDC doctor gets its token by logging in with `NEOPS_ADMIN_PASSWORD`, and `the CMS cannot reach its database` means the login never got far enough to ask, so start with `postgres-cms`. Under OIDC, where password login is disabled, the CMS issues a short-lived token for `NEOPS_ADMIN_USER` through `docker compose exec cms`, and `could not mint an admin token` gives the reason: `is deactivated` means reactivate that user in the CMS admin site (core 2.2 also refuses the engine's static API key while it is); anything else, start with `docker compose logs cms` |
 | `X-Real-IP trusted from client` (`--probe-ratelimit` only) | every request with a forged `X-Real-IP` was accepted as a distinct client (six logins, or under OIDC twenty-one `exchangeOidcCode` calls): your proxy is not overwriting the header, see [External proxy](40-external-proxy.md) |
@@ -121,6 +123,27 @@ Persist it (the CLI's message includes this) so it survives a reboot:
 
 ```bash
 echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-neops.conf
+```
+
+### A log line appears twice in Grafana
+
+After VictoriaLogs (or Loki) hung rather than went down, Grafana can show some lines two or
+three times. A push that timed out against the hung store was still accepted once it
+resumed, and the producer's retry stored the same lines again. Nothing is lost. The monitor
+app and the engine's log routes return each line once; only queries straight against the
+store, such as Grafana's, see the copies.
+
+### `./neops render`: `... is a directory; docker created it`
+
+A plain `docker compose up` on a checkout that `./neops render` has not run on since this
+release makes Docker create the missing bind source `generated/grafana/log-datasources.yml` as a
+root-owned directory, and render then refuses to write over it. Stop Grafana, remove the
+directory, and start again through the CLI, which renders first:
+
+```bash
+./neops compose -- stop grafana
+sudo rm -rf generated/grafana/log-datasources.yml
+./neops up
 ```
 
 ### Monitor app blank (same origin)

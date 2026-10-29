@@ -1,5 +1,5 @@
-# Overlay: VictoriaMetrics + vmalert + Grafana + exporters, ported from the 1.0 layout.
-# Grafana is the only service routed publicly, and only when NEOPS_GRAFANA_URL is set.
+# Overlay: VictoriaMetrics + vmalert + exporters, ported from the 1.0 layout, plus Grafana's
+# metrics datasource and dashboards. Requires compose.grafana.yaml, listed before this file.
 x-logging: &logging
   driver: json-file
   options:
@@ -93,25 +93,39 @@ services:
     logging: *logging
     restart: unless-stopped
 
+  # Everything down to `depends_on` repeats compose.grafana.yaml: the previous release's .env
+  # names this file without that one, and check() loads that file list before migration 0003
+  # can add it, so this block must start Grafana on its own. Compose merges the two copies.
+  # Remove the repeated part in the release after the one that introduced compose.grafana.yaml.
   grafana:
-    image: grafana/grafana:11.5.2
+    image: grafana/grafana:12.4.9
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${NEOPS_GRAFANA_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: ${NEOPS_GRAFANA_URL:-http://localhost:3000}
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # Read by the log datasource ./neops render writes for a Loki of your own.
+      NEOPS_LOG_URL: ${NEOPS_LOG_URL:-}
+      NEOPS_LOG_USERNAME: ${NEOPS_LOG_USERNAME:-}
+      NEOPS_LOG_PASSWORD: ${NEOPS_LOG_PASSWORD:-}
+      NEOPS_LOG_TENANT: ${NEOPS_LOG_TENANT:-}
+    env_file:
+      # Which Grafana apps the log backend needs, from ./neops render. Optional so that an
+      # existing deployment's `up` can load this config before render has produced the file.
+      - path: ./generated/grafana.env
+        required: false
     volumes:
-      - ./metrics/grafana/provisioning:/etc/grafana/provisioning:ro
-      # Must be owned by uid 472; ./neops migrate (0002_grafana_data_owner) takes care of it.
       - ${NEOPS_DATA_DIR:-./data}/metrics/grafana:/var/lib/grafana
+      # The datasource of the store the engine writes to, from ./neops render (none for `db`).
+      - ./generated/grafana/log-datasources.yml:/etc/grafana/provisioning/datasources/neops-logs.yml:ro
+      - ./metrics/grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      # The provider file alone, not the directory: compose.logs.yaml mounts its own provider next
+      # to it, which a read-only directory mount would refuse.
+      - ./metrics/grafana/provisioning/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/metrics.yml:ro
+      - ./metrics/grafana/provisioning/dashboards:/etc/grafana/dashboards/metrics:ro
     ports:
       - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_GRAFANA_PORT:-3000}:3000"
-    depends_on:
-      victoriametrics:
-        condition: service_healthy
     healthcheck:
-      # First boot runs the whole sqlite migration set and installs plugins before it listens,
-      # so without this `up --wait` returns early and doctor probes a closed port.
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
@@ -119,3 +133,6 @@ services:
       start_period: 120s
     logging: *logging
     restart: unless-stopped
+    depends_on:
+      victoriametrics:
+        condition: service_healthy

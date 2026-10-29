@@ -78,6 +78,7 @@ class Paths:
             self.data / "traefik" / "acme",
             self.data / "metrics" / "victoria",
             self.data / "metrics" / "grafana",
+            self.data / "logs" / "victoria",
             self.secrets,
             self.jwt_dir,
             self.tls_dir,

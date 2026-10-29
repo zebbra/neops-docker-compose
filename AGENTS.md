@@ -41,10 +41,10 @@ One command, `./neops up`, is the whole design in order:
 ```mermaid
 flowchart TD
     envfile[".env — operator-owned"] --> ctx["Ctx.build: Env, Scenario, Paths, State, Compose"]
-    ctx --> check["check(): rules.problems + preflight.run_checks"]
-    check --> guard["downgrade guard: docker compose config --images"]
-    guard --> mig["migrate_all(): migrations/NNNN_*.py → data/.neops/state.json"]
-    mig --> keys["keys(): JWT keypair, Keycloak client secret, self-signed TLS"]
+    ctx --> check["check(): rules.problems + preflight.run_checks, rules.warnings logged"]
+    check --> mig["migrate_all(): migrations/NNNN_*.py → data/.neops/state.json"]
+    mig --> guard["downgrade guard: docker compose config --images"]
+    guard --> keys["keys(): JWT keypair, Keycloak client secret, self-signed TLS"]
     keys --> render["render(): .env + scenario → generated/"]
     render --> start["compose pull, compose up --wait"]
     start --> doctor["doctor(): probes through the public URLs"]
@@ -58,7 +58,8 @@ flowchart TD
   which proxy, TLS mode, IdP and extras this deployment has. Nearly everything downstream branches
   on the `Scenario`, not on raw env keys.
 - **`rules.py`** holds pure `.env`-validation knowledge (required keys, secret strength, legal
-  overlay combinations, URL/port/path rules); **`preflight.py`** adds host-level checks (kernel
+  overlay combinations, URL/port/path rules): `problems()` fails `check`, `warnings()` is only
+  logged as `WARNING:` lines; **`preflight.py`** adds host-level checks (kernel
   settings, disk, ports, images) and formats the report; **`doctor.py`** probes a *running* stack
   through its public URLs. Three different moments — do not merge them.
 - **`urls.py` / `routes.py` / `traefik_model.py`** are the routing model: `PublicUrl`, where each
@@ -100,10 +101,10 @@ key the old one did not have, either give it a default in code or set it in a mi
 
 ### 2. Everything that runs *before* migrations must tolerate an un-migrated installation
 
-Look at the order in the diagram: `check()` and the downgrade guard run **before** `migrate_all()`,
-and the downgrade guard runs `docker compose config`. So on the very first `./neops up` after a
-`git pull`, the new release's validation and the new release's Compose files are applied to the
-**old** release's `.env` and the **old** release's `generated/`. Anything the new release requires
+Look at the order in the diagram: `check()` runs **before** `migrate_all()`, and it loads the
+Compose project (`docker compose ps`, and `docker compose exec` for a running database). So on the
+very first `./neops up` after a `git pull`, the new release's validation and the new release's
+Compose files are applied to the **old** release's `.env` and the **old** release's `generated/`. Anything the new release requires
 but the previous one never produced fails there, before the migration that would have fixed it ever
 runs. A migration cannot dig you out of this.
 
@@ -122,7 +123,13 @@ Concretely, in new code:
   therefore breaks every existing installation that used it; keep the old name working.
 - **A new rule in `rules.py` or `preflight.py` must not FAIL on the previous release's `.env`** when
   a migration is what brings that `.env` up to date. Preflight runs first; it would refuse the
-  upgrade before the migration could run. Warn, or accept both shapes.
+  upgrade before the migration could run. Put it in `rules.warnings()`, or accept both shapes.
+- **A migration that rewrites `COMPOSE_FILE` must leave the previous release's file list loadable
+  by the new checkout.** `check()` loads it before the migration runs, and a project Compose
+  refuses (a service left without an image, a missing file) does not fail loudly there: preflight
+  swallows the `docker compose ps` error, sees no running stack, and then FAILs on its own ports as
+  "in use". `compose.metrics.yaml` carries a complete `grafana` for one release for exactly this
+  reason, and `test_compose_files.py` checks that its copy matches `compose.grafana.yaml`'s.
 - **A migration that rewrites `COMPOSE_FILE` is not seen by the rest of that same run**: `Ctx`
   derives `Scenario` once, at build time, so `keys()` and `render()` still use the pre-migration
   scenario (Docker itself re-reads `.env`, so only the Python side is stale).

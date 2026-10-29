@@ -17,6 +17,9 @@ imports and function definitions; put all work inside `apply(ctx)`.
 
 `ctx.env.rename(old, new)` raises `MissingEnv` when `old` is absent and `ValueError` when `new`
 already exists, so a migration that renames a key must guard it with `if ctx.env.is_set(old):`
-to stay re-runnable after a crash part-way through.
+to stay re-runnable after a crash part-way through. A key on exactly one `KEY=value` line is
+renamed in place. A duplicated or quoted key, or one with whitespace before `=`, has the value
+compose reads written back through `set`, which re-quotes it: `$`, `\` and quotes can then read
+differently. Which path runs depends on the operator's `.env`, so do not use rename for a secret.
 
 Do not edit a migration after it has shipped; add a new one.

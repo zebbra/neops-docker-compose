@@ -1,0 +1,43 @@
+# Test overlay for tests/e2e/examples/loki.env: Loki as the log store, on its own `logs` network
+# that the worker never joins, the way compose.logs.yaml runs VictoriaLogs. Never named in
+# COMPOSE_FILE, where `check` refuses an unshipped file: run_scenario.py merges it into the
+# clone's compose.override.yaml, so its relative paths resolve from the repository root.
+# NEOPS_LOG_BACKEND and NEOPS_LOG_URL come from the scenario's .env, the path an operator with
+# a Loki of their own takes; compose.yaml hands them to the engine and every CMS service.
+# Such a Loki is up before the engine starts, so the engine waits for /ready here: Loki answers
+# 503 for its first seconds, which would trip the engine's boot probe and fail the readiness check.
+networks:
+  logs: {}
+
+services:
+  loki:
+    image: grafana/loki:3.5.8
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./tests/e2e/loki/config.yaml:/etc/loki/config.yaml:ro
+    networks:
+      - logs
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "/dev/null", "http://localhost:3100/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    restart: unless-stopped
+
+  engine:
+    networks: [default, logs]
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  cms-init:
+    networks: [default, logs]
+
+  cms:
+    networks: [default, logs]
+
+  cms-worker:
+    networks: [default, logs]
+
+  cms-beat:
+    networks: [default, logs]

@@ -16,7 +16,7 @@ from neops_compose.doctor import run as run_doctor
 from neops_compose.ownership import chown_via_container
 from neops_compose.render import render
 from neops_compose.rotate import public_hosts
-from neops_compose.rules import DISABLE_SECURITY_CHECKS
+from neops_compose.rules import DISABLE_SECURITY_CHECKS, warnings
 
 CMS_FIRST = ("postgres-cms", "redis", "elasticsearch", "cms-init", "cms")
 WORKER_GRACE_SECONDS = 90  # the worker registers each of its function blocks with one request after a start
@@ -69,6 +69,8 @@ def check(ctx: Ctx, check_images: bool = True) -> None:
     ctx.log(preflight.format_report(checks))
     if ctx.env.flag(DISABLE_SECURITY_CHECKS):
         ctx.log(f"WARNING: {DISABLE_SECURITY_CHECKS} is on: .env secrets are not checked for strength")
+    for warning in warnings(ctx.env, ctx.scenario, ctx.repo):
+        ctx.log(f"WARNING: {warning}")
     if not preflight.all_ok(checks):
         raise Blocked("preflight failed; fix the FAIL lines above")
     if ctx.state.written_by_newer_cli():
@@ -185,8 +187,8 @@ def _guard_downgrade(ctx: Ctx, allow_downgrade: bool) -> None:
 
 def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, insecure: bool = False) -> None:
     check(ctx, check_images=False)
-    _guard_downgrade(ctx, allow_downgrade)
     migrate_all(ctx)
+    _guard_downgrade(ctx, allow_downgrade)
     keys(ctx)
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()

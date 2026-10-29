@@ -1,6 +1,6 @@
 ---
 title: Scenarios
-description: The overlay model, routing modes, TLS modes, OIDC and the metrics overlay.
+description: The overlay model, routing modes, TLS modes, OIDC, and the Grafana, metrics and logs overlays.
 tags: [concept, reference]
 ---
 
@@ -23,7 +23,9 @@ COMPOSE_FILE=compose.yaml:compose.traefik.yaml:compose.tls-files.yaml
 | TLS from Let's Encrypt | `compose.tls-acme.yaml` | HTTP-01 certificates (needs Traefik) |
 | OIDC | `compose.oidc.yaml` | login through an external identity provider; disables local password login |
 | Keycloak | `compose.keycloak.yaml` | a bundled Keycloak as that identity provider (needs OIDC) |
-| metrics | `compose.metrics.yaml` | VictoriaMetrics, vmalert, Grafana, and per-service exporters |
+| Grafana | `compose.grafana.yaml` | Grafana, on loopback unless routed (needed by metrics and logs) |
+| metrics | `compose.metrics.yaml` | VictoriaMetrics, vmalert, per-service exporters, their Grafana datasource and dashboards (needs Grafana) |
+| logs | `compose.logs.yaml` | VictoriaLogs as the log store of the engine and the CMS, and its Grafana datasource (needs Grafana) |
 
 The Celery worker and beat containers of core's 1.0 task path are not part of any scenario by
 default: a 2.0 deployment runs its automation through the engine and the worker SDK, and the CMS
@@ -253,13 +255,37 @@ that, use the Keycloak admin console at `NEOPS_KEYCLOAK_URL` (user `admin`, pass
 `NEOPS_KEYCLOAK_ADMIN_PASSWORD`): create a user, then assign it roles on the `neops-auth`
 client. Editing the realm export in the repo has no effect on a running deployment.
 
+## Grafana
+
+`compose.grafana.yaml` adds Grafana 12 (`data/metrics/grafana`), and both the metrics and the logs
+overlay require it: list it before them in `COMPOSE_FILE`. Grafana is always published on
+`127.0.0.1:${NEOPS_GRAFANA_PORT:-3000}` (or `NEOPS_BIND_ADDRESS`), in every scenario, the same way
+Keycloak's admin port always is. It is routed publicly on top of that, through Traefik, only when
+`NEOPS_GRAFANA_URL` is set. Leave `NEOPS_GRAFANA_URL` unset to keep Grafana loopback-only. Set
+`NEOPS_GRAFANA_ADMIN_PASSWORD` either way; Grafana needs it to start.
+
 ## Metrics
 
 `compose.metrics.yaml` adds VictoriaMetrics (30-day retention, `data/metrics/victoria`), vmalert
 with the rule set in `metrics/vmalert/rules`, per-service exporters (`redis`, `postgres-cms`,
-`postgres-engine`, Celery, Elasticsearch), and Grafana (`data/metrics/grafana`, provisioning from
-`metrics/grafana`). Grafana is always published on `127.0.0.1:${NEOPS_GRAFANA_PORT:-3000}` (or
-`NEOPS_BIND_ADDRESS`), in every scenario, the same way Keycloak's admin port always is. It is
-routed publicly on top of that, through Traefik, only when `NEOPS_GRAFANA_URL` is set. Leave
-`NEOPS_GRAFANA_URL` unset to keep Grafana loopback-only. Set `NEOPS_GRAFANA_ADMIN_PASSWORD` either
-way; Grafana needs it to start.
+`postgres-engine`, Celery, Elasticsearch), and Grafana's VictoriaMetrics datasource and dashboards
+from `metrics/grafana`. An `.env` from before `compose.grafana.yaml` existed names only this file;
+`./neops check` warns about it and migration `0003` adds `compose.grafana.yaml` on the next
+`./neops up`. See `metrics/README.md`.
+
+## Logs
+
+`compose.logs.yaml` adds VictoriaLogs (`data/logs/victoria`) and points the engine and the CMS at
+it, so the engine's log routes and the monitor's log panel show the lines of a workflow run, its
+steps and its jobs, the CMS's included. It keeps lines for `NEOPS_LOG_RETENTION` (default `30d`,
+written `<n>d` or `<n>w`). VictoriaLogs is on a network of its own that the worker never joins,
+and publishes no port. Grafana gets a VictoriaLogs datasource whose plugin it downloads on its first
+start, which therefore needs outbound internet. It does not require the metrics overlay. See
+`logs/README.md`, which also says where to read a run's logs.
+
+Without this overlay the engine stores no logs (its log routes answer `503`) and the CMS keeps its
+task logs in its database (`NEOPS_LOG_BACKEND=db`). To use a VictoriaLogs or Loki you run yourself
+instead, set `NEOPS_LOG_BACKEND` and `NEOPS_LOG_URL` (and, as needed, `NEOPS_LOG_USERNAME`,
+`NEOPS_LOG_PASSWORD`, `NEOPS_LOG_TENANT`) in `.env`; it must be reachable from the engine and the CMS
+and must not be reachable from the worker. With `compose.grafana.yaml`, a Loki of your own also
+becomes a Grafana datasource, with Logs Drilldown; see `logs/README.md`.

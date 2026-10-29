@@ -11,30 +11,46 @@ deployment works. Exit code 0 only when every assertion held. See tests/e2e/READ
 from __future__ import annotations
 
 import argparse
+import functools
 import json
+import os
 import re
 import secrets
 import shutil
 import subprocess
 import sys
 import time
+import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
 
+import yaml
+
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import inside  # noqa: E402
+import logrecords  # noqa: E402
+import upgrade_hook  # noqa: E402
+import workflows  # noqa: E402
+from guards import SHELL_COMPOSE_KEYS, shell_compose_refusal  # noqa: E402,F401
+
+from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from neops_compose.backup import ARCHIVE_NAME  # noqa: E402
 from neops_compose.compose import Compose  # noqa: E402
-from neops_compose.doctor import NAME_WIDTH, Http, login  # noqa: E402
+from neops_compose.doctor import DENY_LOG_PROBE, DENY_PROBE, NAME_WIDTH, Http, login  # noqa: E402
+from neops_compose.env import Env  # noqa: E402
+from neops_compose.rules import LOG_BACKEND  # noqa: E402
 from neops_compose.scenario import OVERRIDE_FILE, Scenario  # noqa: E402
+from neops_compose.state import State  # noqa: E402
 from neops_compose.urls import MonitorPlacement, PublicUrl, monitor_placement  # noqa: E402
 
 EXAMPLE_DOMAIN = "neops.example.com"
 TEST_DOMAIN = "neops.localhost"
 CONNECT = "127.0.0.1"
-DENY_PROBE = "engine worker API denied"
 URL_KEYS = (
     "NEOPS_WEB_URL",
     "NEOPS_CMS_URL",
@@ -64,9 +80,7 @@ METRICS_SERVICES = (
 )
 SCRAPE_JOBS = frozenset({"celery", "elasticsearch", "postgres", "redis", "victoriametrics", "vmalert"})
 GROUP_NAME = "e2e-admin-writes"
-GROUP_UPSERT = "mutation($n:String!){deviceGroupUpsert(name:$n,title:$n){deviceGroup{id name}}}"
-GROUP_READ = "query($n:String!){groups(name:$n){results{id name}}}"
-GROUP_DELETE = "mutation($id:ID!){deviceGroupDelete(id:$id){deviceGroup{id}}}"
+SURVIVOR_GROUP = "e2e-upgrade-survivor"
 CMS_TASK_SERVICES = ("cms-worker", "cms-beat")
 LEGACY_DEVICE = "e2e-legacy-task"
 LEGACY_DEVICE_IP = "192.0.2.10"
@@ -101,7 +115,18 @@ LEGACY_PLATFORM = "Linux Generic"
 PLATFORM_READ = "query($n:String!){platforms(name:$n){results{id}}}"
 RATE_LIMIT_WINDOW = 65.0
 VM_TARGETS_URL = "http://127.0.0.1:8428/api/v1/targets"
-OVERRIDE_YAML = """# Written by tests/e2e/run_scenario.py: this dev box runs above Elasticsearch's
+GRAFANA_DATASOURCES = "http://127.0.0.1:3000/api/datasources"
+GRAFANA_DASHBOARDS = "http://127.0.0.1:3000/api/search?type=dash-db"
+# An install that enabled the CMS's retention and never set its days: the case migration 0003
+# must carry over as 90d, the old default, rather than let it fall to the new 30d.
+UPGRADE_ENV = {"EXECUTION_LOG_RETENTION_ENABLED": "True"}
+HARNESS_OVERLAYS = "E2E_OVERLAYS"
+E2E_EXAMPLES = REPO / "tests" / "e2e" / "examples"
+GRAFANA_AND_LOGS_MIGRATION = "0003_grafana_and_logs_layout"
+NOT_CONFIGURED = "LOGS_NOT_CONFIGURED"
+E2E_PROJECT_PREFIX = "neops-e2e-"
+OVERRIDE_MARKER = "# Written by tests/e2e/run_scenario.py"
+OVERRIDE_YAML = f"""{OVERRIDE_MARKER}: this dev box runs above Elasticsearch's
 # 95% flood stage, which would put every index into read-only mode.
 services:
   elasticsearch:
@@ -147,6 +172,14 @@ class Ports:
     @property
     def expose_monitor(self) -> int:
         return self.base + 31
+
+
+@dataclass(frozen=True)
+class UpgradePlan:
+    ref: str
+    work: Path
+    override: str
+    hold_job: bool
 
 
 class LoginClock:
@@ -239,7 +272,7 @@ def apply_traefik_ports(values: dict[str, str], scenario: Scenario, ports: Ports
         values["NEOPS_WORKFLOWS_URL"] = _at(values["NEOPS_WORKFLOWS_URL"], scheme, ports.monitor)
     if scenario.keycloak:
         values["NEOPS_KEYCLOAK_PORT"] = str(ports.keycloak)
-    if scenario.metrics:
+    if scenario.runs_grafana:
         values["NEOPS_GRAFANA_PORT"] = str(ports.grafana)
 
 
@@ -282,23 +315,75 @@ def build_env(example: Path, name: str, ports: Ports, extra: dict[str, str]) -> 
     else:
         apply_traefik_ports(values, scenario, ports)
     values["COMPOSE_FILE"] = values["COMPOSE_FILE"] + ":" + OVERRIDE_FILE
-    values["COMPOSE_PROJECT_NAME"] = f"neops-e2e-{name}-{ports.base}"
+    values["COMPOSE_PROJECT_NAME"] = f"{E2E_PROJECT_PREFIX}{name}-{ports.base}"
     values.update(extra)
+    if not values["COMPOSE_PROJECT_NAME"].startswith(E2E_PROJECT_PREFIX):
+        raise SystemExit(f"refusing: --extra-env sets COMPOSE_PROJECT_NAME outside {E2E_PROJECT_PREFIX}*")
     return values
 
 
-def prepare_clone(work: Path, values: dict[str, str]) -> Path:
-    clone = work / "repo"
+def example_path(scenario: str) -> Path:
+    """A name from examples/ or tests/e2e/examples/, or the path of an .env file."""
+    if scenario.endswith(".env"):
+        path = Path(scenario)
+        return path if path.is_absolute() else REPO / path
+    shipped = REPO / "examples" / f"{scenario}.env"
+    return shipped if shipped.exists() else E2E_EXAMPLES / f"{scenario}.env"
+
+
+def pop_overlays(values: dict[str, str]) -> list[str]:
+    """The harness-only key naming test overlays; it never reaches the clone's .env."""
+    return [path for path in values.pop(HARNESS_OVERLAYS, "").split(":") if path]
+
+
+def merge(base: dict, overlay: dict) -> dict:
+    """Compose's own rule for mappings: keys merge, anything else is replaced."""
+    out = dict(base)
+    for key, value in overlay.items():
+        out[key] = (
+            merge(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+        )
+    return out
+
+
+def override_text(overlays: list[str]) -> str:
+    """The clone's compose.override.yaml: the harness's own fragment plus each test overlay.
+    `check` refuses an unshipped file in COMPOSE_FILE, so a test-only overlay reaches Compose
+    through the one file meant for local additions; its relative paths resolve from the clone root."""
+    if not overlays:
+        return OVERRIDE_YAML
+    merged = yaml.safe_load(OVERRIDE_YAML)
+    for overlay in overlays:
+        merged = merge(merged, yaml.safe_load((REPO / overlay).read_text()))
+    header = "".join(line for line in OVERRIDE_YAML.splitlines(keepends=True) if line.startswith("#"))
+    return header + f"# Merged in: {', '.join(overlays)}\n" + yaml.safe_dump(merged, sort_keys=False)
+
+
+def _commit_of(rev: str) -> str:
+    return sh(["git", "rev-parse", f"{rev}^{{commit}}"], cwd=REPO, capture=True).stdout.strip()
+
+
+def _check_out(clone: Path, commit: str, override: str) -> None:
+    sh(["git", "fetch", "-q", str(REPO), commit], cwd=clone)
+    sh(["git", "checkout", "-q", "--detach", "--force", commit], cwd=clone)
+    (clone / OVERRIDE_FILE).write_text(override)
+
+
+def prepare_clone(
+    work: Path, values: dict[str, str], rev: str = "HEAD", override: str = OVERRIDE_YAML
+) -> Path:
+    clone = clone_dir(work)
     work.mkdir(parents=True, exist_ok=True)
-    head = sh(["git", "rev-parse", "HEAD"], cwd=REPO, capture=True).stdout.strip()
-    if clone.exists():
-        sh(["git", "fetch", "-q", str(REPO), head], cwd=clone)
-    else:
+    if not clone.exists():
         sh(["git", "clone", "-q", str(REPO), str(clone)], cwd=work)
-    sh(["git", "checkout", "-q", "--detach", head], cwd=clone)
+    _check_out(clone, _commit_of(rev), override)
     (clone / ".env").write_text("".join(f"{k}={v}\n" for k, v in values.items()))
-    (clone / OVERRIDE_FILE).write_text(OVERRIDE_YAML)
     return clone
+
+
+def move_to_head(clone: Path, override: str = OVERRIDE_YAML) -> None:
+    """What `git pull` does to an operator's checkout: .env and data/ stay as they are."""
+    _check_out(clone, _commit_of("HEAD"), override)
 
 
 def probe_names(clone: Path, status: str, *extra: str) -> list[str]:
@@ -317,7 +402,14 @@ def failing_probe_names(clone: Path, *extra: str) -> list[str]:
     return probe_names(clone, "FAIL", *extra)
 
 
-def install(report: Report, clone: Path, expose: bool, label: str) -> bool:
+def deny_warnings_ok(warned: list[str], older_release: bool) -> bool:
+    """A release before the log route probes only the job routes, so its doctor warns once."""
+    if older_release:
+        return DENY_PROBE in warned and set(warned) <= {DENY_PROBE, DENY_LOG_PROBE}
+    return warned == [DENY_PROBE, DENY_LOG_PROBE]
+
+
+def install(report: Report, clone: Path, expose: bool, label: str, older_release: bool = False) -> bool:
     """In expose mode nothing denies the worker routes until the operator's own proxy is in
     front, so doctor warns there instead of failing and the install finishes either way."""
     code = neops(clone, "install", "--connect", CONNECT, "--insecure", check=False).returncode
@@ -329,8 +421,8 @@ def install(report: Report, clone: Path, expose: bool, label: str) -> bool:
     warned = probe_names(clone, "WARN")
     LOGINS.mark()
     return report.add(
-        warned == [DENY_PROBE],
-        f"{label}: the worker API deny probe is the only warning (got {warned})",
+        deny_warnings_ok(warned, older_release),
+        f"{label}: the worker API deny probes are the only warnings (got {warned})",
     )
 
 
@@ -340,28 +432,6 @@ def assert_admin_login(report: Report, values: dict[str, str], http: Http) -> st
     LOGINS.mark()
     report.add(bool(result.token), f"admin login returns an access token ({result.error})")
     return result.token
-
-
-def gql(http: Http, cms: PublicUrl, token: str, query: str, variables: dict) -> dict:
-    """The `data` block of one authenticated GraphQL call, or a RuntimeError naming the errors.
-
-    Core answers a refused write with HTTP 200 and an `errors` list, so the status alone says
-    nothing about whether the call did what it was asked to.
-    """
-    status, text = http.request(
-        cms,
-        "/graphql",
-        method="POST",
-        body=json.dumps({"query": query, "variables": variables}),
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    try:
-        payload = json.loads(text)
-    except ValueError:
-        raise RuntimeError(f"{status}: {text[:200]}") from None
-    if status != 200 or payload.get("errors"):
-        raise RuntimeError(f"{status}: {json.dumps(payload.get('errors') or payload)[:200]}")
-    return payload["data"]
 
 
 def assert_admin_manages_entities(report: Report, values: dict[str, str], http: Http, token: str) -> None:
@@ -451,12 +521,14 @@ def assert_idempotent(report: Report, clone: Path, expose: bool) -> None:
     report.add(before == after == 1, f"one API key before and after the second install ({before} -> {after})")
 
 
-def assert_backup(report: Report, clone: Path) -> None:
+def backup_archives(clone: Path) -> list[Path]:
     """backups/ also holds migrate's pre-migrate snapshots; only ARCHIVE_NAME names a backup."""
+    return sorted(p for p in (clone / "backups").iterdir() if p.is_dir() and ARCHIVE_NAME.fullmatch(p.name))
+
+
+def assert_backup(report: Report, clone: Path) -> None:
     neops(clone, "backup")
-    archives = sorted(
-        p for p in (clone / "backups").iterdir() if p.is_dir() and ARCHIVE_NAME.fullmatch(p.name)
-    )
+    archives = backup_archives(clone)
     if not report.add(len(archives) == 1, f"backup created one archive ({len(archives)})"):
         return
     cms_dump = archives[0] / "cms.dump"
@@ -659,8 +731,149 @@ def assert_metrics(report: Report, clone: Path, values: dict[str, str], http: Ht
     assert_scrape_targets(report, clone)
 
 
+def assert_store_running(report: Report, clone: Path, store: logrecords.LogStore) -> None:
+    """Running, not healthy: neither store image can run a healthcheck."""
+    rows = {r.get("Service"): r for r in Compose(clone).ps()}
+    state = rows.get(store.service, {}).get("State", "absent")
+    report.add(state == "running", f"{store.service} is running ({state})")
+
+
+def assert_sole_store(report: Report, clone: Path, store: logrecords.LogStore) -> None:
+    """A Loki deployment must not also run VictoriaLogs, nor the other way round."""
+    others = set(logrecords.other_store_services(store))
+    found = sorted(r["Name"] for r in Compose(clone).ps() if r.get("Service") in others)
+    report.add(not found, f"no container of another log store runs beside {store.service} ({found})")
+
+
+def assert_log_store_isolation(report: Report, clone: Path, store: logrecords.LogStore) -> None:
+    """The engine reaches the store; the worker, where function-block code runs, must not."""
+    report.add(
+        inside.engine_reaches(clone, store.ready_url),
+        f"{store.service} answers {store.ready_path} to the engine",
+    )
+    isolated, why = inside.worker_isolated_from(clone, store.ready_url)
+    report.add(isolated, f"{store.service} is unreachable from the worker container ({why})")
+
+
+def grafana_datasource_types(clone: Path, values: dict[str, str]) -> list[str]:
+    auth = f"admin:{values['NEOPS_GRAFANA_ADMIN_PASSWORD']}"
+    out = Compose(clone).exec("grafana", "curl", "-fsS", "-u", auth, GRAFANA_DATASOURCES)
+    return [d.get("type") for d in json.loads(out)]
+
+
+def assert_grafana_has_the_logs_datasource(
+    report: Report, clone: Path, values: dict[str, str], store: logrecords.LogStore
+) -> None:
+    types = grafana_datasource_types(clone, values)
+    report.add(store.datasource_type in types, f"grafana provisions the {store.backend} datasource ({types})")
+
+
+def assert_engine_log_store_ok(report: Report, deployment: workflows.Deployment) -> None:
+    logs = workflows.engine_logs_status(deployment)
+    report.add(logs.get("state") == "ok", f"the engine reports its log store ok ({logs})")
+
+
+def assert_logs_not_queryable(
+    report: Report, deployment: workflows.Deployment, engine: workflows.Engine
+) -> None:
+    logs = workflows.engine_logs_status(deployment)
+    report.add(logs.get("queryable") is False, f"the engine reports no queryable log store ({logs})")
+    status, payload = workflows.run_logs(engine, str(uuid.uuid4()))
+    report.add(
+        status == 503 and NOT_CONFIGURED in json.dumps(payload),
+        f"a log read answers 503 {NOT_CONFIGURED} ({status}: {str(payload)[:160]})",
+    )
+
+
+@dataclass(frozen=True)
+class RunPage:
+    run: workflows.Run
+    lines: logrecords.RunLines
+    items: list[dict]
+
+
+def read_run_page(deployment: workflows.Deployment, engine: workflows.Engine) -> RunPage:
+    run = workflows.run_once(engine, workflows.prepare(deployment, engine))
+    lines, items = workflows.run_lines(engine, run.execution_id)
+    return RunPage(run, lines, items)
+
+
+def assert_run_lines(report: Report, page: RunPage) -> None:
+    """One workflow run end to end, read back through the run's log route: the worker's lines
+    arrive there with the engine's and core's, which is what an operator reads first."""
+    run, lines = page.run, page.lines
+    report.add(
+        run.succeeded,
+        f"a {workflows.SAVE_FACT_FB} run completes ({run.execution_id}: {run.status}, {run.seconds:.0f}s)",
+    )
+    report.add(
+        not lines.problems(),
+        f"GET /workflow-execution/:id/logs holds the run's engine and worker lines and core's audit "
+        f"line of the unlock, and no other run's ({lines}; {', '.join(lines.problems()) or 'complete'})",
+    )
+
+
+def assert_no_ingest_keys(report: Report, page: RunPage, store: logrecords.LogStore) -> None:
+    problems = logrecords.ingest_key_problems(page.items, store.ingest_keys)
+    report.add(
+        bool(page.items) and not problems,
+        f"no record of the run carries the keys {store.backend} adds at ingestion "
+        f"({len(page.items)} records; {', '.join(problems) or 'none'})",
+    )
+
+
+def assert_worker_lines_round_trip(report: Report, engine: workflows.Engine) -> None:
+    """Worker -> engine -> store -> engine read API: the worker's startup lines are pushed to
+    POST /workers/:uuid/logs and must come back from GET /workers/:uuid/logs. The admin role
+    carries worker:read through cms-init's admin profile, so a 403 is a failure, not a skip."""
+    status, worker = workflows.online_worker(engine)
+    report.add(
+        status == 200, f"GET /workers answers the admin 200: the admin role holds worker:read ({status})"
+    )
+    if not report.add(worker is not None, "an online worker to read the log lines of"):
+        return
+    status, payload = engine.call("GET", f"/workers/{worker}/logs?limit=200")
+    items = payload.get("items", []) if status == 200 and isinstance(payload, dict) else []
+    services = {item.get("service") for item in items}
+    report.add(
+        status == 200 and logrecords.WORKER_SERVICE in services,
+        f"GET /workers/{worker}/logs returns the worker's lines ({status}, {len(items)} lines, {services})",
+    )
+
+
+def log_assertions(
+    report: Report, clone: Path, values: dict[str, str], http: Http
+) -> dict[str, Callable[[], None]]:
+    store = logrecords.store_of(values)
+    deployment = workflows.Deployment(clone, values, http)
+    engine = workflows.Engine(deployment, lambda: workflows.admin_token(deployment))
+    page = functools.cache(lambda: read_run_page(deployment, engine))
+    return {
+        "not-queryable": lambda: assert_logs_not_queryable(report, deployment, engine),
+        "store-running": lambda: assert_store_running(report, clone, store),
+        "sole-store": lambda: assert_sole_store(report, clone, store),
+        "store-isolated": lambda: assert_log_store_isolation(report, clone, store),
+        "grafana-datasource": lambda: assert_grafana_has_the_logs_datasource(report, clone, values, store),
+        "engine-store-ok": lambda: assert_engine_log_store_ok(report, deployment),
+        "run-lines": lambda: assert_run_lines(report, page()),
+        "no-ingest-keys": lambda: assert_no_ingest_keys(report, page(), store),
+        "worker-lines": lambda: assert_worker_lines_round_trip(report, engine),
+    }
+
+
+def assert_logs(report: Report, clone: Path, values: dict[str, str], http: Http) -> None:
+    """The checks follow the store this deployment writes to: VictoriaLogs, Loki or none."""
+    checks = log_assertions(report, clone, values, http)
+    for name in logrecords.log_checks(values):
+        try:
+            checks[name]()
+        except Exception as exc:  # one broken check must not hide the others
+            report.add(False, f"log check {name!r} raised {type(exc).__name__}: {exc}")
+
+
 def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario: Scenario) -> None:
     http = Http(connect=CONNECT, insecure=True)
+    token = None
     if scenario.oidc:
         assert_oidc_seeded(report, values, http)
     else:
@@ -678,9 +891,177 @@ def run_assertions(report: Report, clone: Path, values: dict[str, str], scenario
     if scenario.metrics:
         assert_metrics(report, clone, values, http)
     assert_worker(report, clone)
+    assert_logs(report, clone, values, http)
     assert_cms_task_containers(report, clone, scenario.cms_tasks)
     assert_backup(report, clone)
     assert_idempotent(report, clone, scenario.proxy == "expose")
+
+
+def old_example(ref: str, name: str, work: Path) -> Path:
+    """The example as the older release shipped it: that is the .env an operator has."""
+    text = sh(["git", "show", f"{ref}:examples/{name}.env"], cwd=REPO, capture=True).stdout
+    path = work / f"{name}.upgrade-from.env"
+    work.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def grafana_dashboards(clone: Path, values: dict[str, str]) -> list[str]:
+    auth = f"admin:{values['NEOPS_GRAFANA_ADMIN_PASSWORD']}"
+    out = Compose(clone).exec("grafana", "curl", "-fsS", "-u", auth, GRAFANA_DASHBOARDS)
+    return sorted(d.get("title", "") for d in json.loads(out))
+
+
+def expected_upgrade_warnings(scenario: Scenario) -> list[str]:
+    """What `check` warns about on the pre-upgrade .env: a metrics install lacks
+    compose.grafana.yaml until 0003 adds it; every other shape upgrades without a warning."""
+    return ["compose.grafana.yaml"] if scenario.metrics and not scenario.grafana else []
+
+
+def warnings_match(warned: list[str], expected: list[str]) -> bool:
+    if len(warned) != len(expected):
+        return False
+    return all(needle in line for needle, line in zip(expected, warned, strict=True))
+
+
+def expected_files_after_upgrade(files: tuple[str, ...]) -> tuple[str, ...]:
+    """The oracle for 0003's COMPOSE_FILE rewrite: Grafana goes in just before metrics."""
+    if "compose.metrics.yaml" not in files or "compose.grafana.yaml" in files:
+        return files
+    at = files.index("compose.metrics.yaml")
+    return (*files[:at], "compose.grafana.yaml", *files[at:])
+
+
+def assert_check_warnings(report: Report, clone: Path, expected: list[str]) -> None:
+    out = neops(clone, "check", "--no-images", check=False, capture=True)
+    print(out.stdout + out.stderr, flush=True)
+    warned = [line for line in out.stdout.splitlines() if line.startswith("WARNING:")]
+    report.add(out.returncode == 0, f"check passes on the pre-upgrade .env (exit {out.returncode})")
+    report.add(warnings_match(warned, expected), f"check warns about {expected or 'nothing'} ({warned})")
+
+
+def assert_env_migrated(report: Report, clone: Path, files_before: tuple[str, ...]) -> None:
+    applied = State.load(clone / "data" / ".neops" / "state.json").applied_names
+    report.add(GRAFANA_AND_LOGS_MIGRATION in applied, f"{GRAFANA_AND_LOGS_MIGRATION} is recorded as applied")
+    env = Env(clone / ".env")
+    files = Scenario.from_env(env).files
+    expected = expected_files_after_upgrade(files_before)
+    report.add(files == expected, f"COMPOSE_FILE is {':'.join(expected)} ({':'.join(files)})")
+    backend = env.get(LOG_BACKEND)
+    report.add(
+        backend == logrecords.DB_BACKEND,
+        f"{LOG_BACKEND} is set to db, what the CMS used before ({backend!r})",
+    )
+    retention = env.get("NEOPS_LOG_RETENTION")
+    report.add(retention == "90d", f"NEOPS_LOG_RETENTION carries the old 90-day horizon ({retention!r})")
+
+
+def password_login(deployment: workflows.Deployment, values: dict[str, str]) -> Callable[[], str]:
+    """The old core may predate the CMS-issued token, so a hook on the old install logs in."""
+    LOGINS.wait_out()
+
+    def token() -> str:
+        LOGINS.mark()
+        result = login(deployment.cms, deployment.http, deployment.admin_user, values["NEOPS_ADMIN_PASSWORD"])
+        if not result.token:
+            raise upgrade_hook.HookError(result.error)
+        return result.token
+
+    return token
+
+
+def hold_job_before_upgrade(
+    report: Report, clone: Path, values: dict[str, str], work: Path
+) -> upgrade_hook.HeldJob | None:
+    """C12b, first half."""
+    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
+    try:
+        engine = workflows.Engine(deployment, password_login(deployment, values))
+        held = upgrade_hook.hold_job(deployment, engine, work)
+    except Exception as exc:
+        report.add(False, f"C12b: hold a job on the old install as its worker ({exc}); C12b stays open")
+        return None
+    report.add(True, f"C12b: job {held.job_id} of run {held.execution_id} polled for worker {held.worker_id}")
+    return held
+
+
+def assert_held_job_refused(
+    report: Report, clone: Path, values: dict[str, str], held: upgrade_hook.HeldJob
+) -> None:
+    """C12b, second half: the lease-less job after the upgrade."""
+    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
+    status, body = upgrade_hook.report_without_lease(deployment, held)
+    report.add(
+        upgrade_hook.refused_for_missing_lease(status, body),
+        f"C12b: a result for the job polled before the upgrade is refused 403 "
+        f"{upgrade_hook.LEASE_MISSING} ({status}: {body[:160]})",
+    )
+    engine = workflows.Engine(deployment, lambda: workflows.admin_token(deployment))
+    final = upgrade_hook.final_status(engine, held)
+    report.add(
+        final in workflows.SETTLED and final not in workflows.SUCCEEDED,
+        f"C12b: the run whose job was held ends failed ({final})",
+    )
+
+
+def write_survivor(report: Report, clone: Path, values: dict[str, str]) -> bool:
+    """A device group created on the old install, read back after the upgrade."""
+    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
+    token = password_login(deployment, values)()
+    created = gql(deployment.http, deployment.cms, token, GROUP_UPSERT, {"n": SURVIVOR_GROUP})
+    return report.add(
+        bool(created["deviceGroupUpsert"]["deviceGroup"]["id"]),
+        f"device group {SURVIVOR_GROUP} created on the old install",
+    )
+
+
+def assert_survivor(report: Report, clone: Path, values: dict[str, str]) -> None:
+    deployment = workflows.Deployment(clone, values, Http(connect=CONNECT, insecure=True))
+    token = workflows.admin_token(deployment)
+    found = gql(deployment.http, deployment.cms, token, GROUP_READ, {"n": SURVIVOR_GROUP})["groups"][
+        "results"
+    ]
+    report.add(len(found) == 1, f"device group {SURVIVOR_GROUP} survived the upgrade ({found})")
+
+
+def backup_before_upgrade(report: Report, clone: Path) -> None:
+    """What an operator takes before `git pull`, and what a rollback restores."""
+    neops(clone, "backup")
+    archives = backup_archives(clone)
+    report.add(
+        bool(archives) and (archives[-1] / "cms.dump").exists() and (archives[-1] / "engine.dump").exists(),
+        f"backup of the old install before the upgrade ({archives[-1].name if archives else 'none'})",
+    )
+
+
+def run_upgrade(report: Report, clone: Path, values: dict[str, str], plan: UpgradePlan) -> None:
+    """`git pull && ./neops up` on an install of `plan.ref`, and nothing else."""
+    scenario = scenario_of(values)
+    if not install(report, clone, scenario.proxy == "expose", f"install of {plan.ref}", older_release=True):
+        return
+    before = grafana_dashboards(clone, values) if scenario.runs_grafana else []
+    held = hold_job_before_upgrade(report, clone, values, plan.work) if plan.hold_job else None
+    survivor = write_survivor(report, clone, values)
+    backup_before_upgrade(report, clone)
+    move_to_head(clone, plan.override)
+    assert_check_warnings(report, clone, expected_upgrade_warnings(scenario))
+    code = neops(clone, "up", "--connect", CONNECT, "--insecure", check=False).returncode
+    if not report.add(
+        code == 0, f"up after the upgrade from {plan.ref} succeeded, doctor green (exit {code})"
+    ):
+        return
+    assert_env_migrated(report, clone, scenario.files)
+    if survivor:
+        assert_survivor(report, clone, values)
+    if held:
+        assert_held_job_refused(report, clone, values, held)
+    if not scenario.runs_grafana:
+        return
+    after = grafana_dashboards(clone, values)
+    report.add(
+        bool(before) and set(before) <= set(after),
+        f"grafana kept its dashboards across the upgrade ({len(before)} before, {len(after)} after)",
+    )
 
 
 def remove_work(work: Path) -> None:
@@ -702,9 +1083,31 @@ def remove_work(work: Path) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
-def main(argv: list[str] | None = None) -> int:
+def clone_dir(work: Path) -> Path:
+    return work / "repo"
+
+
+def clone_refusal(clone: Path, environ: Mapping[str, str]) -> str | None:
+    """Why a harness step must not act on `clone`, or None for a stack this script left behind.
+    Chaos and the proxy check stop, swap and rewrite services, so anything else, the live
+    checkout first of all, is refused."""
+    if refusal := shell_compose_refusal(environ, clone):
+        return refusal
+    env = Env(clone / ".env")
+    if not env.exists:
+        return f"{clone} does not look like an installed deployment: no .env"
+    project = env.get("COMPOSE_PROJECT_NAME")
+    if not project.startswith(E2E_PROJECT_PREFIX):
+        return f"refusing: COMPOSE_PROJECT_NAME {project!r} is no harness project ({E2E_PROJECT_PREFIX}*)"
+    override = clone / OVERRIDE_FILE
+    if not override.is_file() or not override.read_text().startswith(OVERRIDE_MARKER):
+        return f"refusing: {override} was not written by tests/e2e/run_scenario.py"
+    return None
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("scenario")
+    ap.add_argument("scenario", help="a name from examples/ or tests/e2e/examples/, or an .env path")
     ap.add_argument("--port-base", type=int, default=18000)
     ap.add_argument("--keep", action="store_true", help="leave the stack running and the clone in place")
     ap.add_argument("--workdir", type=Path)
@@ -715,28 +1118,70 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KEY=VALUE",
         help="override one .env entry, after everything the harness derives (repeatable)",
     )
+    ap.add_argument(
+        "--upgrade-from",
+        metavar="REF",
+        help="install the scenario as release REF shipped it, then git pull to this checkout and up",
+    )
+    ap.add_argument(
+        "--hold-job",
+        action="store_true",
+        help="with --upgrade-from: before the pull, hold a polled job on the old install, and check "
+        "after the upgrade that its lease-less result is refused (chaos C12b)",
+    )
     args = ap.parse_args(argv)
+    if args.hold_job and not args.upgrade_from:
+        ap.error("--hold-job needs --upgrade-from")
+    return args
 
-    example = REPO / "examples" / f"{args.scenario}.env"
+
+def chosen_example(scenario: str) -> Path:
+    example = example_path(scenario)
     if not example.exists():
         raise SystemExit(f"no such example: {example}")
-    if args.scenario == "traefik-acme":
+    if example.stem == "traefik-acme":
         raise SystemExit(
             "traefik-acme needs public DNS and port 80; it is covered by the compose-config gate"
         )
+    return example
 
+
+def print_summary(name: str, report: Report, elapsed: float) -> None:
+    print(
+        f"\n{name}: {len(report.results) - len(report.failed)}/{len(report.results)} assertions "
+        f"passed in {elapsed:.0f}s",
+        flush=True,
+    )
+    for message in report.failed:
+        print(f"  FAILED: {message}", flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    example = chosen_example(args.scenario)
+    name = example.stem
     ports = Ports(args.port_base)
-    values = build_env(example, args.scenario, ports, parse_extra_env(args.extra_env))
+    work = args.workdir or Path(f"/tmp/neops-e2e/{name}-{ports.base}")
+    if refusal := shell_compose_refusal(os.environ, clone_dir(work)):
+        print(refusal, file=sys.stderr)
+        return 2
+    extra = parse_extra_env(args.extra_env)
+    if args.upgrade_from:
+        example = old_example(args.upgrade_from, name, work)
+        extra = UPGRADE_ENV | extra
+    values = build_env(example, name, ports, extra)
+    override = override_text(pop_overlays(values))
     scenario = scenario_of(values)
-    work = args.workdir or Path(f"/tmp/neops-e2e/{args.scenario}-{ports.base}")
-    clone = prepare_clone(work, values)
+    clone = prepare_clone(work, values, rev=args.upgrade_from or "HEAD", override=override)
     print(f"workdir {work}", flush=True)
 
     report = Report()
     started = time.monotonic()
     try:
         neops(clone, "check", "--no-images")
-        if install(report, clone, scenario.proxy == "expose", "install"):
+        if args.upgrade_from:
+            run_upgrade(report, clone, values, UpgradePlan(args.upgrade_from, work, override, args.hold_job))
+        elif install(report, clone, scenario.proxy == "expose", "install"):
             run_assertions(report, clone, values, scenario)
     finally:
         elapsed = time.monotonic() - started
@@ -745,13 +1190,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             neops(clone, "down", check=False)
             remove_work(work)
-    print(
-        f"\n{args.scenario}: {len(report.results) - len(report.failed)}/{len(report.results)} assertions "
-        f"passed in {elapsed:.0f}s",
-        flush=True,
-    )
-    for message in report.failed:
-        print(f"  FAILED: {message}", flush=True)
+    print_summary(name, report, elapsed)
     return 1 if report.failed else 0
 
 

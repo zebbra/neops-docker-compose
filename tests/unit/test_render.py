@@ -256,3 +256,90 @@ def test_optional_core_keys_are_passed_through_when_set(tmp_repo):
     cms = envfile(paths.generated / "cms.env")
     assert cms["EMAIL_URL"] == "smtp://user:pw@mail.example.com:587"
     assert cms["SENTRY_DSN"] == "https://k@o.io/1"
+
+
+GRAFANA = HOSTS.replace("compose.tls-files.yaml", "compose.tls-files.yaml:compose.grafana.yaml")
+BUNDLED_LOGS = GRAFANA.replace("compose.grafana.yaml", "compose.grafana.yaml:compose.logs.yaml")
+METRICS_LOGS = GRAFANA.replace(
+    "compose.grafana.yaml", "compose.grafana.yaml:compose.metrics.yaml:compose.logs.yaml"
+)
+METRICS_DB = GRAFANA.replace("compose.grafana.yaml", "compose.grafana.yaml:compose.metrics.yaml") + (
+    "NEOPS_LOG_BACKEND=db\n"
+)
+OWN_LOKI = GRAFANA + "NEOPS_LOG_BACKEND=loki\nNEOPS_LOG_URL=http://loki.example.com:3100\n"
+OWN_LOKI_AUTH = OWN_LOKI + "NEOPS_LOG_USERNAME=neops\nNEOPS_LOG_PASSWORD=l0ki-s3cret\nNEOPS_LOG_TENANT=acme\n"
+
+
+def grafana_files(paths):
+    datasources = yaml.safe_load((paths.generated / "grafana/log-datasources.yml").read_text())
+    return datasources, envfile(paths.generated / "grafana.env")
+
+
+def test_the_bundled_victorialogs_is_grafana_s_default_datasource_and_drilldown_is_off(tmp_repo):
+    _, paths = run(tmp_repo, BUNDLED_LOGS)
+    datasources, grafana_env = grafana_files(paths)
+    assert datasources["prune"] is True
+    [ds] = datasources["datasources"]
+    assert (ds["uid"], ds["type"], ds["url"], ds["isDefault"]) == (
+        "victorialogs",
+        "victoriametrics-logs-datasource",
+        "http://victorialogs:9428",
+        True,
+    )
+    assert grafana_env == {"GF_PLUGINS_DISABLE_PLUGINS": "grafana-lokiexplore-app"}
+
+
+def test_the_metrics_datasource_stays_the_default_next_to_a_log_datasource(tmp_repo):
+    _, paths = run(tmp_repo, METRICS_LOGS)
+    [ds] = grafana_files(paths)[0]["datasources"]
+    assert ds["isDefault"] is False
+
+
+def test_a_loki_of_your_own_gets_a_datasource_and_keeps_logs_drilldown(tmp_repo):
+    _, paths = run(tmp_repo, OWN_LOKI)
+    datasources, grafana_env = grafana_files(paths)
+    assert datasources["datasources"] == [
+        {
+            "name": "Loki",
+            "uid": "loki",
+            "type": "loki",
+            "access": "proxy",
+            "url": "$NEOPS_LOG_URL",
+            "isDefault": True,
+        }
+    ]
+    assert grafana_env == {}
+
+
+def test_a_loki_s_credentials_and_tenant_reach_grafana_by_reference_only(tmp_repo):
+    _, paths = run(tmp_repo, OWN_LOKI_AUTH)
+    path = paths.generated / "grafana/log-datasources.yml"
+    [ds] = grafana_files(paths)[0]["datasources"]
+    assert (ds["basicAuth"], ds["basicAuthUser"]) == (True, "$NEOPS_LOG_USERNAME")
+    assert ds["jsonData"] == {"httpHeaderName1": "X-Scope-OrgID"}
+    assert ds["secureJsonData"] == {
+        "basicAuthPassword": "$NEOPS_LOG_PASSWORD",
+        "httpHeaderValue1": "$NEOPS_LOG_TENANT",
+    }
+    assert "l0ki-s3cret" not in path.read_text()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+def test_the_db_backend_gives_grafana_no_log_datasource_and_no_drilldown(tmp_repo):
+    _, paths = run(tmp_repo, METRICS_DB)
+    datasources, grafana_env = grafana_files(paths)
+    assert datasources["datasources"] == []
+    assert grafana_env == {"GF_PLUGINS_DISABLE_PLUGINS": "grafana-lokiexplore-app"}
+
+
+@pytest.mark.parametrize("text", [HOSTS, OWN_LOKI.replace(":compose.grafana.yaml", "")])
+def test_no_grafana_files_without_grafana(tmp_repo, text):
+    _, paths = run(tmp_repo, text)
+    assert not (paths.generated / "grafana").exists() and not (paths.generated / "grafana.env").exists()
+
+
+def test_the_previous_release_s_metrics_only_file_list_gets_the_grafana_files(tmp_repo):
+    """Its .env names compose.metrics.yaml alone until migration 0003 runs, and that overlay
+    starts Grafana with the same mounts."""
+    _, paths = run(tmp_repo, GRAFANA.replace("compose.grafana.yaml", "compose.metrics.yaml"))
+    assert grafana_files(paths)[0]["datasources"] == []

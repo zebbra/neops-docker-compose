@@ -88,6 +88,20 @@ def test_env_rename_existing_target_raises(tmp_path):
         env.rename("OLD", "NEW")
 
 
+def test_env_rename_of_a_duplicated_key_keeps_the_value_compose_reads(tmp_path):
+    p = write(tmp_path / ".env", "OLD=first\nA=1\nOLD=last\n")
+    Env(p).rename("OLD", "NEW")
+    assert Env(p).get("NEW") == "last"
+    assert "OLD" not in p.read_text()
+
+
+def test_env_rename_of_a_key_spaced_around_the_equals_sign(tmp_path):
+    p = write(tmp_path / ".env", "OLD = y\n")
+    Env(p).rename("OLD", "NEW")
+    assert Env(p).get("NEW") == "y"
+    assert "OLD" not in p.read_text()
+
+
 def test_paths_default_data_dir_is_under_repo(tmp_path):
     env = Env(write(tmp_path / ".env", ""))
     paths = Paths.for_repo(tmp_path, env)

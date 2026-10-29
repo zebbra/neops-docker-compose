@@ -132,7 +132,7 @@ def required_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
     bind = env.get("NEOPS_BIND_ADDRESS", "127.0.0.1")
     if scenario.keycloak:
         ports.append((bind, int(env.get("NEOPS_KEYCLOAK_PORT", str(DEFAULT_KEYCLOAK_PORT)))))
-    if scenario.metrics:
+    if scenario.runs_grafana:
         ports.append((bind, int(env.get("NEOPS_GRAFANA_PORT", str(DEFAULT_GRAFANA_PORT)))))
     return ports
 
