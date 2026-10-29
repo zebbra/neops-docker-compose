@@ -192,7 +192,12 @@ A save that lands while an index is deleted fails instead of recreating it: Elas
 configured not to auto-create the Neops indices (`action.auto_create_index`), since an
 auto-created one would carry a dynamic mapping that breaks search. The rebuild re-indexes those
 rows from the database anyway. If the rebuild fails, `up` stops before recording the start, so
-the next `./neops up` tries it again. To run it by hand:
+the next `./neops up` tries it again, and search stays partial until a rebuild succeeds. A
+document Elasticsearch refuses fails every retry the same way. The rebuild stops at the first type
+with refused documents, and its output names each of them by `_id` (`device-6` is device 6), with
+Elasticsearch's reason. Such a row is not marked `rejected`, so neither `index_sync_status` nor
+`./neops doctor` shows it: correct its data and save it, then run `./neops up` again, which may
+stop at refused documents of a later type. To run the rebuild by hand:
 
 ```bash
 ./neops compose -- exec cms python manage.py elastic_index --rebuild --force

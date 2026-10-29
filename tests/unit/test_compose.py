@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 from neops_compose.compose import Compose, ComposeError
@@ -118,3 +120,12 @@ def test_a_failed_exec_names_an_inline_script_instead_of_pasting_it(tmp_path, mo
     message = str(excinfo.value)
     assert "\n" not in message and "import os" not in message
     assert "shell -c <script> failed (1) service cms is not running" in message
+
+
+def test_a_command_that_outlives_its_timeout_is_a_compose_error(tmp_path, monkeypatch):
+    def hang(args, **kwargs):
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    monkeypatch.setattr("neops_compose.compose.subprocess.run", hang)
+    with pytest.raises(ComposeError, match="no answer within 5s"):
+        Compose(tmp_path).run("exec", "-T", "cms", "true", capture=True, check=False, timeout=5)

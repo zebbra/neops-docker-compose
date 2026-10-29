@@ -7,6 +7,7 @@ import ssl
 import time
 from dataclasses import dataclass
 
+from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.token import mint_access_token
 from neops_compose.urls import BASE_URLS, PublicUrl, public_urls
@@ -31,6 +32,22 @@ DB_UNREACHABLE = "the CMS cannot reach its database (login answered: internal er
 EXTERNAL_PROXY_DENY_HINT = (
     "the worker API answered over the public URL. Expected until your reverse proxy is up; "
     "once it is, it must deny these routes (docs/40-external-proxy.md)"
+)
+INDEX_SYNC_PROBE = "search index sync"
+INDEX_SYNC_STATUS = ("python", "manage.py", "index_sync_status", "--json")
+INDEX_SYNC_REPORT_VERSION = 1
+INDEX_SYNC_TIMEOUT_SECONDS = 120
+INDEX_SYNC_UNAVAILABLE = "not applicable: this neops-core image has no index_sync_status command"
+INDEX_SYNC_UNREADABLE = (
+    "the CMS answered with an index sync report of version {version}, which this checkout cannot read: "
+    "is NEOPS_CORE_TAG or NEOPS_CORE_IMAGE overridden in .env?"
+)
+RESYNC_ROWS = "./neops compose -- exec cms python manage.py resync_unsynced_rows"
+RESYNC_UNLOCKS = "./neops compose -- exec cms python manage.py resync_unlock_index --now"
+CMS_TASKS_OFF = (
+    "{waiting} index writes (rows, group writes, unlocks) are due for the sweep and COMPOSE_PROFILES has no "
+    "cms-tasks, so only lock requests take them, a few at a time (docs/50-troubleshooting.md); "
+    "to sweep them now: {commands}"
 )
 
 
@@ -370,6 +387,78 @@ def _admin_token(ctx: Ctx, cms: PublicUrl, http: Http) -> Login:
         return Login(error=f"could not mint an admin token in the CMS: {exc}")
 
 
+def index_sync_probes(compose, cms_tasks: bool) -> list[Probe]:
+    """Rows whose search index write failed or never ran stay hidden from restricted users until
+    the sweep re-indexes them. Core judges its own index; doctor only knows whether cms-tasks,
+    which runs the periodic sweep, is on. Everything here warns: search still answers."""
+    try:
+        result = compose.run(
+            "exec",
+            "-T",
+            "cms",
+            *INDEX_SYNC_STATUS,
+            capture=True,
+            check=False,
+            timeout=INDEX_SYNC_TIMEOUT_SECONDS,
+        )
+    except ComposeError as exc:
+        return [_index_sync_warning(f"could not ask the CMS: {exc}")]
+    if "Unknown command" in (result.stderr or ""):
+        return [Probe(INDEX_SYNC_PROBE, True, INDEX_SYNC_UNAVAILABLE)]
+    report = _last_json_object(result.stdout or "")
+    if report is None:
+        answer = (result.stderr or result.stdout or "")[-300:]
+        return [_index_sync_warning(f"no report from the CMS (exit {result.returncode}): {answer}")]
+    if not _readable(report):
+        return [_index_sync_warning(INDEX_SYNC_UNREADABLE.format(version=report.get("version")))]
+    probes = [_index_sync_warning(problem) for problem in report["problems"]]
+    if report["awaiting_sweep"] and not cms_tasks:
+        waiting, commands = report["awaiting_sweep"], _resync_commands(report)
+        probes.append(_index_sync_warning(CMS_TASKS_OFF.format(waiting=waiting, commands=commands)))
+    return probes or [Probe(INDEX_SYNC_PROBE, True, _index_sync_summary(report))]
+
+
+def _resync_commands(report: dict) -> str:
+    """Rows and group writes, and unlocks, each have their own command. Joined with "; ", not "&&":
+    resync_unsynced_rows exits 3 while a row keeps failing, which must not keep the unlocks waiting."""
+    unlocks = report.get("unlocks", {}).get("awaiting_sweep", 0)
+    commands = [RESYNC_ROWS] if report["awaiting_sweep"] > unlocks else []
+    return "; ".join(commands + ([RESYNC_UNLOCKS] if unlocks else []))
+
+
+def _index_sync_warning(detail: str) -> Probe:
+    """Newlines, a traceback's say, would break the one line per probe."""
+    return Probe(INDEX_SYNC_PROBE, False, " ".join(detail.split()), "warn")
+
+
+def _last_json_object(stdout: str) -> dict | None:
+    """Core prints its report as the last line; Django may print startup lines before it."""
+    lines = [line for line in stdout.splitlines() if line.startswith("{")]
+    try:
+        report = json.loads(lines[-1])
+    except (IndexError, ValueError):
+        return None
+    return report if isinstance(report, dict) else None
+
+
+def _readable(report: dict) -> bool:
+    """Only the version this release was written against: a renamed key must not read as healthy."""
+    return (
+        report.get("version") == INDEX_SYNC_REPORT_VERSION
+        and isinstance(report.get("problems"), list)
+        and isinstance(report.get("awaiting_sweep"), int)
+    )
+
+
+def _index_sync_summary(report: dict) -> str:
+    last_ran = report.get("periodic_sweep_last_ran_at") or "never recorded"
+    return (
+        f"{report['awaiting_sweep']} index writes due for the sweep, "
+        f"{report.get('permission_pending', 0)} rows hidden from restricted users; "
+        f"periodic sweep last ran: {last_ran}"
+    )
+
+
 def _tls_probe(http: Http, web: PublicUrl) -> Probe:
     try:
         days = http.cert_days_left(web)
@@ -407,6 +496,7 @@ def run(
     http = Http(connect=connect, insecure=insecure)
     probes += http_probes(urls, http, deny_severity(ctx, urls["NEOPS_ENGINE_URL"]))
     probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http, worker_grace)
+    probes += index_sync_probes(ctx.compose, ctx.scenario.cms_tasks)
     if probe_ratelimit:
         probes.append(ratelimit_probe(urls["NEOPS_CMS_URL"], http, ctx.scenario.oidc))
     if ctx.scenario.tls:
