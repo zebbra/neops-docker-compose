@@ -11,8 +11,9 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   `NEOPS_LOG_URL=http://victorialogs:9428`. The engine writes its own lines and the lines workers
   push to it; the CMS writes its task logs there instead of its database. The engine's log routes
   (`GET /workflow-execution/:id/logs`, `GET /blackboard/jobs/:jobId/logs`, `GET /workers/:uuid/logs`,
-  and `GET /logs` across runs, which needs at least one narrowing filter: workflow, function
-  block, entity, worker or job type) and the monitor's log panels read from it.
+  and `GET /logs` across runs, which answers `400 LOG_FILTER_REQUIRED` without a narrowing
+  filter: workflow, function block, entity, worker or job type; level, step and service alone do
+  not narrow it) and the monitor's log panels read from it.
 - VictoriaLogs keeps lines for `NEOPS_LOG_RETENTION` (default `30d`; `<n>d` or `<n>w`, the unit is
   required, because a bare number means months to VictoriaLogs and days to the CMS). Its data
   lives in `data/logs/victoria`, which `./neops backup` does not copy: the store is
@@ -37,13 +38,14 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   **Minimum level** narrows them to warnings and errors. To see one job's lines, open the job
   from **Jobs**: its page adds **Whose lines** (whole run, its step, the job). A line can arrive
   a few seconds after the event; the panel picks it up on its next poll. Beyond one run:
-  - a function block's or workflow's catalog page has a **Logs** section over every run, with a
-    version selector that includes *All versions*;
+  - a function block's or workflow's catalog page has a **Logs** section over every run, newest
+    first, with a version selector that includes *All versions* and a **Window** of the last 24
+    hours (default), 7 or 30 days; it shows at most the newest 1,000 lines of the window;
   - a run's log panel filters by function block;
   - a worker's tab filters its job lines by workflow and function block, which needs
-    `workflow-execution-log:read`.
+    `workflow-execution-log:read` as well as `worker:read`.
 
-  The engine's `docs/40-monitor-app/index.md` describes each of them.
+  *Logs across runs* in the engine's `docs/40-monitor-app/index.md` describes them.
 - **Grafana** (`NEOPS_GRAFANA_URL`): **Dashboards**, folder **neops**, **Run logs**. Paste a run
   id into **Run id**, a job id into **Job id**, or an entity into **Entity type** and **Entity
   id** to see its lines, newest first by time then `seq`; an empty box filters nothing. Each
