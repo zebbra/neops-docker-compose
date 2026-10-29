@@ -126,8 +126,9 @@ Concretely, in new code:
 - **A migration that rewrites `COMPOSE_FILE` is not seen by the rest of that same run**: `Ctx`
   derives `Scenario` once, at build time, so `keys()` and `render()` still use the pre-migration
   scenario (Docker itself re-reads `.env`, so only the Python side is stale).
-- Downgrades are refused on purpose (Django migrations are not reversible). Backward compatibility
-  means *forward* upgrade paths, not reversible releases.
+- Downgrades are refused on purpose: an older core does not undo a newer one's migrations and may
+  not run on them, and `--allow-downgrade` lifts only the refusal. Backward compatibility means
+  *forward* upgrade paths, not reversible releases.
 
 `./neops render` is the one command that is safe to run at any point during an upgrade: it reads
 `.env` and writes nothing outside `generated/`. Inside `generated/` it is authoritative — it

@@ -49,8 +49,10 @@ def guard_downgrade(last_up: dict | None, images: dict[str, str], allow: bool) -
     now = images.get("cms", "")
     if "neops-core" in now and is_downgrade(tag_of(prev), tag_of(now)):
         raise Downgrade(
-            f"neops-core would move from {tag_of(prev)} back to {tag_of(now)}; Django migrations "
-            "are not reversible. Restore a backup instead, or pass --allow-downgrade if you know better."
+            f"neops-core would move from {tag_of(prev)} back to {tag_of(now)}, which may not run on "
+            "the migrations the newer core applied. Migrate the database back or restore a backup "
+            "first, as docs/30-operations.md#upgrades describes; --allow-downgrade is that "
+            "procedure's last step, not a substitute for it."
         )
 
 

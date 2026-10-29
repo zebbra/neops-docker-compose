@@ -105,9 +105,9 @@ The delete comes before `up` because of what `up` trusts. On a host that was run
 restore, the indices still hold documents for rows the restore removed, and their stamps still say
 they are current, so `up`'s `elastic_index --rebuild-if-stale` would leave them alone, and search
 and the engine's searching locks would answer from them until a rebuild ran. Deleted, every index
-is stale: `up`'s `cms-init` recreates them empty, its `--rebuild-if-stale` then refills all of
-them (groups, clients and the lookup indices included) from the restored data and stamps them, and
-the next `up` has nothing to do. Its exit 3 means it finished but set documents aside (see
+is stale: `up`'s `cms-init` recreates them empty, `up` then runs `--rebuild-if-stale` in `cms`,
+which refills all of them (groups, clients and the lookup indices included) from the restored data
+and stamps them, and the next `up` has nothing to do. Its exit 3 means it finished but set documents aside (see
 [Upgrades](#upgrades)). On a fresh host the delete finds nothing to delete. An older core has no
 stamps and rebuilds in `up` only when an image moved, so search can stay empty until its
 `--rebuild --force` refills every index. Do not use `--populate`: it keeps the documents of
@@ -183,7 +183,7 @@ clients and executions (`null value in column "elastic_version"`). Migrate the d
 the newer core first, or restore the backup taken before the upgrade, as "Going back to an earlier
 release" in neops-core's 2.2.1 release notes describes (until 2.2.1 is released:
 [`docs/releases/unreleased.md`](https://github.com/zebbra/neops-core/blob/develop/docs/releases/unreleased.md#going-back-to-an-earlier-release));
-both end with `./neops up --allow-downgrade`.
+both include `./neops up --allow-downgrade`.
 
 Once the stack is healthy, `up` asks neops-core whether the search index still matches it and
 Elasticsearch, and rebuilds it if not. It runs in `cms` rather than in `cms-init` on purpose: `cms`
@@ -205,7 +205,7 @@ which; to check yourself:
   nothing. **The first `up` on such a core rebuilds every index once**, because the indices an
   older core built carry no stamp. A fresh install builds its first, empty indices the same way,
   in seconds.
-- **An older neops-core** (2.2.1-beta.7 and earlier) cannot tell whether an upgrade
+- **An older neops-core** (2.2.1-beta.7, for example) cannot tell whether an upgrade
   changed its indices, so `up` rebuilds every index whenever the core or the Elasticsearch image
   differs from the one the last successful `up` ran (`up` logs "neops-core or Elasticsearch
   changed: rebuilding the search index"). That is `manage.py elastic_index --rebuild --force`,
@@ -216,8 +216,8 @@ core finishes it, sets the refused documents aside and marks their rows `rejecte
 `up` then prints a `WARNING` and, where core can tell, how many rows are marked `rejected` and the
 command that lists them
 (`./neops compose -- exec -T cms python manage.py index_sync_status --list rejected --limit 0`;
-`--limit 0` lists every row, where core's default stops at 100 per model), and records
-the start as usual. Keep the rebuild's output: it is where the reason for each refusal is printed.
+`--limit 0` lists every device, interface, group and client row, where core's default stops
+at 100 per model), and records the start as usual. Keep the rebuild's output: it is where the reason for each refusal is printed.
 Those rows stay out of search until their data is corrected and the row saved, or until a later
 rebuild finds Elasticsearch accepting them. What to do about them is in the
 [rows rejected by Elasticsearch](50-troubleshooting.md#search-index-out-of-sync) bullet of
