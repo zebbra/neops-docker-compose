@@ -277,7 +277,7 @@ steps and its jobs, the CMS's included. It keeps lines for `NEOPS_LOG_RETENTION`
 written `<n>d` or `<n>w`). VictoriaLogs is on a network of its own that the worker never joins,
 and publishes no port. Grafana gets a VictoriaLogs datasource whose plugin it downloads on its first
 start, which therefore needs outbound internet. It does not require the metrics overlay. See
-`logs/README.md`.
+`logs/README.md`, which also says where to read a run's logs.
 
 Without this overlay the engine stores no logs (its log routes answer `503`) and the CMS keeps its
 task logs in its database (`NEOPS_LOG_BACKEND=db`). To use a VictoriaLogs or Loki you run yourself

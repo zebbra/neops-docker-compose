@@ -25,6 +25,40 @@ overlay: `COMPOSE_FILE=compose.yaml:<routing overlays>:compose.grafana.yaml:comp
   engine has no store or the store refuses its pushes (`misconfigured`), and warns while the store
   is unreachable (`open`), when the engine spools lines to its database instead.
 
+## Reading a run's logs
+
+- **Workflow manager**: sign in to the web client at `NEOPS_WEB_URL`, then follow its
+  **Workflow manager** link in the header; it opens the workflow manager inside the web client,
+  with *Open in own tab* to leave the frame. The workflow manager has no sign-in of its own:
+  opened directly at `NEOPS_WORKFLOWS_URL` without a web-client session, it asks you to open it
+  from the web client. Then open **Runs**, then the run. Its **Logs** section shows the run's
+  lines with their source (Engine, Worker or CMS), the step for worker lines, and the level;
+  **Minimum level** narrows them to warnings and errors. To see one job's lines, open the job
+  from **Jobs**: its page adds **Whose lines** (whole run, its step, the job). A line can arrive
+  a few seconds after the event; the panel picks it up on its next poll.
+- **Grafana** (`NEOPS_GRAFANA_URL`): **Explore**, datasource **VictoriaLogs**, query
+  `workflow_execution_id:"<run id>"`. Every line carries `service` (`neops-workflow-engine`,
+  `neops-worker`, `neops-core`) and `level`, so `workflow_execution_id:"<run id>" level:error`
+  finds a run's errors. Grafana reads the store directly, without the engine's permission
+  check, so give its accounts only to people who may read every run.
+- `./neops logs <service>` shows a container's stdout, not a run's lines. Use it when the stack
+  itself misbehaves.
+
+While the store is not answering, the Logs section shows *The log store is not answering*: the
+engine keeps new lines in its database and they appear once the store is back, so nothing is
+lost. *The log store refuses the engine* means new lines are not stored until the configuration
+is fixed (see `./neops doctor`). Without this overlay the section is absent.
+
+## Turning logs off
+
+Remove `compose.logs.yaml` from `COMPOSE_FILE` and keep `compose.grafana.yaml`, run `./neops up`,
+then `./neops compose -- up -d --remove-orphans` to remove the `victorialogs` container. The engine
+and the CMS fall back to `NEOPS_LOG_BACKEND=db`, which migration `0003` wrote to `.env` and this
+overlay overrides while it is present, so leave that line as it is. Removing `compose.grafana.yaml`
+as well fails `./neops up` when `compose.override.yaml` still has a `grafana` entry, such as a
+`ports` override: without the overlay that entry is a service with no image. The lines already in
+VictoriaLogs stay in `data/logs/victoria` until you delete it.
+
 ## Grafana
 
 The datasource (`grafana/datasources/victorialogs.yml`) needs the
