@@ -191,14 +191,14 @@ git pull        # or: git checkout <next release tag>
 `up` refuses to proceed if the pinned `neops-core` image would move to an *older* tag than the
 last successful `up` recorded: an older core does not undo the migrations a newer one applied, and
 may not run on them. `--allow-downgrade` lifts that refusal and nothing else; on its own it is not
-enough to go back. Going back from neops-core 2.2.1-beta.9 to an earlier
+enough to go back. Going back from neops-core 2.3.0 to an earlier
 core is such a case: its migrations 0194 and 0195 add NOT NULL columns without a database default,
-so 2.2.1-beta.7 or 2.2.0 on the migrated database fails to create devices, interfaces, groups,
+so 2.2.0 on the migrated database fails to create devices, interfaces, groups,
 clients and executions (`null value in column "elastic_version"`). Migrate the database back with
 the newer core first, or restore the backup taken before the upgrade, as "Going back to an earlier
-release" in neops-core's 2.2.1 release notes describes (until 2.2.1 is released:
-[`docs/releases/unreleased.md`](https://github.com/zebbra/neops-core/blob/develop/docs/releases/unreleased.md#going-back-to-an-earlier-release));
-both include `./neops up --allow-downgrade`.
+release" in
+[neops-core's 2.3.0 release notes](https://github.com/zebbra/neops-core/blob/v2.3.0/docs/releases/v2.3.0.md#going-back-to-an-earlier-release)
+describes; both include `./neops up --allow-downgrade`.
 
 Once the stack is healthy, `up` asks neops-core whether the search index still matches it and
 Elasticsearch, and rebuilds it if not. It runs in `cms` rather than in `cms-init` on purpose: `cms`
@@ -220,7 +220,7 @@ which; to check yourself:
   nothing. **The first `up` on such a core rebuilds every index once**, because the indices an
   older core built carry no stamp. A fresh install builds its first, empty indices the same way,
   in seconds.
-- **An older neops-core** (2.2.1-beta.7, for example) cannot tell whether an upgrade
+- **An older neops-core** (2.2.0, for example) cannot tell whether an upgrade
   changed its indices, so `up` rebuilds every index whenever the core or the Elasticsearch image
   differs from the one the last successful `up` ran (`up` logs "neops-core or Elasticsearch
   changed: rebuilding the search index"). That is `manage.py elastic_index --rebuild --force`,
@@ -322,6 +322,20 @@ gone; `./neops up` renders it before Grafana starts, so there is nothing to do b
 Elasticsearch upgrades its data directory in place on the first start of a newer image and cannot
 open it with an older one afterwards. Going back to a previous release therefore needs
 `data/elasticsearch` emptied first; it is derived data, and the rebuild above refills it.
+
+## Engine limits
+
+The engine reads these from `.env`. Unset or empty keeps the engine's default; run `./neops up`
+after changing one. Each takes a plain integer in the unit shown, with no suffix: the engine reads
+only the leading digits, so `5MiB` is parsed as 5 bytes. `0` also keeps the default, and a
+negative `ROLLBACK_DATA_*` value stops the engine from starting.
+
+| Variable | Unit | Default | What it bounds |
+|---|---|---|---|
+| `ROLLBACK_DATA_MAX_BYTES` | bytes | `5242880` (5 MiB) | the rollback data one job attempt may store; larger data is dropped |
+| `ROLLBACK_DATA_RETENTION_DAYS` | days | `30` | how long a run in `FAILED_UNSAFE_ACK` keeps its rollback data before it is purged |
+| `ROLLBACK_DATA_SWEEP_INTERVAL_MS` | ms | `3600000` (1 h) | how often that purge runs |
+| `BLACKBOARD_PENDING_JOB_TIMEOUT` | ms | `3600000` (1 h) | how long a job no worker has polled waits before the engine fails it |
 
 ## Purge
 

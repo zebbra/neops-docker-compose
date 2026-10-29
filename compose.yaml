@@ -7,11 +7,11 @@ x-versions:
   # A core without `elastic_index --rebuild-if-stale` costs a full search index rebuild on every
   # core upgrade (neops_compose/search_index.py); the flag came with
   # https://github.com/zebbra/neops-core/pull/2412.
-  core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.3.0-beta.6}}
-  engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.44.0-beta.8}}
-  monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.44.0-beta.8}}
-  worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.3.0-beta.2}}
-  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.0.0-beta.2}}
+  core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.3.0}}
+  engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.44.0}}
+  monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.44.0}}
+  worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.3.0}}
+  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.0.0}}
 
 x-logging: &logging
   driver: json-file
@@ -261,6 +261,11 @@ services:
       NEOPS_AUTHZ_MODE: enforce
       NEOPS_JWT_PUBLIC_KEY_PATH: /etc/neops/jwt/public.pem
       NEOPS_CORS_ORIGINS: ${NEOPS_WEB_URL},${NEOPS_WORKFLOWS_URL}
+      # Empty keeps the engine default; docs/30-operations.md "Engine limits".
+      ROLLBACK_DATA_MAX_BYTES: ${ROLLBACK_DATA_MAX_BYTES:-}
+      ROLLBACK_DATA_RETENTION_DAYS: ${ROLLBACK_DATA_RETENTION_DAYS:-}
+      ROLLBACK_DATA_SWEEP_INTERVAL_MS: ${ROLLBACK_DATA_SWEEP_INTERVAL_MS:-}
+      BLACKBOARD_PENDING_JOB_TIMEOUT: ${BLACKBOARD_PENDING_JOB_TIMEOUT:-}
     env_file:
       # NEOPS_CMS_TOKEN, minted by ./neops token after the CMS is up. Absent on the very first start.
       - path: ${NEOPS_DATA_DIR:-./data}/secrets/engine.env
