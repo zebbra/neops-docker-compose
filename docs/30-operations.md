@@ -87,6 +87,7 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
   < backups/<timestamp>/keycloak.dump
 
 # 3. Bring up the rest and rebuild the search index (not part of the backup).
+# After checking out an older release to restore its backup, `up` needs --allow-downgrade.
 ./neops up
 # On a core whose `elastic_index --help` lists --sync-lookups, add it: only it fills the lookup indices.
 # No --models: every indexed model, or groups, clients and executions stay unsearchable.
