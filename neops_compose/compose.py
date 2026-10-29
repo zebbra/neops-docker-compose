@@ -27,18 +27,27 @@ class Compose:
         self.repo = repo
 
     def run(
-        self, *args: str, capture: bool = False, check: bool = True, env: dict[str, str] | None = None
+        self,
+        *args: str,
+        capture: bool = False,
+        check: bool = True,
+        env: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess:
-        result = _docker(
-            ["docker", "compose", *args],
-            cwd=self.repo,
-            text=True,
-            capture_output=capture,
-            env=(os.environ | env) if env else None,
-        )
+        shown = " ".join("<script>" if "\n" in arg else arg for arg in args)
+        try:
+            result = _docker(
+                ["docker", "compose", *args],
+                cwd=self.repo,
+                text=True,
+                capture_output=capture,
+                env=(os.environ | env) if env else None,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ComposeError(f"docker compose {shown} gave no answer within {timeout:.0f}s") from exc
         if check and result.returncode != 0:
             detail = (result.stderr or "").strip() if capture else ""
-            shown = " ".join("<script>" if "\n" in arg else arg for arg in args)
             raise ComposeError(f"docker compose {shown} failed ({result.returncode}) {detail}".strip())
         return result
 
