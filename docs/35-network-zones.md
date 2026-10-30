@@ -21,7 +21,7 @@ the default network's addresses, with their devices' credentials, from inside it
 `compose.yaml`'s `worker` service sets `NEOPS_WORKER_NETWORK_ZONES: default`, as a literal value
 in its own service definition. There is nothing to change. Keep the setting out of `.env`: it is
 the file a remote site's worker is most likely to be started from, and from `.env` it would hand
-that worker the default zone too. Older workers ignore the setting.
+that worker the default zone too.
 
 ## Two workers per zone
 
@@ -50,7 +50,8 @@ services:
 table with the default workers, so a zone whose addresses overlap the default network's would send
 its devices' credentials to whatever answers there. Run them inside the zone's own network, as
 described under [Workers at another site](#workers-at-another-site). A worker that serves several
-zones lists them all, for example `default,zone-b`.
+zones lists them all, for example `default,zone-b`, but only zones whose addresses do not overlap
+as seen from that worker's host.
 
 `./neops doctor` passes as soon as any worker is online. It does not check zones: a zone whose
 workers are all down shows only as runs that wait.
