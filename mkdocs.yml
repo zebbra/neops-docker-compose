@@ -59,6 +59,7 @@ nav:
 - Install: 10-install.md
 - Scenarios: 20-scenarios.md
 - Operations: 30-operations.md
+- Network zones: 35-network-zones.md
 - External proxy: 40-external-proxy.md
 - Troubleshooting: 50-troubleshooting.md
 plugins:

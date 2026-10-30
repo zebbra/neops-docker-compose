@@ -39,7 +39,7 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `cms-beat` | `neops-core` | Celery beat scheduler for the same: the 1.0 cron jobs and the search index sweep every minute; off unless `COMPOSE_PROFILES=cms-tasks` |
 | `engine` | `neops-workflow-engine` | the 2.0 workflow engine (blackboard REST API) |
 | `monitor` | `neops-monitor-app` | the workflow manager UI (temporary, being folded into the web client) |
-| `worker` | `neops-worker-sdk` | polls the engine's blackboard and drives devices; base function blocks only |
+| `worker` | `neops-worker-sdk` | polls the engine's blackboard and drives devices in the `default` network zone; base function blocks only. More workers, and workers for other zones: [Network zones](35-network-zones.md) |
 | `web` | `neops-web-client` | the production Angular web client |
 | `keycloak` | `keycloak:26.5.2` | bundled identity provider (keycloak overlay only) |
 | `traefik` | `traefik:v3.6.25` | bundled reverse proxy and TLS termination (traefik overlay only) |
