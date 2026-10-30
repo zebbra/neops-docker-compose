@@ -326,9 +326,14 @@ open it with an older one afterwards. Going back to a previous release therefore
 ## Engine limits
 
 The engine reads these from `.env`. Unset or empty keeps the engine's default; run `./neops up`
-after changing one. Each takes a plain integer in the unit shown, with no suffix: the engine reads
-only the leading digits, so `5MiB` is parsed as 5 bytes. `0` also keeps the default, and a
-negative `ROLLBACK_DATA_*` value stops the engine from starting.
+after changing one. `ROLLBACK_DATA_MAX_BYTES` takes a byte count or a size with a unit, such as
+`5MiB`, `100kb` or `1.5mb`; units are binary, so `5MiB` and `5mb` are both 5242880 bytes. The
+others take a plain integer in the unit shown. `0` also keeps the default. A value the engine
+cannot parse, such as `30d`, `1.5e6` or a negative `ROLLBACK_DATA_*` value, stops it from
+starting, and `docker compose logs engine` names the variable.
+
+Engines before 0.44.1 read only the leading digits of these values, so `5MiB` was parsed as 5
+bytes. If you pin an older engine, write plain integers.
 
 | Variable | Unit | Default | What it bounds |
 |---|---|---|---|
