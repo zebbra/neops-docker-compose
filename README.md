@@ -76,7 +76,7 @@ loses nothing.
 
 **Upgrades.** `git pull` (or check out the next release tag), then `./neops up`. Downgrading the CMS is
 refused; going back needs the database migrated back or a backup restored before
-`./neops up --allow-downgrade` (see `docs/30-operations.md#upgrades`).
+`./neops up --allow-downgrade` (see `docs/30-operations.md#going-back-to-an-earlier-release`).
 
 **Secrets.** Never edit a password in `.env` by hand once installed; use `./neops rotate`. For the three
 database passwords `check` notices a mismatch and names it, by connecting with the value in `.env` while

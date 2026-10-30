@@ -59,71 +59,180 @@ copy.
 ## Restore
 
 There is no `./neops restore`; restoring is a manual sequence, deliberately, because it needs
-judgment about which secrets to keep:
+judgment about which secrets to keep. The same sequence serves three cases: a fresh host, a
+restore onto the release the backup was taken on, and going back to an earlier release after an
+upgrade, which restores the backup taken before it (see [Going back](#going-back-to-an-earlier-release)
+for what to do first). Read this page on `develop`, not the copy an older checkout leaves on
+disk in step 1. It restores every database the backup holds, so everything written since
+the backup is lost, in the workflow engine as well as in the CMS.
+
+Restoring onto a host whose `neops-core` image is *older* than the one the backup was taken with
+is not supported: Django migrations do not run backwards. Check out the commit the backup was
+taken on; its `manifest.json` lists the images it pinned.
 
 ```bash
-# 0. On a fresh host: check this repo out at the release the backup names in its manifest.json,
-#    and put the archive where the commands below can read it.
+# 0. On a fresh host only: clone, check out the commit the backup was taken on, copy the archive in.
 git clone <this repo> neops && cd neops
+git checkout <the commit the backup was taken on>
 mkdir -p backups && cp -a /media/<the archive>/<timestamp> backups/
 
-# 1. Put the deployment's .env back (or reconcile it with the current one) and prepare data/.
+# 1. Stop everything. Going back: check out the commit you noted before the upgrade.
+./neops down
+git checkout <the commit you noted>                # going back only
+
+# 2. Put .env back, and forget the deployment migrations applied since the backup, so that
+#    ./neops migrate and the next upgrade apply them to the restored .env again.
 cp backups/<timestamp>/.env .env
+DATA=./data                                        # or the NEOPS_DATA_DIR that .env sets
+uv run --quiet python - backups/<timestamp>/manifest.json "$DATA/.neops/state.json" <<'PY'
+import json, pathlib, sys
+manifest, path = json.loads(pathlib.Path(sys.argv[1]).read_text()), pathlib.Path(sys.argv[2])
+if path.exists():
+    state = json.loads(path.read_text())
+    for key in ("applied", "faked"):
+        if key in manifest:
+            state[key] = [m for m in state.get(key, []) if m["name"] in manifest[key]]
+    path.write_text(json.dumps(state, indent=2) + "\n")
+PY
+
+# 3. Empty Elasticsearch and move the Postgres data aside. Elasticsearch is not in the backup:
+#    emptying it removes every index, also those only a newer core created, and step 6 rebuilds
+#    the ones this core uses. The directory itself stays, Elasticsearch (uid 1000) owns it.
+#    pg_restore then loads into empty databases, so no table a newer release added stays behind.
+[ -d "$DATA/elasticsearch" ] && sudo find "$DATA/elasticsearch" -mindepth 1 -delete
+aside=postgres.before-restore-$(date -u +%Y%m%dT%H%M%SZ)
+for dump in backups/<timestamp>/*.dump; do         # cms, engine and, if used, keycloak
+  db=$(basename "$dump" .dump)
+  [ -d "$DATA/$db/postgres" ] && sudo mv "$DATA/$db/postgres" "$DATA/$db/$aside"
+done
+
+# 4. Prepare data/ and put the key material back.
 ./neops migrate                                    # creates data/ if this is a fresh host
-cp -a backups/<timestamp>/secrets/. data/secrets/
+cp -a backups/<timestamp>/secrets/. "$DATA/secrets/"
 cp -a backups/<timestamp>/certs/. certs/            # if the scenario uses certs/
 cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 
-# 2. Start only the databases and load the dumps. --wait matters: pg_restore cannot connect
-#    while Postgres is still initialising, and `up -d` returns before it is.
+# 5. Start only the databases, which initialise empty, and load the dumps. --wait matters:
+#    pg_restore cannot connect while Postgres is still initialising, and `up -d` returns before it is.
+#    Skip a database whose dump the manifest's "dumps" does not list (its Postgres was not running
+#    at backup time): step 3 left its data in place, and there is no dump to load.
 ./neops render
 ./neops compose -- up -d --wait postgres-cms postgres-engine   # + postgres-keycloak, if used
-# Restoring an older release's backup onto databases a newer release has used: drop and
-# recreate both first. --clean drops only what the dump holds, so tables a newer release
-# added (log_outbox) would stay behind and fail the next upgrade's migration.
-./neops compose -- exec -T postgres-cms psql -U neops -d postgres \
-  -c 'DROP DATABASE neops WITH (FORCE)' -c 'CREATE DATABASE neops OWNER neops'
-./neops compose -- exec -T postgres-engine psql -U postgres -d postgres \
-  -c 'DROP DATABASE "neops-workflow" WITH (FORCE)' -c 'CREATE DATABASE "neops-workflow"'
 ./neops compose -- exec -T postgres-cms pg_restore -U neops -d neops --clean --if-exists \
   < backups/<timestamp>/cms.dump
 ./neops compose -- exec -T postgres-engine pg_restore -U postgres -d neops-workflow --clean --if-exists \
   < backups/<timestamp>/engine.dump
-# keycloak, if used:
 ./neops compose -- exec -T postgres-keycloak pg_restore -U keycloak -d keycloak --clean --if-exists \
-  < backups/<timestamp>/keycloak.dump
+  < backups/<timestamp>/keycloak.dump             # keycloak, if used
 
-# 3. Delete the search indices (not part of the backup), then bring up the rest, which rebuilds them.
-./neops compose -- up -d --wait elasticsearch redis
-./neops compose -- run --rm --no-deps cms python manage.py elastic_index --delete --force
-# After checking out an older release to restore its backup, `up` needs --allow-downgrade.
-./neops up
-# On an older core, whose `elastic_index --help` does not list --rebuild-if-stale, also:
-./neops compose -- exec cms python manage.py elastic_index --rebuild --force
+# 6. Start the rest, which rebuilds the search indices.
+./neops up                                         # going back: ./neops up --allow-downgrade
 
-# 4. Confirm.
+# 7. Only if `up` printed neither "neops-core checks the search index" nor "rebuilding the
+#    search index" (an older core whose image did not move): rebuild by hand. Add --sync-lookups
+#    if `elastic_index --help` lists it.
+./neops compose -- exec -T cms python manage.py elastic_index --rebuild --force
+
+# 8. Confirm: doctor passes, and Elasticsearch holds only the indices this core created.
 ./neops doctor
+./neops compose -- exec -T elasticsearch curl -fsS 'http://127.0.0.1:9200/_cat/indices?v&s=index'
 ```
+
+It worked when `up` (and step 7's rebuild, if you ran it) exited 0 and `doctor` passes;
+`doctor` alone is no proof, since it has passed with an empty groups index after a failed `up`.
+Once you are satisfied, delete the moved-aside data:
+`sudo rm -rf "$DATA"/*/postgres.before-restore-*`.
+
+Until then that data is an emergency hatch, not a clean undo: moving it back returns only Postgres.
+With the stack stopped, you also have to put back the checkout (step 1), `.env` and
+`data/.neops/state.json` (step 2), and `data/secrets/`, `certs/` and `cust-cert/` (step 4), and
+empty Elasticsearch again as in step 3, since its indices now hold the restored data. Those steps
+overwrite the files without keeping a copy, so if you may want this hatch, copy them somewhere
+safe before step 2.
+
+Step 2 rewrites `data/.neops/state.json`, which the backup does not carry, to the deployment
+migrations its `manifest.json` lists. A migration applied after the backup rewrote the `.env` the
+backup does not have; left recorded, it would never run on the restored `.env`.
 
 `--if-exists` is not optional on a fresh database: without it every `DROP` in the dump fails
 against a schema that does not exist yet, and `pg_restore` ends with hundreds of errors and a
 non-zero exit while having loaded the data correctly — indistinguishable from a real failure.
 
-The delete comes before `up` because of what `up` trusts. On a host that was running before the
-restore, the indices still hold documents for rows the restore removed, and their stamps still say
-they are current, so `up`'s `elastic_index --rebuild-if-stale` would leave them alone, and search
-and the engine's searching locks would answer from them until a rebuild ran. Deleted, every index
-is stale: `up`'s `cms-init` recreates them empty, `up` then runs `--rebuild-if-stale` in `cms`,
-which refills all of them (groups, clients and the lookup indices included) from the restored data
-and stamps them, and the next `up` has nothing to do. That rebuild's exit 3 means it finished but
-set documents aside (see [Upgrades](#upgrades)). On a fresh host the delete finds nothing to
-delete. An older core has no stamps and rebuilds in `up` only when an image moved, so search can
-stay empty until its `--rebuild --force` refills every index. Do not use `--populate`: it keeps the
+Step 3 empties Elasticsearch instead of running `elastic_index --delete`, because of what that
+command and `up` know. An older core's `--delete` deletes only the indices it defines, so a newer
+core's `network` and lookup indices would keep that release's documents, which nothing reads or
+updates and the next upgrade has to rebuild. And on a host that was running before the restore,
+the indices still hold documents for rows the restore removed, while their stamps say they are
+current, so `up`'s `elastic_index --rebuild-if-stale` would leave them alone and search and the
+engine's searching locks would answer from them. Emptied, there is no index: `up`'s `cms-init`
+creates this core's indices empty, and `up` then rebuilds them from the restored data, a core
+with `--rebuild-if-stale` because they carry no stamp, an older core when its image or
+Elasticsearch's moved since the last successful `up`. That rebuild's exit 3 means it finished
+but set documents aside (see [Upgrades](#upgrades)). Do not use `--populate`: it keeps the
 documents of removed rows.
 
-Restoring onto a host whose `neops-core` image is *older* than the one the backup was taken with
-is not supported: Django migrations do not run backwards. Restore onto the same or a newer core
-version.
+### Going back to an earlier release
+
+`up` refuses an older `neops-core` (see [Upgrades](#upgrades)); going back is the
+[Restore](#restore) above, with the backup you took before the upgrade, after the steps the
+release you leave asks for while it still runs. Read "Going back to an earlier release" in that
+release's notes first. For neops-core 2.3.0
+([its notes](https://github.com/zebbra/neops-core/blob/v2.3.0/docs/releases/v2.3.0.md#going-back-to-an-earlier-release)):
+
+- **Before step 1, while 2.3.0 still runs**, do "First, on both, while this release still runs":
+  list the facts and checks whose values disagree in type, give each one type, and export the sync
+  schemas to `elastic-sync-config.json`. If 2.3.0 is not running, for example because the upgrade
+  failed before it came up, skip this and the load after step 5. You then have no list of
+  conflicts, and any sync schema changed on 2.3.0 is lost: the restored database keeps the schemas
+  of the backup, so step 6's rebuild can refuse documents the export would have let through.
+- **After step 3**, on a metrics install whose earlier commit pins Grafana 11, put back the copy
+  of Grafana's data that
+  [Upgrading to the release with centralized logging](#upgrading-to-the-release-with-centralized-logging)
+  took, since Grafana 11 cannot open the data Grafana 12 migrated. Going back between two commits
+  that both pin Grafana 12 needs nothing, and the block below then does nothing. It moves the
+  current data aside rather than deleting it:
+
+    ```bash
+    grafana=$(grep -ho 'grafana/grafana:[0-9]*' compose.grafana.yaml compose.metrics.yaml 2>/dev/null | head -1 | cut -d: -f2)
+    if [ "$grafana" = 11 ] && [ -d "$DATA/metrics/grafana.pre-upgrade" ]; then
+      sudo mv "$DATA/metrics/grafana" "$DATA/metrics/grafana.before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+      sudo cp -a "$DATA/metrics/grafana.pre-upgrade" "$DATA/metrics/grafana"
+    elif [ "$grafana" = 11 ]; then
+      echo "no $DATA/metrics/grafana.pre-upgrade: Grafana 11 cannot start on the data Grafana 12 migrated"
+    fi
+    ```
+
+    Without that copy there is no way back for Grafana's own state (its dashboards and users); the
+    metrics themselves are unaffected. Delete `grafana.before-restore-*` with the Postgres copies
+    once you are satisfied.
+
+- **After step 5**, while only the databases run, load that export into the restored database:
+
+    ```bash
+    ./neops compose -- run --rm --no-deps -T cms python manage.py loaddata --format=json - < elastic-sync-config.json
+    ```
+
+    If it fails with `IntegrityError: Problem installing fixture '-'`, delete the stored schemas and
+    load again, as step 3 of the notes' "neops-docker-compose, from the backup" shows.
+- **In step 6**, if `up --allow-downgrade` fails with "document(s) failed to index", give the key
+  one type in the earlier release's `/admin/core/elasticsyncconfig/`, using the list you made or,
+  without one, the documents the rebuild's output names, and run `./neops up --allow-downgrade`
+  again.
+
+The notes' "from the backup" procedure is this Restore in another order. They point at "steps 1
+and 2" of an earlier version of this section and then add their own steps; follow this section
+from start to end instead, which covers all of them. Two differences, both on purpose: step 3
+here empties Elasticsearch always, not only when the earlier commit pins an older Elasticsearch,
+so the notes' final command that deletes the `network` index and the four lookup indices has
+nothing left to delete; and it moves every database aside, the engine's included, since step 5
+restores `engine.dump` whichever engine the earlier commit pins.
+
+To keep the data written since the upgrade instead of restoring the backup, use the notes'
+"neops-docker-compose, keeping the data written since", which migrates the database back with the
+newer core; this section does not cover it.
+
+Before the next upgrade, check out your branch again (`git checkout develop`), since step 1 left
+the checkout on a commit, where `git pull` does not work.
 
 ## Rotating secrets
 
@@ -194,11 +303,9 @@ may not run on them. `--allow-downgrade` lifts that refusal and nothing else; on
 enough to go back. Going back from neops-core 2.3.0 to an earlier
 core is such a case: its migrations 0194 and 0195 add NOT NULL columns without a database default,
 so 2.2.0 on the migrated database fails to create devices, interfaces, groups,
-clients and executions (`null value in column "elastic_version"`). Migrate the database back with
-the newer core first, or restore the backup taken before the upgrade, as "Going back to an earlier
-release" in
-[neops-core's 2.3.0 release notes](https://github.com/zebbra/neops-core/blob/v2.3.0/docs/releases/v2.3.0.md#going-back-to-an-earlier-release)
-describes; both include `./neops up --allow-downgrade`.
+clients and executions (`null value in column "elastic_version"`). Restore the backup taken before
+the upgrade, as [Going back to an earlier release](#going-back-to-an-earlier-release) describes, or
+migrate the database back with the newer core first, as neops-core's release notes describe.
 
 Once the stack is healthy, `up` asks neops-core whether the search index still matches it and
 Elasticsearch, and rebuilds it if not. It runs in `cms` rather than in `cms-init` on purpose: `cms`
