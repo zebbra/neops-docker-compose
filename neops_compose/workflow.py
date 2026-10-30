@@ -51,8 +51,8 @@ def guard_downgrade(last_up: dict | None, images: dict[str, str], allow: bool) -
         raise Downgrade(
             f"neops-core would move from {tag_of(prev)} back to {tag_of(now)}, which may not run on "
             "the migrations the newer core applied. Migrate the database back with the newer core, or "
-            "restore a backup, as docs/30-operations.md#upgrades describes; --allow-downgrade is one "
-            "step of that procedure, not a substitute for it."
+            "restore a backup, as docs/30-operations.md#going-back-to-an-earlier-release describes; "
+            "--allow-downgrade is one step of that procedure, not a substitute for it."
         )
 
 

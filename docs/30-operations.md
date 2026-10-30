@@ -114,6 +114,8 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 
 # 5. Start only the databases, which initialise empty, and load the dumps. --wait matters:
 #    pg_restore cannot connect while Postgres is still initialising, and `up -d` returns before it is.
+#    Skip a database whose dump the manifest's "dumps" does not list (its Postgres was not running
+#    at backup time): step 3 left its data in place, and there is no dump to load.
 ./neops render
 ./neops compose -- up -d --wait postgres-cms postgres-engine   # + postgres-keycloak, if used
 ./neops compose -- exec -T postgres-cms pg_restore -U neops -d neops --clean --if-exists \
@@ -174,13 +176,26 @@ release's notes first. For neops-core 2.3.0
 - **Before step 1, while 2.3.0 still runs**, do "First, on both, while this release still runs":
   list the facts and checks whose values disagree in type, give each one type, and export the sync
   schemas to `elastic-sync-config.json`.
-- **After step 3**, on a metrics install, put back the copy of Grafana's data that
+- **After step 3**, on a metrics install whose earlier commit pins Grafana 11, put back the copy
+  of Grafana's data that
   [Upgrading to the release with centralized logging](#upgrading-to-the-release-with-centralized-logging)
-  took, since Grafana 11 cannot open the data Grafana 12 migrated:
+  took, since Grafana 11 cannot open the data Grafana 12 migrated. Going back between two commits
+  that both pin Grafana 12 needs nothing, and the block below then does nothing. It moves the
+  current data aside rather than deleting it:
 
     ```bash
-    sudo rm -rf "$DATA/metrics/grafana" && sudo cp -a "$DATA/metrics/grafana.pre-upgrade" "$DATA/metrics/grafana"
+    grafana=$(grep -ho 'grafana/grafana:[0-9]*' compose.grafana.yaml compose.metrics.yaml 2>/dev/null | head -1 | cut -d: -f2)
+    if [ "$grafana" = 11 ] && [ -d "$DATA/metrics/grafana.pre-upgrade" ]; then
+      sudo mv "$DATA/metrics/grafana" "$DATA/metrics/grafana.before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+      sudo cp -a "$DATA/metrics/grafana.pre-upgrade" "$DATA/metrics/grafana"
+    elif [ "$grafana" = 11 ]; then
+      echo "no $DATA/metrics/grafana.pre-upgrade: Grafana 11 cannot start on the data Grafana 12 migrated"
+    fi
     ```
+
+    Without that copy there is no way back for Grafana's own state (its dashboards and users); the
+    metrics themselves are unaffected. Delete `grafana.before-restore-*` with the Postgres copies
+    once you are satisfied.
 
 - **After step 5**, while only the databases run, load that export into the restored database:
 
