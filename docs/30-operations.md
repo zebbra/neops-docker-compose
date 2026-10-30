@@ -141,8 +141,14 @@ cp -a backups/<timestamp>/cust-cert/. cust-cert/    # if you use custom CAs
 It worked when `up` (and step 7's rebuild, if you ran it) exited 0 and `doctor` passes;
 `doctor` alone is no proof, since it has passed with an empty groups index after a failed `up`.
 Once you are satisfied, delete the moved-aside data:
-`sudo rm -rf "$DATA"/*/postgres.before-restore-*`. Until then it is the way back to the state
-before the restore: stop the stack and move it back.
+`sudo rm -rf "$DATA"/*/postgres.before-restore-*`.
+
+Until then that data is an emergency hatch, not a clean undo: moving it back returns only Postgres.
+With the stack stopped, you also have to put back the checkout (step 1), `.env` and
+`data/.neops/state.json` (step 2), and `data/secrets/`, `certs/` and `cust-cert/` (step 4), and
+empty Elasticsearch again as in step 3, since its indices now hold the restored data. Those steps
+overwrite the files without keeping a copy, so if you may want this hatch, copy them somewhere
+safe before step 2.
 
 Step 2 rewrites `data/.neops/state.json`, which the backup does not carry, to the deployment
 migrations its `manifest.json` lists. A migration applied after the backup rewrote the `.env` the
@@ -175,7 +181,10 @@ release's notes first. For neops-core 2.3.0
 
 - **Before step 1, while 2.3.0 still runs**, do "First, on both, while this release still runs":
   list the facts and checks whose values disagree in type, give each one type, and export the sync
-  schemas to `elastic-sync-config.json`.
+  schemas to `elastic-sync-config.json`. If 2.3.0 is not running, for example because the upgrade
+  failed before it came up, skip this and the load after step 5. You then have no list of
+  conflicts, and any sync schema changed on 2.3.0 is lost: the restored database keeps the schemas
+  of the backup, so step 6's rebuild can refuse documents the export would have let through.
 - **After step 3**, on a metrics install whose earlier commit pins Grafana 11, put back the copy
   of Grafana's data that
   [Upgrading to the release with centralized logging](#upgrading-to-the-release-with-centralized-logging)
@@ -206,8 +215,9 @@ release's notes first. For neops-core 2.3.0
     If it fails with `IntegrityError: Problem installing fixture '-'`, delete the stored schemas and
     load again, as step 3 of the notes' "neops-docker-compose, from the backup" shows.
 - **In step 6**, if `up --allow-downgrade` fails with "document(s) failed to index", give the key
-  one type in the earlier release's `/admin/core/elasticsyncconfig/`, using the list you made, and
-  run `./neops up --allow-downgrade` again.
+  one type in the earlier release's `/admin/core/elasticsyncconfig/`, using the list you made or,
+  without one, the documents the rebuild's output names, and run `./neops up --allow-downgrade`
+  again.
 
 The notes' "from the backup" procedure is this Restore in another order. They point at "steps 1
 and 2" of an earlier version of this section and then add their own steps; follow this section
