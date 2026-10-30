@@ -43,22 +43,14 @@ services:
     extends: { file: compose.yaml, service: worker }
     environment:
       WORKER_NAME: neops-worker-2
-
-  worker-zone-b-1:
-    extends: { file: compose.yaml, service: worker }
-    environment:
-      WORKER_NAME: neops-worker-zone-b-1
-      NEOPS_WORKER_NETWORK_ZONES: zone-b
-  worker-zone-b-2:
-    extends: { file: compose.yaml, service: worker }
-    environment:
-      WORKER_NAME: neops-worker-zone-b-2
-      NEOPS_WORKER_NETWORK_ZONES: zone-b
 ```
 
-`worker-2` is the second central worker and inherits `default`. The `zone-b` workers list their
-own zone instead; one that also serves the default network must list `default,zone-b`. Give every
-worker its own `WORKER_NAME`.
+`worker-2` is the second central worker and inherits `default`. Give every worker its own
+`WORKER_NAME`. Another zone's workers do not belong on the compose host: they share its routing
+table with the default workers, so a zone whose addresses overlap the default network's would send
+its devices' credentials to whatever answers there. Run them inside the zone's own network, as
+described under [Workers at another site](#workers-at-another-site). A worker that serves several
+zones lists them all, for example `default,zone-b`.
 
 `./neops doctor` passes as soon as any worker is online. It does not check zones: a zone whose
 workers are all down shows only as runs that wait.
