@@ -84,7 +84,8 @@ services:
     restart: unless-stopped
 
   postgres-engine:
-    # The engine connects as `postgres` to the database `neops-workflow`; both are hardcoded in the engine.
+    # The engine's database name is fixed at `neops-workflow` in the engine. Compose lets the engine
+    # connect as `postgres`, which is also its user when POSTGRES_USER is unset.
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
