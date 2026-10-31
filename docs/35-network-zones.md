@@ -90,8 +90,8 @@ docker run -d --name neops-worker-b-1 --network host --restart unless-stopped \
 `10.99.0.1` stands for an engine address the site can reach. The engine's worker routes are
 unauthenticated by design, and the jobs they hand out carry device passwords. Behind the bundled
 Traefik those routes answer `403` to every client outside the compose network, so a worker
-pointed at Traefik's engine address exits at startup with `Worker registration failed`: it needs
-the private path described below. With an external proxy (`compose.expose.yaml`) compose denies
+pointed at Traefik's engine address exits at startup with
+`Worker registration failed: HTTP 403 Forbidden`: it needs the private path described below. With an external proxy (`compose.expose.yaml`) compose denies
 nothing itself: your proxy must deny them (see [External proxy](40-external-proxy.md)), and the
 engine port that overlay publishes answers every process that reaches its bind address. A remote
 site's workers therefore need a private network path to the engine, such as a site-to-site VPN,
