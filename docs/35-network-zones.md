@@ -104,11 +104,11 @@ path reaches. Both are yours to build and secure; Neops does not provide or chec
    worker that extends it. A worker you defined otherwise is refused at its next start once the
    zone exists.
 2. Create the zone on the web client's **Network zones** page, which needs web client 6.1 or
-   later and write on the `network-zones` permission element. No role holds that write by
-   default, `NEOPS_ADMIN_ROLE` included: grant it to the roles that manage zones under
-   *Role permission elements* in the CMS admin site. The `networkZoneUpsert` mutation needs the
-   same write, and the superuser can also create the zone in the admin site at
-   `<NEOPS_CMS_URL>/admin/`.
+   later and write on the `network-zones` permission element. `cms-init` gives the
+   `NEOPS_ADMIN_ROLE` role that write on every `./neops up`; grant it to any other role that
+   manages zones under *Role permission elements* in the CMS admin site. The
+   `networkZoneUpsert` mutation needs the same write, and the superuser can also create the zone
+   in the admin site at `<NEOPS_CMS_URL>/admin/`.
    A zone's name is fixed once created; only its description changes. No worker needs to be up.
 3. Start the zone's workers. The engine refuses them while the zone does not exist; started too
    early, they exit and, with a restart policy, retry until it does.
