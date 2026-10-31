@@ -33,6 +33,9 @@ waits up to `BLACKBOARD_PENDING_JOB_TIMEOUT` (one hour, see
 [Engine limits](30-operations.md#engine-limits)) before it fails. A waiting `EXECUTE` job holds
 the engine's drain phase, so new runs everywhere wait with it.
 
+The developer-preview engine (`neops-workflow-engine-preview`) caps an installation at 2 workers,
+so a zones setup with more workers needs the licensed engine, the one `compose.yaml` pins.
+
 Compose runs one worker. Add the others in `compose.override.yaml` and append it to
 `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)). Extending the stock `worker` keeps each added
 worker on the image `compose.yaml` pins, so a `git pull && ./neops up` upgrades them together with
