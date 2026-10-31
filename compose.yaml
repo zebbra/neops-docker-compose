@@ -11,7 +11,7 @@ x-versions:
   engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.45.0}}
   monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.45.0}}
   worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.4.0}}
-  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.0.1}}
+  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.1.0}}
 
 x-logging: &logging
   driver: json-file
