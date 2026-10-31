@@ -6,9 +6,10 @@ tags: [howto, operations]
 
 # Network zones
 
-A network zone names a network whose device addresses may overlap another's. Every device is in
-exactly one zone, and only a worker that serves a job's zone can claim it. A device nobody
-assigned is in `default`, which is also the zone every worker serves while the CMS holds no other.
+A network zone is a network that only its own workers reach; zones may reuse each other's
+addresses. Every device is in exactly one zone, and only a worker that serves a job's zone can
+claim it. A device nobody assigned is in `default`, which is also the zone every worker serves
+while the CMS holds no other.
 Zones need neops-core 2.4, workflow engine 0.45 and worker 0.4 or later.
 
 A worker serves the zones listed in `NEOPS_WORKER_NETWORK_ZONES`, comma-separated. Once the CMS
