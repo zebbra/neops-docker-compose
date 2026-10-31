@@ -99,10 +99,12 @@ secure; Neops does not provide or check them.
 1. Make sure every central worker lists `default`. The stock `worker` does, and so does every
    worker that extends it. A worker you defined otherwise is refused at its next start once the
    zone exists.
-2. Create the zone, as the superuser in the CMS admin site at `<NEOPS_CMS_URL>/admin/`, or with
-   the `networkZoneUpsert` mutation. The mutation needs write on the `network-zones` permission
-   element, which no role holds by default, `NEOPS_ADMIN_ROLE` included: grant it to the roles
-   that manage zones under *Role permission elements* in the admin site.
+2. Create the zone on the web client's **Network zones** page, which needs web client 6.1 or
+   later and write on the `network-zones` permission element. No role holds that write by
+   default, `NEOPS_ADMIN_ROLE` included: grant it to the roles that manage zones under
+   *Role permission elements* in the CMS admin site. The `networkZoneUpsert` mutation needs the
+   same write, and the superuser can also create the zone in the admin site at
+   `<NEOPS_CMS_URL>/admin/`.
    A zone's name is fixed once created; only its description changes. No worker needs to be up.
 3. Start the zone's workers. The engine refuses them while the zone does not exist; started too
    early, they exit and, with a restart policy, retry until it does.
@@ -119,7 +121,8 @@ The CMS cannot see which zones the engine still routes jobs to, so retire a site
    workers still run. A step with `override: true` to a live zone works too, since
    `device_update_device` connects to no device.
 2. Stop the site's workers.
-3. Delete the zone, in the admin site or with `networkZoneDelete`, once no workflow run names it.
+3. Delete the zone on the Network zones page, in the admin site or with `networkZoneDelete`, once
+   no workflow run names it.
 
 A move or delete left until the workers are gone waits the full hour for a worker that never
 comes, and holds every other run meanwhile. For a site that is already gone, delete its devices in
