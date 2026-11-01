@@ -129,6 +129,18 @@ def test_cms_init_seeds_the_admin_role():
     assert "${NEOPS_DATA_DIR:-./data}/secrets/jwt" in sources
 
 
+def test_cms_init_skips_the_role_seed_on_a_core_without_it():
+    """bootstrap_admin_role came with core 2.4.0. An emergency NEOPS_CORE_TAG below that must not
+    fail cms-init, which every core service waits on, and with it the whole stack."""
+    script = load(REPO / "compose.yaml")["services"]["cms-init"]["command"][-1]
+    lines = [line.strip() for line in script.splitlines()]
+    guard = lines.index("if python manage.py help bootstrap_admin_role >/dev/null 2>&1; then")
+    assert lines[guard + 1].startswith("python manage.py bootstrap_admin_role ")
+    assert lines[guard + 2] == "else"
+    assert lines[guard + 3].startswith("echo ")
+    assert lines[guard + 4] == "fi"
+
+
 def test_no_service_mounts_the_retired_role_seed_script():
     assert not (REPO / "cms" / "bootstrap_admin_role.py").exists()
     for path in sorted(REPO.glob("compose*.yaml")):
