@@ -10,7 +10,7 @@ A network zone is a network that only its own workers reach; zones may reuse eac
 addresses. Every device is in exactly one zone, and only a worker that serves a job's zone can
 claim it. A device nobody assigned is in `default`, which is also the zone every worker serves
 while the CMS holds no other.
-Zones need neops-core 2.4, workflow engine 0.45 and worker 0.4 or later.
+Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 or later.
 
 A worker serves the zones listed in `NEOPS_WORKER_NETWORK_ZONES`, comma-separated. Once the CMS
 holds any zone, the engine refuses a worker that lists none: it exits at startup and asks for the
