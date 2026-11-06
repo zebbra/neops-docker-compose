@@ -127,12 +127,13 @@ Every step is idempotent and re-runs on each `./neops up`. It never revokes anyt
 or narrowing that role afterwards in the admin site is safe for the permissions it does not
 mention, but the four grants above are re-applied on every start: one removed from that role
 comes back. Renaming `NEOPS_ADMIN_ROLE` seeds a *second* role rather than renaming the first.
-If other users already hold a role of this name, the seed does not widen it and warns, in
-`./neops logs cms-init` only: it adds `NEOPS_ADMIN_USER` to that role and gives the role the
-`network-zones` write, but neither the scope grant nor the workflow profile. With an OIDC overlay
-that is the usual case, since every user your identity provider gives the `admin` client role
-holds the role. Set `NEOPS_ADMIN_ROLE` to a role only the superuser holds, or grant the shared
-role what it lacks yourself.
+If other users already hold a role of this name, the seed widens it only by the `network-zones`
+write and warns, in `./neops logs cms-init` only: it adds `NEOPS_ADMIN_USER` to that role, but
+skips the scope grant and the workflow profile. With an OIDC overlay that is the usual case, since
+every user your identity provider gives the `admin` client role holds the role, and each of them
+then may write every zone (zones are not per tenant). Set `NEOPS_ADMIN_ROLE` to a role only the
+superuser holds; the seed re-applies the write on every `up`, so remove it from the shared role by
+hand afterwards if it should not have it.
 
 ## Adding users
 
