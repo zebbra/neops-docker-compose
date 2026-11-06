@@ -311,6 +311,9 @@ services:
       URL_BLACKBOARD: http://engine:3030
       DIR_FUNCTION_BLOCKS: neops/fb
       WORKER_NAME: ${NEOPS_WORKER_NAME:-neops-worker}
+      # A literal, never read from .env: a remote site's worker copied from that file must still
+      # be refused when it names no zone. See docs/35-network-zones.md.
+      NEOPS_WORKER_NETWORK_ZONES: default
     depends_on:
       engine:
         condition: service_healthy

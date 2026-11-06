@@ -304,6 +304,15 @@ def test_the_worker_is_never_put_on_the_log_store_network():
         assert "worker" not in (load(f).get("services") or {}) or f.name == "compose.yaml", f.name
 
 
+def test_the_central_worker_lists_the_default_zone_in_its_own_service_definition():
+    """Once the CMS holds a network zone, the engine refuses a worker that lists none. The value
+    is a literal so that no .env a remote site copies can hand its workers the default zone."""
+    environment = load(REPO / "compose.yaml")["services"]["worker"]["environment"]
+    assert environment["NEOPS_WORKER_NETWORK_ZONES"] == "default"
+    for env_file in [REPO / ".env.example", *sorted((REPO / "examples").glob("*.env"))]:
+        assert "NEOPS_WORKER_NETWORK_ZONES" not in env_file.read_text(), env_file.name
+
+
 def _docker_compose_available() -> bool:
     if shutil.which("docker") is None:
         return False
