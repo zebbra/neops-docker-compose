@@ -175,8 +175,27 @@ documents of removed rows.
 
 `up` refuses an older `neops-core` (see [Upgrades](#upgrades)); going back is the
 [Restore](#restore) above, with the backup you took before the upgrade, after the steps the
-release you leave asks for while it still runs. Read "Going back to an earlier release" in that
-release's notes first. For neops-core 2.3.0
+release you leave asks for while it still runs. Read "Going back" in that release's notes first,
+and in the notes of every release you go back past.
+
+For neops-core 2.4.0
+([its notes](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#log-lines-survive-a-log-store-outage)):
+
+- **Before step 1, while 2.4.0 still runs and its log store answers**, wait until core has handed
+  every waiting log line to the store: the restore replaces the table that holds them, and they
+  may be the only record of who applied a change. Repeat until it reports `rows` 0:
+
+    ```bash
+    ./neops compose -- exec cms python manage.py log_store_status
+    ```
+
+    If the store cannot come back in time, save the lines first:
+
+    ```bash
+    ./neops compose -- exec -T postgres-cms pg_dump -U neops -Fc --table=core_logoutboxentry neops > core_logoutboxentry.dump
+    ```
+
+When you go back past 2.3.0 as well, add the steps of neops-core 2.3.0
 ([its notes](https://github.com/zebbra/neops-core/blob/v2.3.0/docs/releases/v2.3.0.md#going-back-to-an-earlier-release)):
 
 - **Before step 1, while 2.3.0 still runs**, do "First, on both, while this release still runs":
