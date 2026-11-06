@@ -6,40 +6,48 @@ tags: [howto, operations]
 
 # Network zones
 
-A network zone is a network that only its own workers reach; zones may reuse each other's
-addresses. Every device is in exactly one zone, and only a worker that serves a job's zone can
-claim it. A device nobody assigned is in `default`, which is also the zone every worker serves
-while the CMS holds no other.
-Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 or later.
+A network zone is a network that only its own workers reach, so only a worker that serves a
+job's zone can claim it; a device nobody assigned is in `default`. The workflow engine's
+[Network Zones][engine-zones] page owns the rules; this page covers what is particular to a
+compose install. Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 or later.
 
 A worker serves the zones listed in `NEOPS_WORKER_NETWORK_ZONES`, comma-separated. Once the CMS
 holds any zone, the engine refuses a worker that lists none: it exits at startup and asks for the
-setting. That protects a remote site whose worker lost its setting, which would otherwise reach
-the default network's addresses, with their devices' credentials, from inside its own network.
+setting. That protects against a forgotten setting, not against a host at the site: a remote
+site's worker that lost its setting would otherwise reach the default network's addresses, with
+their devices' credentials, from inside its own network.
 
 ## The central worker
 
 `compose.yaml`'s `worker` service sets `NEOPS_WORKER_NETWORK_ZONES: default`, as a literal value
-in its own service definition. There is nothing to change. Keep the setting out of `.env`: it is
-the file a remote site's worker is most likely to be started from, and from `.env` it would hand
-that worker the default zone too.
+in its own service definition, and compose never reads the key from `.env`. For the default zone
+there is nothing to change. Keep the key out of `.env` all the same: it is the file a remote site's
+worker is most likely to be started from, and from there it would hand that worker the default
+zone too.
+
+To give the stock worker other zones, set the key in `compose.override.yaml` and append that file
+to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)):
+
+```yaml
+services:
+  worker:
+    environment:
+      NEOPS_WORKER_NETWORK_ZONES: default,zone-b
+```
 
 ## Two workers per zone
 
-Run at least two workers for every zone, `default` included. A rollback goes back to its forward
-job's zone, and the worker it needs is often the one that just died. A zone with one worker also
-holds up its runs during every restart of that worker, and a job no worker of its zone claims
-waits up to `BLACKBOARD_PENDING_JOB_TIMEOUT` (one hour, see
-[Engine limits](30-operations.md#engine-limits)) before it fails. A waiting `EXECUTE` job holds
-the engine's drain phase, so new runs everywhere wait with it.
-
-The developer-preview engine (`neops-workflow-engine-preview`) caps an installation at 2 workers,
-so a zones setup with more workers needs the licensed engine, the one `compose.yaml` pins.
+Run at least two workers for every zone, `default` included: a zone's jobs, its rollbacks among
+them, wait for that zone's own workers for up to `BLACKBOARD_PENDING_JOB_TIMEOUT` (see
+[Engine limits](30-operations.md#engine-limits)) and hold up new runs in every zone meanwhile,
+as the engine's [page][engine-zones] explains under *Workers and their zones*. The
+developer-preview engine (`neops-workflow-engine-preview`) admits 2 workers per installation, so a
+zones setup with more workers needs the licensed engine, the one `compose.yaml` pins.
 
 Compose runs one worker. Add the others in `compose.override.yaml` and append it to
 `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)). Extending the stock `worker` keeps each added
 worker on the image `compose.yaml` pins, so a `git pull && ./neops up` upgrades them together with
-the engine, which on 0.x accepts only workers of its own minor version:
+the engine, which on 0.x accepts only workers whose engine client is of its own minor version:
 
 ```yaml
 services:
@@ -90,13 +98,23 @@ docker run -d --name neops-worker-b-1 --network host --restart unless-stopped \
 `10.99.0.1` stands for an engine address the site can reach. The engine's worker routes are
 unauthenticated by design, and the jobs they hand out carry device passwords. Behind the bundled
 Traefik those routes answer `403` to every client outside the compose network, so a worker
-pointed at Traefik's engine address exits at startup with
-`Worker registration failed: HTTP 403 Forbidden`: it needs the private path described below. With an external proxy (`compose.expose.yaml`) compose denies
-nothing itself: your proxy must deny them (see [External proxy](40-external-proxy.md)), and the
-engine port that overlay publishes answers every process that reaches its bind address. A remote
-site's workers therefore need a private network path to the engine, such as a site-to-site VPN,
-and a `compose.override.yaml` you write that publishes the engine's port on an address only that
-path reaches. Both are yours to build and secure; Neops does not provide or check them.
+pointed at Traefik's engine address exits at startup with this line and needs the private path
+described below:
+
+```text
+Worker registration failed: HTTP 403 Forbidden. Check URL_BLACKBOARD and any proxy in front of the engine.
+```
+
+With an external proxy (`compose.expose.yaml`) compose denies nothing itself: your proxy must
+deny them (see [External proxy](40-external-proxy.md)), and the engine port that overlay publishes
+answers every process that reaches its bind address. A remote site's workers therefore need a
+private network path to the engine, such as a site-to-site VPN, and a `compose.override.yaml` you
+write that publishes the engine's port on an address only that path reaches. Both are yours to
+build and secure; Neops does not provide or check them.
+
+A zone routes jobs and authorizes nothing: every host the path reaches can register for any zone,
+`default` included, and receive its devices' passwords. Restrict the path to the zone's worker
+hosts, and encrypt it, with a VPN or with TLS in front of the published port.
 
 ## Creating a zone
 
@@ -110,7 +128,11 @@ path reaches. Both are yours to build and secure; Neops does not provide or chec
    `networkZoneUpsert` mutation needs the same write, and the superuser can also create the zone
    in the admin site at `<NEOPS_CMS_URL>/admin/`.
    A zone's name is fixed once created; only its description changes. No worker needs to be up.
-3. Start the zone's workers. The engine refuses them while the zone does not exist; started too
+3. If this is the CMS's first zone, set `NEOPS_WORKER_NETWORK_ZONES` on every worker that lists
+   no zone, such as one at a site that registered before, and restart it. The engine checks a
+   worker's zones only when it registers, so until then such a worker keeps claiming `default`
+   jobs. The Monitor App's **Workers** page flags the workers that registered no zone list.
+4. Start the zone's workers. The engine refuses them while the zone does not exist; started too
    early, they exit and, with a restart policy, retry until it does.
 
 A device moves into the zone only through a run, with `device_update_device`'s `network_zone`
@@ -136,3 +158,5 @@ restored later is in `default`.
 
 Afterwards, a worker that still lists the zone is refused at its next start, and a run that names
 it fails before its first step.
+
+[engine-zones]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/
