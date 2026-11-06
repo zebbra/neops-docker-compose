@@ -417,6 +417,22 @@ documents aside, so the next `up` leaves them alone; `--rebuild --models` stamps
 models' indices, and `--populate` stamps nothing. A hand-run `--rebuild-if-stale` that exits 3
 finished, but set documents aside as described above.
 
+### Upgrading to engine 0.46
+
+This release moves neops-core to 2.4.0, the engine to 0.46 and the worker to 0.5, which bring
+[network zones](35-network-zones.md). Let every workflow run finish first: the engine cannot abort
+a run, and one that spans the upgrade can end holding its locks. Then:
+
+```bash
+./neops backup  # the backup "Going back to an earlier release" restores
+git pull
+./neops up
+```
+
+`up` starts neops-core before the engine, so the new engine never meets the older core. Move every
+worker you run outside compose to the worker image `compose.yaml` now pins: the 0.46 engine
+refuses older workers.
+
 ### Upgrading to the release with centralized logging
 
 This release moves the engine to 0.44 and the worker to 0.3, which are compatible only with each
