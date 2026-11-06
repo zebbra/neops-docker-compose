@@ -127,9 +127,12 @@ Every step is idempotent and re-runs on each `./neops up`. It never revokes anyt
 or narrowing that role afterwards in the admin site is safe for the permissions it does not
 mention, but the four grants above are re-applied on every start: one removed from that role
 comes back. Renaming `NEOPS_ADMIN_ROLE` seeds a *second* role rather than renaming the first.
-If other users already hold a role of this name, the seed leaves it alone and warns; set
-`NEOPS_ADMIN_ROLE` to a role only the superuser holds. `cms-init` then only adds
-`NEOPS_ADMIN_USER` to that role and skips the workflow profile too.
+If other users already hold a role of this name, the seed leaves it alone and warns, in
+`./neops logs cms-init` only: it adds `NEOPS_ADMIN_USER` to that role and grants
+nothing else, neither the `network-zones` write nor the workflow profile. With an OIDC overlay
+that is the usual case, since every user your identity provider gives the `admin` client role
+holds the role. Set `NEOPS_ADMIN_ROLE` to a role only the superuser holds, or grant the shared
+role what it lacks yourself.
 
 ## Adding users
 

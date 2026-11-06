@@ -123,8 +123,10 @@ hosts, and encrypt it, with a VPN or with TLS in front of the published port.
    zone exists.
 2. Create the zone on the web client's **Network zones** page, which needs web client 6.1 or
    later and write on the `network-zones` permission element. `cms-init` gives the
-   `NEOPS_ADMIN_ROLE` role that write on every `./neops up`; grant it to any other role that
-   manages zones under *Role permission elements* in the CMS admin site. The
+   `NEOPS_ADMIN_ROLE` role that write on every `./neops up`, unless other users already hold that
+   role (see [The first user's permissions](10-install.md#the-first-users-permissions)); grant it
+   to that role then, and to any other role that manages zones, under *Role permission elements*
+   in the CMS admin site. The
    `networkZoneUpsert` mutation needs the same write, and the superuser can also create the zone
    in the admin site at `<NEOPS_CMS_URL>/admin/`.
    A zone's name is fixed once created; only its description changes. No worker needs to be up.
