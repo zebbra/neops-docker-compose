@@ -161,4 +161,10 @@ restored later is in `default`.
 Afterwards, a worker that still lists the zone is refused at its next start, and a run that names
 it fails before its first step.
 
+## Going back
+
+Going back below neops-core 2.4.0 deletes every zone and every device's zone; see
+[Going back below 2.4.0](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#going-back-below-240)
+in its notes.
+
 [engine-zones]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/
