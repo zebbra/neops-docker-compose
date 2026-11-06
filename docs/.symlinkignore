@@ -2,6 +2,7 @@ certs
 cms
 cust-cert
 examples
+logs
 metrics
 migrations
 neops_compose
