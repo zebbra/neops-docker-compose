@@ -36,9 +36,9 @@ import inside  # noqa: E402
 import logrecords  # noqa: E402
 import upgrade_hook  # noqa: E402
 import workflows  # noqa: E402
+from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from guards import SHELL_COMPOSE_KEYS, shell_compose_refusal  # noqa: E402,F401
 
-from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from neops_compose.backup import ARCHIVE_NAME  # noqa: E402
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import DENY_LOG_PROBE, DENY_PROBE, NAME_WIDTH, Http, login  # noqa: E402

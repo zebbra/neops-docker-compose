@@ -122,11 +122,12 @@ hosts, and encrypt it, with a VPN or with TLS in front of the published port.
    worker that extends it. A worker you defined otherwise is refused at its next start once the
    zone exists.
 2. Create the zone on the web client's **Network zones** page, which needs web client 6.1 or
-   later and write on the `network-zones` permission element. No role holds that write by
-   default, `NEOPS_ADMIN_ROLE` included: grant it to the roles that manage zones under
-   *Role permission elements* in the CMS admin site. The `networkZoneUpsert` mutation needs the
-   same write, and the superuser can also create the zone in the admin site at
-   `<NEOPS_CMS_URL>/admin/`.
+   later and write on the `network-zones` permission element. `cms-init` gives the
+   `NEOPS_ADMIN_ROLE` role that write on every `./neops up`, also when other users hold that role
+   (see [The first user's permissions](10-install.md#the-first-users-permissions)); grant it to
+   any other role that manages zones under *Role permission elements* in the CMS admin site. The
+   `networkZoneUpsert` mutation needs the same write, and the superuser can also create the zone
+   in the admin site at `<NEOPS_CMS_URL>/admin/`.
    A zone's name is fixed once created; only its description changes. No worker needs to be up.
 3. If this is the CMS's first zone, set `NEOPS_WORKER_NETWORK_ZONES` on every worker that lists
    no zone, such as one at a site that registered before, and restart it. The engine checks a
@@ -158,5 +159,11 @@ restored later is in `default`.
 
 Afterwards, a worker that still lists the zone is refused at its next start, and a run that names
 it fails before its first step.
+
+## Going back
+
+Going back below neops-core 2.4.0 deletes every zone and every device's zone; see
+[Going back below 2.4.0](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#going-back-below-240)
+in its notes.
 
 [engine-zones]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/

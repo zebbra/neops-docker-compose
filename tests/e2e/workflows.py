@@ -26,10 +26,10 @@ from urllib.parse import urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from cms import GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from guards import shell_compose_refusal  # noqa: E402
 from logrecords import RunLines  # noqa: E402
 
-from cms import GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import Http  # noqa: E402
 from neops_compose.env import Env  # noqa: E402
