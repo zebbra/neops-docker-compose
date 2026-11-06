@@ -6,11 +6,10 @@ tags: [howto, operations]
 
 # Network zones
 
-A network zone is a network that only its own workers reach; zones may reuse each other's
-addresses. Every device is in exactly one zone, and only a worker that serves a job's zone can
-claim it. A device nobody assigned is in `default`, which is also the zone every worker serves
-while the CMS holds no other.
-Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 or later.
+A network zone is a network that only its own workers reach, so only a worker that serves a
+job's zone can claim it; a device nobody assigned is in `default`. The workflow engine's
+[Network Zones][engine-zones] page owns the rules; this page covers what is particular to a
+compose install. Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 or later.
 
 A worker serves the zones listed in `NEOPS_WORKER_NETWORK_ZONES`, comma-separated. Once the CMS
 holds any zone, the engine refuses a worker that lists none: it exits at startup and asks for the
@@ -26,20 +25,17 @@ that worker the default zone too.
 
 ## Two workers per zone
 
-Run at least two workers for every zone, `default` included. A rollback goes back to its forward
-job's zone, and the worker it needs is often the one that just died. A zone with one worker also
-holds up its runs during every restart of that worker, and a job no worker of its zone claims
-waits up to `BLACKBOARD_PENDING_JOB_TIMEOUT` (one hour, see
-[Engine limits](30-operations.md#engine-limits)) before it fails. A waiting `EXECUTE` job holds
-the engine's drain phase, so new runs everywhere wait with it.
-
-The developer-preview engine (`neops-workflow-engine-preview`) caps an installation at 2 workers,
-so a zones setup with more workers needs the licensed engine, the one `compose.yaml` pins.
+Run at least two workers for every zone, `default` included: a zone's jobs, its rollbacks among
+them, wait for that zone's own workers for up to `BLACKBOARD_PENDING_JOB_TIMEOUT` (see
+[Engine limits](30-operations.md#engine-limits)) and hold up new runs in every zone meanwhile,
+as the engine's [page][engine-zones] explains under *Workers and their zones*. The
+developer-preview engine (`neops-workflow-engine-preview`) admits 2 workers per installation, so a
+zones setup with more workers needs the licensed engine, the one `compose.yaml` pins.
 
 Compose runs one worker. Add the others in `compose.override.yaml` and append it to
 `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)). Extending the stock `worker` keeps each added
 worker on the image `compose.yaml` pins, so a `git pull && ./neops up` upgrades them together with
-the engine, which on 0.x accepts only workers of its own minor version:
+the engine, which on 0.x accepts only workers whose engine client is of its own minor version:
 
 ```yaml
 services:
@@ -136,3 +132,5 @@ restored later is in `default`.
 
 Afterwards, a worker that still lists the zone is refused at its next start, and a run that names
 it fails before its first step.
+
+[engine-zones]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/
