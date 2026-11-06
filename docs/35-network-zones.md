@@ -128,7 +128,11 @@ hosts, and encrypt it, with a VPN or with TLS in front of the published port.
    same write, and the superuser can also create the zone in the admin site at
    `<NEOPS_CMS_URL>/admin/`.
    A zone's name is fixed once created; only its description changes. No worker needs to be up.
-3. Start the zone's workers. The engine refuses them while the zone does not exist; started too
+3. If this is the CMS's first zone, set `NEOPS_WORKER_NETWORK_ZONES` on every worker that lists
+   no zone, such as one at a site that registered before, and restart it. The engine checks a
+   worker's zones only when it registers, so until then such a worker keeps claiming `default`
+   jobs. The Monitor App's **Workers** page flags the workers that registered no zone list.
+4. Start the zone's workers. The engine refuses them while the zone does not exist; started too
    early, they exit and, with a restart policy, retry until it does.
 
 A device moves into the zone only through a run, with `device_update_device`'s `network_zone`
