@@ -13,8 +13,9 @@ compose install. Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 
 
 A worker serves the zones listed in `NEOPS_WORKER_NETWORK_ZONES`, comma-separated. Once the CMS
 holds any zone, the engine refuses a worker that lists none: it exits at startup and asks for the
-setting. That protects a remote site whose worker lost its setting, which would otherwise reach
-the default network's addresses, with their devices' credentials, from inside its own network.
+setting. That protects against a forgotten setting, not against a host at the site: a remote
+site's worker that lost its setting would otherwise reach the default network's addresses, with
+their devices' credentials, from inside its own network.
 
 ## The central worker
 
@@ -110,6 +111,10 @@ answers every process that reaches its bind address. A remote site's workers the
 private network path to the engine, such as a site-to-site VPN, and a `compose.override.yaml` you
 write that publishes the engine's port on an address only that path reaches. Both are yours to
 build and secure; Neops does not provide or check them.
+
+A zone routes jobs and authorizes nothing: every host the path reaches can register for any zone,
+`default` included, and receive its devices' passwords. Restrict the path to the zone's worker
+hosts, and encrypt it, with a VPN or with TLS in front of the published port.
 
 ## Creating a zone
 
