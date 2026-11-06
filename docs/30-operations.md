@@ -195,6 +195,11 @@ For neops-core 2.4.0
     ./neops compose -- exec -T postgres-cms pg_dump -U neops -Fc --table=core_logoutboxentry neops > core_logoutboxentry.dump
     ```
 
+- **Before step 1**, note which devices are in which [network zone](35-network-zones.md): going
+  back deletes every zone and every device's zone, as
+  [Going back below 2.4.0](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#going-back-below-240)
+  says, with how to list them and how to restore them going forward.
+
 When you go back past 2.3.0 as well, add the steps of neops-core 2.3.0
 ([its notes](https://github.com/zebbra/neops-core/blob/v2.3.0/docs/releases/v2.3.0.md#going-back-to-an-earlier-release)):
 
