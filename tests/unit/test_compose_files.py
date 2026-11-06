@@ -129,19 +129,18 @@ def test_cms_init_seeds_the_admin_role():
     assert "${NEOPS_DATA_DIR:-./data}/secrets/jwt" in sources
 
 
-def run_cms_init(tmp_path: Path, seed_exit: int | None) -> subprocess.CompletedProcess:
+def run_cms_init(tmp_path: Path, seed_exit: int) -> subprocess.CompletedProcess:
     """cms-init's script against a stub `python` that records each manage.py call. seed_exit is
-    bootstrap_admin_role's exit status, or None for a core that lacks the command."""
+    bootstrap_admin_role's exit status."""
     script = load(REPO / "compose.yaml")["services"]["cms-init"]["command"][-1].replace("$$", "$")
     stub = tmp_path / "python"
-    missing = "bootstrap_admin_role" if seed_exit is None else "none"
-    stub.write_text(
-        "#!/bin/sh\n"
-        'shift; echo "$*" >> calls\n'
-        f'[ "$1" = help ] && [ "$2" = {missing} ] && exit 1\n'
-        f'[ "$1" = bootstrap_admin_role ] && exit {seed_exit or 0}\n'
-        "exit 0\n"
-    )
+    lines = [
+        "#!/bin/sh",
+        'shift; echo "$*" >> calls',
+        f'[ "$1" = bootstrap_admin_role ] && exit {seed_exit}',
+        "exit 0",
+    ]
+    stub.write_text("\n".join(lines) + "\n")
     stub.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "NEOPS_ADMIN_USER": "neops", "NEOPS_ADMIN_ROLE": "admin"}
     return subprocess.run(["sh", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True)
@@ -172,13 +171,10 @@ def test_cms_init_fails_when_the_role_seed_fails(tmp_path):
     assert run_cms_init(tmp_path, seed_exit=1).returncode == 1
 
 
-def test_cms_init_skips_the_role_seed_on_a_core_without_it(tmp_path):
-    """bootstrap_admin_role came with core 2.4.0. An emergency NEOPS_CORE_TAG below that must not
-    fail cms-init, which every core service waits on, and with it the whole stack."""
-    result = run_cms_init(tmp_path, seed_exit=None)
-    assert result.returncode == 0, result.stderr
-    assert "the admin role is not seeded" in result.stdout
-    assert not any(call.startswith("bootstrap_admin_role") for call in manage_calls(tmp_path))
+def test_cms_init_runs_the_role_seed_without_probing_for_it(tmp_path):
+    """compose pins a core that has bootstrap_admin_role; a core without it fails cms-init."""
+    run_cms_init(tmp_path, seed_exit=0)
+    assert "help bootstrap_admin_role" not in (tmp_path / "calls").read_text().splitlines()
 
 
 def test_no_service_mounts_the_retired_role_seed_script():

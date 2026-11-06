@@ -189,12 +189,8 @@ services:
         # bootstrap_admin_role exits 3 when other users hold the role and leaves it alone; the
         # workflow profile would widen it for all of them, so it is skipped then too.
         seed=0
-        if python manage.py help bootstrap_admin_role >/dev/null 2>&1; then
-          python manage.py bootstrap_admin_role --user "$$NEOPS_ADMIN_USER" --role "$$NEOPS_ADMIN_ROLE" || seed=$$?
-          [ "$$seed" = 0 ] || [ "$$seed" = 3 ] || exit "$$seed"
-        else
-          echo "bootstrap_admin_role unavailable in this image (neops-core before 2.4.0); the admin role is not seeded"
-        fi
+        python manage.py bootstrap_admin_role --user "$$NEOPS_ADMIN_USER" --role "$$NEOPS_ADMIN_ROLE" || seed=$$?
+        [ "$$seed" = 0 ] || [ "$$seed" = 3 ] || exit "$$seed"
         if [ "$$seed" = 3 ]; then
           echo "role $$NEOPS_ADMIN_ROLE is held by other users: its workflow grants are left as they are too"
         elif python manage.py help grant_workflow_permissions >/dev/null 2>&1; then
