@@ -19,9 +19,20 @@ the default network's addresses, with their devices' credentials, from inside it
 ## The central worker
 
 `compose.yaml`'s `worker` service sets `NEOPS_WORKER_NETWORK_ZONES: default`, as a literal value
-in its own service definition. There is nothing to change. Keep the setting out of `.env`: it is
-the file a remote site's worker is most likely to be started from, and from `.env` it would hand
-that worker the default zone too.
+in its own service definition, and compose never reads the key from `.env`. For the default zone
+there is nothing to change. Keep the key out of `.env` all the same: it is the file a remote site's
+worker is most likely to be started from, and from there it would hand that worker the default
+zone too.
+
+To give the stock worker other zones, set the key in `compose.override.yaml` and append that file
+to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)):
+
+```yaml
+services:
+  worker:
+    environment:
+      NEOPS_WORKER_NETWORK_ZONES: default,zone-b
+```
 
 ## Two workers per zone
 
