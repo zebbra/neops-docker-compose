@@ -71,7 +71,7 @@ OUTBOX_DROP_MARKER = "dropped its oldest lines"
 # answer; 0.2.0-beta.5 and 0.1.0 never ask. No 0.2 was released, so this prerelease expires on
 # 2026-11-17: point CHAOS_OLD_WORKER_IMAGE at a worker one minor behind the pinned engine then.
 OLD_WORKER_IMAGE = os.environ.get("CHAOS_OLD_WORKER_IMAGE", "quay.io/zebbra/neops-worker-sdk:0.2.0-beta.8")
-# The last released engine before log_outbox: it boots on the 0.44 schema and never touches the table.
+# The last engine released before log_outbox, which it never touches; it boots on the pinned engine's schema.
 OLD_ENGINE_IMAGE = os.environ.get("CHAOS_OLD_ENGINE_IMAGE", "quay.io/zebbra/neops-workflow-engine:0.42.1")
 # What neops_worker.py of 0.2.0-beta.8 logs when it refuses to start, lowercased.
 REFUSAL_MARKER = "is not compatible with this engine"
@@ -537,7 +537,7 @@ def engine_gates_old_clients(version: str, pinned_tag: str) -> bool:
 
 
 def step_old_worker(report: Report, stack: Stack) -> None:
-    """C12a: a 0.2 worker against the 0.44 engine is told it is incompatible and exits."""
+    """C12a: a 0.2 worker against the pinned engine is told it is incompatible and exits."""
     version = workflows.engine_version(stack.deployment)
     pinned = pinned_engine_tag((stack.clone / "compose.yaml").read_text())
     if not engine_gates_old_clients(version, pinned):
@@ -562,14 +562,15 @@ def step_old_worker(report: Report, stack: Stack) -> None:
 
 
 def step_rollback_during_outage(report: Report, stack: Stack) -> None:
-    """C14: an older engine boots on the 0.44 schema while the store hangs, leaves log_outbox
+    """C14: an older engine boots on the pinned engine's schema while the store hangs, leaves log_outbox
     alone, and the re-upgraded engine replays it once the store answers again."""
     workflows.run_once(stack.engine, workflows.prepare(stack.deployment, stack.engine))
     with store_paused(stack):
         with env_values(stack, {"NEOPS_ENGINE_IMAGE": OLD_ENGINE_IMAGE}):
             booted = recreate(stack, "engine")
             report.add(
-                booted, f"engine {OLD_ENGINE_IMAGE} boots on the 0.44 schema ({stack.health_of('engine')})"
+                booted,
+                f"engine {OLD_ENGINE_IMAGE} boots on the pinned schema ({stack.health_of('engine')})",
             )
             _, rows_first = outbox_attempts_and_rows(stack)
             time.sleep(DOUBLE_OUTAGE_SECONDS)
@@ -578,7 +579,7 @@ def step_rollback_during_outage(report: Report, stack: Stack) -> None:
                 rows_first == rows_then,
                 f"the old engine leaves log_outbox alone ({rows_first} -> {rows_then})",
             )
-        report.add(recreate(stack, "engine"), "the 0.44 engine is back and healthy")
+        report.add(recreate(stack, "engine"), "the pinned engine is back and healthy")
     recovered, after = wait_logs(stack, drained, REPLAY_TIMEOUT)
     report.add(
         recovered and rows_then > 0,
