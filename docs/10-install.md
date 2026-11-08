@@ -114,15 +114,26 @@ on a *role*, so an account without one logs in, sees empty tables and gets
 `NEOPS_ADMIN_USER`:
 
 - a role named by `NEOPS_ADMIN_ROLE` (default `admin`) holding read, execute and write;
-- a scope named `Global` with all five visibility flags on (devices, groups, interfaces,
-  clients, topology), and that role granted read, execute and write on it;
+- that role granted read, execute and write on the scope `Global`, which core creates with all
+  five visibility flags on (devices, groups, interfaces, clients, topology); the seed leaves the
+  scope's own settings as they are;
+- write on the `network-zones` permission element, so the admin can create
+  [network zones](35-network-zones.md);
 - the `admin` workflow profile on the same role, which adds the workflow, execution and worker
   grants (`manage.py grant_workflow_permissions --role <role> --profile admin`).
 
+The first three come from core's `manage.py bootstrap_admin_role --user <user> --role <role>`.
 Every step is idempotent and re-runs on each `./neops up`. It never revokes anything, so widening
 or narrowing that role afterwards in the admin site is safe for the permissions it does not
-mention, but the three grants above are re-applied on every start. Renaming `NEOPS_ADMIN_ROLE`
-seeds a *second* role rather than renaming the first.
+mention, but the four grants above are re-applied on every start: one removed from that role
+comes back. Renaming `NEOPS_ADMIN_ROLE` seeds a *second* role rather than renaming the first.
+If other users already hold a role of this name, the seed widens it only by the `network-zones`
+write and warns, in `./neops logs cms-init` only: it adds `NEOPS_ADMIN_USER` to that role, but
+skips the scope grant and the workflow profile. With an OIDC overlay that is the usual case, since
+every user your identity provider gives the `admin` client role holds the role, and each of them
+then may write every zone (zones are not per tenant). Set `NEOPS_ADMIN_ROLE` to a role only the
+superuser holds; the seed re-applies the write on every `up`, so remove it from the shared role by
+hand afterwards if it should not have it.
 
 ## Adding users
 

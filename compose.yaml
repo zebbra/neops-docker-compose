@@ -7,11 +7,11 @@ x-versions:
   # A core without `elastic_index --rebuild-if-stale` costs a full search index rebuild on every
   # core upgrade (neops_compose/search_index.py); the flag came with
   # https://github.com/zebbra/neops-core/pull/2412.
-  core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.3.0}}
-  engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.44.1}}
-  monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.44.1}}
-  worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.3.0}}
-  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.0.1}}
+  core: &core-image ${NEOPS_CORE_IMAGE:-quay.io/zebbra/neops-core:${NEOPS_CORE_TAG:-2.4.0}}
+  engine: &engine-image ${NEOPS_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-0.46.0}}
+  monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.46.0}}
+  worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.5.0}}
+  web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.1.0}}
 
 x-logging: &logging
   driver: json-file
@@ -84,7 +84,8 @@ services:
     restart: unless-stopped
 
   postgres-engine:
-    # The engine connects as `postgres` to the database `neops-workflow`; both are hardcoded in the engine.
+    # The engine's database name is fixed at `neops-workflow` in the engine. Compose lets the engine
+    # connect as `postgres`, which is also its user when POSTGRES_USER is unset.
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
@@ -164,7 +165,6 @@ services:
     volumes:
       - ${NEOPS_DATA_DIR:-./data}/secrets/jwt:/etc/neops/jwt:ro
       - ./cust-cert:/cust-cert:ro
-      - ./cms/bootstrap_admin_role.py:/etc/neops/bootstrap_admin_role.py:ro
     restart: "no"
     depends_on:
       postgres-cms:
@@ -186,8 +186,14 @@ services:
           echo "$$out" | grep -q resource_already_exists_exception || { echo "$$out"; exit 1; }
         fi
         python manage.py shell -c "import os; from django.contrib.auth import get_user_model; U = get_user_model(); u, created = U.objects.get_or_create(username=os.environ['NEOPS_ADMIN_USER'], defaults={'email': os.environ['NEOPS_ADMIN_EMAIL'], 'is_staff': True, 'is_superuser': True}); created and (u.set_password(os.environ['NEOPS_ADMIN_PASSWORD']), u.save()); print('superuser', 'created' if created else 'present')"
-        python manage.py shell < /etc/neops/bootstrap_admin_role.py
-        if python manage.py help grant_workflow_permissions >/dev/null 2>&1; then
+        # bootstrap_admin_role exits 3 when other users hold the role and leaves it alone; the
+        # workflow profile would widen it for all of them, so it is skipped then too.
+        seed=0
+        python manage.py bootstrap_admin_role --user "$$NEOPS_ADMIN_USER" --role "$$NEOPS_ADMIN_ROLE" || seed=$$?
+        [ "$$seed" = 0 ] || [ "$$seed" = 3 ] || exit "$$seed"
+        if [ "$$seed" = 3 ]; then
+          echo "role $$NEOPS_ADMIN_ROLE is held by other users: its workflow grants are left as they are too"
+        elif python manage.py help grant_workflow_permissions >/dev/null 2>&1; then
           python manage.py grant_workflow_permissions --role "$$NEOPS_ADMIN_ROLE" --profile admin --yes \
             || echo "grant_workflow_permissions failed; grant the workflow rights by hand (docs/10-install.md)"
         else

@@ -175,8 +175,32 @@ documents of removed rows.
 
 `up` refuses an older `neops-core` (see [Upgrades](#upgrades)); going back is the
 [Restore](#restore) above, with the backup you took before the upgrade, after the steps the
-release you leave asks for while it still runs. Read "Going back to an earlier release" in that
-release's notes first. For neops-core 2.3.0
+release you leave asks for while it still runs. Read "Going back" in that release's notes first,
+and in the notes of every release you go back past.
+
+For neops-core 2.4.0
+([its notes](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#log-lines-survive-a-log-store-outage)):
+
+- **Before step 1, while 2.4.0 still runs and its log store answers**, wait until core has handed
+  every waiting log line to the store: the restore replaces the table that holds them, and they
+  may be the only record of who applied a change. Repeat until it reports `rows` 0:
+
+    ```bash
+    ./neops compose -- exec cms python manage.py log_store_status
+    ```
+
+    If the store cannot come back in time, save the lines first:
+
+    ```bash
+    ./neops compose -- exec -T postgres-cms pg_dump -U neops -Fc --table=core_logoutboxentry neops > core_logoutboxentry.dump
+    ```
+
+- **Before step 1**, note which devices are in which [network zone](35-network-zones.md): going
+  back deletes every zone and every device's zone, as
+  [Going back below 2.4.0](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#going-back-below-240)
+  says, with how to list them and how to restore them going forward.
+
+When you go back past 2.3.0 as well, add the steps of neops-core 2.3.0
 ([its notes](https://github.com/zebbra/neops-core/blob/v2.3.0/docs/releases/v2.3.0.md#going-back-to-an-earlier-release)):
 
 - **Before step 1, while 2.3.0 still runs**, do "First, on both, while this release still runs":
@@ -397,6 +421,22 @@ On a core with `--rebuild-if-stale`, `--rebuild` stamps the indices it rebuilt, 
 documents aside, so the next `up` leaves them alone; `--rebuild --models` stamps only those
 models' indices, and `--populate` stamps nothing. A hand-run `--rebuild-if-stale` that exits 3
 finished, but set documents aside as described above.
+
+### Upgrading to engine 0.46
+
+This release moves neops-core to 2.4.0, the engine to 0.46 and the worker to 0.5, which bring
+[network zones](35-network-zones.md). Let every workflow run finish first: the engine cannot abort
+a run, and one that spans the upgrade can end holding its locks. Then:
+
+```bash
+./neops backup  # the backup "Going back to an earlier release" restores
+git pull
+./neops up
+```
+
+`up` starts neops-core before the engine, so the new engine never meets the older core. Move every
+worker you run outside compose to the worker image `compose.yaml` now pins: the 0.46 engine
+refuses older workers.
 
 ### Upgrading to the release with centralized logging
 

@@ -51,6 +51,7 @@ from chaos_kit import (  # noqa: E402
     wait_logs,
 )
 from chaos_logs import LOADGEN_STEPS, LOG_STEPS  # noqa: E402
+from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 from run_scenario import (  # noqa: E402
     CONNECT,
     Report,
@@ -58,8 +59,6 @@ from run_scenario import (  # noqa: E402
     grafana_datasource_types,
     neops,
 )
-
-from cms import GROUP_DELETE, GROUP_READ, GROUP_UPSERT, gql  # noqa: E402
 
 BASE_KILL_SERVICES = ("cms", "engine", "redis", "postgres-cms", "worker", "traefik")
 LOG_KILL_SERVICES = ("victorialogs", "grafana")

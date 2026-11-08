@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 DUMMY_SECRET = "dummy0123456789abcdef"
 E2E_EXAMPLES = REPO / "tests" / "e2e" / "examples"
 # The directories the compose files and the e2e overlays bind-mount from the repo itself.
-LINKED_DIRS = ("metrics", "logs", "cms", "tests")
+LINKED_DIRS = ("metrics", "logs", "tests")
 
 
 def _fill_secrets(text: str, keys: tuple[str, ...]) -> str:

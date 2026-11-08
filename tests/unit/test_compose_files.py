@@ -13,7 +13,6 @@ ALLOWED_BIND_ROOTS = (
     "${NEOPS_DATA_DIR:-./data}/",
     "./generated/",
     "./certs/",
-    "./cms/",
     "./cust-cert/",
     "./metrics/",
     "./logs/",
@@ -116,18 +115,72 @@ def test_admin_credentials_are_confined_to_cms_init():
 
 def test_cms_init_seeds_the_admin_role():
     """A Django superuser holding no Neops role can log in and then read and write nothing, so
-    the role seed belongs to the install rather than to an operator's first manual step."""
+    the role seed belongs to the install rather than to an operator's first manual step. Core
+    owns the seed (`manage.py bootstrap_admin_role`, core 2.4.0), so the Helm chart and compose
+    give the admin the same grants."""
     init = load(REPO / "compose.yaml")["services"]["cms-init"]
-    assert (REPO / "cms" / "bootstrap_admin_role.py").is_file()
-    sources = [bind_source(v) for v in init["volumes"]]
-    assert "./cms/bootstrap_admin_role.py" in sources
-    # cms-init overrides the anchor's volume list rather than extending it, so the mounts the
-    # anchor carries have to be repeated here or they silently disappear.
-    assert "${NEOPS_DATA_DIR:-./data}/secrets/jwt" in sources
     command = " ".join(init["command"])
-    assert "/etc/neops/bootstrap_admin_role.py" in command
+    assert 'bootstrap_admin_role --user "$$NEOPS_ADMIN_USER" --role "$$NEOPS_ADMIN_ROLE"' in command
     assert "grant_workflow_permissions" in command
     assert "NEOPS_ADMIN_ROLE" in init["environment"]
+    # cms-init overrides the anchor's volume list rather than extending it, so the mounts the
+    # anchor carries have to be repeated here or they silently disappear.
+    sources = [bind_source(v) for v in init["volumes"]]
+    assert "${NEOPS_DATA_DIR:-./data}/secrets/jwt" in sources
+
+
+def run_cms_init(tmp_path: Path, seed_exit: int) -> subprocess.CompletedProcess:
+    """cms-init's script against a stub `python` that records each manage.py call. seed_exit is
+    bootstrap_admin_role's exit status."""
+    script = load(REPO / "compose.yaml")["services"]["cms-init"]["command"][-1].replace("$$", "$")
+    stub = tmp_path / "python"
+    lines = [
+        "#!/bin/sh",
+        'shift; echo "$*" >> calls',
+        f'[ "$1" = bootstrap_admin_role ] && exit {seed_exit}',
+        "exit 0",
+    ]
+    stub.write_text("\n".join(lines) + "\n")
+    stub.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "NEOPS_ADMIN_USER": "neops", "NEOPS_ADMIN_ROLE": "admin"}
+    return subprocess.run(["sh", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True)
+
+
+def manage_calls(tmp_path: Path) -> list[str]:
+    return [line for line in (tmp_path / "calls").read_text().splitlines() if not line.startswith("help ")]
+
+
+def test_cms_init_grants_the_workflow_profile_after_the_role_seed(tmp_path):
+    result = run_cms_init(tmp_path, seed_exit=0)
+    assert result.returncode == 0, result.stderr
+    calls = manage_calls(tmp_path)
+    assert calls[-2] == "bootstrap_admin_role --user neops --role admin"
+    assert calls[-1] == "grant_workflow_permissions --role admin --profile admin --yes"
+
+
+def test_cms_init_leaves_a_shared_role_without_the_workflow_profile(tmp_path):
+    """bootstrap_admin_role exits 3 when other users hold the role and leaves it alone; the
+    workflow profile would widen it for all of them, so cms-init skips that too and carries on."""
+    result = run_cms_init(tmp_path, seed_exit=3)
+    assert result.returncode == 0, result.stderr
+    assert not any(call.startswith("grant_workflow_permissions") for call in manage_calls(tmp_path))
+    assert "held by other users" in result.stdout
+
+
+def test_cms_init_fails_when_the_role_seed_fails(tmp_path):
+    assert run_cms_init(tmp_path, seed_exit=1).returncode == 1
+
+
+def test_cms_init_runs_the_role_seed_without_probing_for_it(tmp_path):
+    """compose pins a core that has bootstrap_admin_role; a core without it fails cms-init."""
+    run_cms_init(tmp_path, seed_exit=0)
+    assert "help bootstrap_admin_role" not in (tmp_path / "calls").read_text().splitlines()
+
+
+def test_no_service_mounts_the_retired_role_seed_script():
+    assert not (REPO / "cms" / "bootstrap_admin_role.py").exists()
+    for path in sorted(REPO.glob("compose*.yaml")):
+        assert "bootstrap_admin_role.py" not in path.read_text(), path.name
 
 
 def test_compose_documents_the_same_admin_user_the_cli_falls_back_to():
