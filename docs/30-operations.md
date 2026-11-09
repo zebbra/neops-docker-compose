@@ -478,12 +478,15 @@ GROUP BY w.id ORDER BY w.id;"
 
 The query lists only full `x.y.z` pins. A partial pin runs the highest registered version it
 matches: `:0.1` of `global_discover_network`, `global_add_devices` or `device_update_device` stops
-working too, `network_device_get_interfaces:0.1` moves to `0.1.1`, and a `:0` pin moves to `0.2.0`
-with its changed parameters.
+working too, and a `:0` pin of those three moves to `0.2.0` with its changed parameters. A pin of
+`network_device_get_interfaces` to `:0.1` or `:0` moves to `0.1.1`. A pin with no version runs the
+highest version of any major, which for these blocks is the same as `:0`.
 
 For each one you still run, publish a new version with its pins moved to the Worker 0.5 column.
 Published content is immutable, so the new document needs a higher version of its own, or
-`"increment": true` (see the engine's
+`"increment": true`; if you also change step parameters to match the new block versions, the
+engine can rate the change major and refuse `increment`, so declare the version yourself then (see
+the engine's
 [Publishing & Versioning](https://docs.neops.io/neops-workflow-engine/docs/20-workflows/15-publishing/)).
 Some new versions change their parameters or what they do; the SDK's
 [Upgrading to network zones](https://docs.neops.io/neops-worker-sdk-py/docs/deployment/10-worker-lifecycle/#upgrading-to-network-zones)
