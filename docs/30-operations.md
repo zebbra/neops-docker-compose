@@ -179,7 +179,7 @@ release you leave asks for while it still runs. Read "Going back" in that releas
 and in the notes of every release you go back past.
 
 For neops-core 2.4.0
-([its notes](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#log-lines-survive-a-log-store-outage)):
+([its notes](https://github.com/zebbra/neops-core/blob/v2.5.0/docs/releases/v2.4.0.md#log-lines-survive-a-log-store-outage)):
 
 - **Before step 1, while 2.4.0 still runs and its log store answers**, wait until core has handed
   every waiting log line to the store: the restore replaces the table that holds them, and they
@@ -197,7 +197,7 @@ For neops-core 2.4.0
 
 - **Before step 1**, note which devices are in which [network zone](35-network-zones.md): going
   back deletes every zone and every device's zone, as
-  [Going back below 2.4.0](https://github.com/zebbra/neops-core/blob/v2.4.0/docs/releases/v2.4.0.md#going-back-below-240)
+  [Going back below 2.4.0](https://github.com/zebbra/neops-core/blob/v2.5.0/docs/releases/v2.4.0.md#going-back-below-240)
   says, with how to list them and how to restore them going forward.
 
 When you go back past 2.3.0 as well, add the steps of neops-core 2.3.0
