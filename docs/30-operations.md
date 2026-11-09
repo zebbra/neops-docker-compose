@@ -426,7 +426,8 @@ finished, but set documents aside as described above.
 
 This release moves neops-core to 2.4.0, the engine to 0.46 and the worker to 0.5, which bring
 [network zones](35-network-zones.md). Let every workflow run finish first: the engine cannot abort
-a run, and one that spans the upgrade can end holding its locks. Then:
+a run, and one that spans the upgrade can end holding its locks. Republish the workflows that pin
+a [re-versioned base block](#workflows-that-pin-a-re-versioned-base-block) as well. Then:
 
 ```bash
 ./neops backup  # the backup "Going back to an earlier release" restores
@@ -437,6 +438,62 @@ git pull
 `up` starts neops-core before the engine, so the new engine never meets the older core. Move every
 worker you run outside compose to the worker image `compose.yaml` now pins: the 0.46 engine
 refuses older workers.
+
+#### Workflows that pin a re-versioned base block
+
+Worker 0.5 re-versions four base blocks, and a worker serves only the block versions its SDK
+registers:
+
+| Block | Worker 0.3 and 0.4 | Worker 0.5 |
+|---|---|---|
+| `fb.base.neops.io/global_discover_network` | `0.1.0` | `0.2.0` |
+| `fb.base.neops.io/global_add_devices` | `0.1.1` | `0.2.0` |
+| `fb.base.neops.io/device_update_device` | `0.1.1` | `0.2.0` |
+| `fb.base.neops.io/network_device_get_interfaces` | `0.1.0` | `0.1.1` |
+
+A stored workflow that pins one of the old versions still starts after the upgrade, but no worker
+takes its job, and no worker can: the 0.46 engine refuses the older workers that serve those
+versions. The engine fails the run safe once the job has waited `BLACKBOARD_PENDING_JOB_TIMEOUT`
+(1 h by default, see [Engine limits](#engine-limits); the engine checks once a minute). Right
+after `./neops up` it takes at least 6 minutes whatever the timeout, because the engine fails no
+waiting job in its first 6 minutes. The run's reason is only `Job failed with job result status:
+failed-ack`, and the job result says `No worker serving the job's network zone polled it` even
+while the zone's worker is online: the cause is the pinned block version. Publishing the stored
+document again does not help; the engine answers `unchanged` and keeps the old pins.
+
+Before the upgrade, list the workflow versions that pin an old version; the query works on the
+release you upgrade from as well:
+
+```bash
+./neops compose -- exec -T postgres-engine psql -U postgres -d neops-workflow -c "
+SELECT w.id, string_agg(DISTINCT m[1], ', ') AS stale_pins
+FROM workflow w,
+  regexp_matches(w.workflow_definition::text,
+    'fb\.base\.neops\.io/((?:global_discover_network|global_add_devices|device_update_device|network_device_get_interfaces):[0-9]+[.][0-9]+[.][0-9]+)', 'g') AS m
+WHERE w.deleted_at IS NULL
+  AND m[1] NOT IN ('global_discover_network:0.2.0', 'global_add_devices:0.2.0',
+                   'device_update_device:0.2.0', 'network_device_get_interfaces:0.1.1')
+GROUP BY w.id ORDER BY w.id;"
+```
+
+The query lists only full `x.y.z` pins. A partial pin runs the highest registered version it
+matches: `:0.1` of `global_discover_network`, `global_add_devices` or `device_update_device` stops
+working too, and a `:0` pin of those three moves to `0.2.0` with its changed parameters. A pin of
+`network_device_get_interfaces` to `:0.1` or `:0` moves to `0.1.1`. A pin with no version runs the
+highest version of any major, which for these blocks is the same as `:0`.
+
+For each one you still run, publish a new version with its pins moved to the Worker 0.5 column.
+Published content is immutable, so the new document needs a higher version of its own, or
+`"increment": true`; if you also change step parameters to match the new block versions, the
+engine can rate the change major and refuse `increment`, so declare the version yourself then (see
+the engine's
+[Publishing & Versioning](https://docs.neops.io/neops-workflow-engine/docs/20-workflows/15-publishing/)).
+Some new versions change their parameters or what they do; the SDK's
+[Upgrading to network zones](https://docs.neops.io/neops-worker-sdk-py/docs/deployment/10-worker-lifecycle/#upgrading-to-network-zones)
+says what changes in each. You can publish before the upgrade, since a block no worker registers
+yet is only an advisory finding, but start the new versions only after `./neops up`: the old
+worker does not serve them. Whatever starts a workflow by its old version keeps running the old
+pins.
 
 ### Upgrading to the release with centralized logging
 
