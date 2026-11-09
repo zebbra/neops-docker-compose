@@ -166,15 +166,23 @@ it fails before its first step.
 
 A run takes its locks in a batch with the other runs that start around it. Once a run of the batch
 is about to write back to the CMS, the engine locks no new run until every run of the batch has
-ended. So once a run of its batch has written back, a run whose job waits for a zone with no
-worker keeps new runs in every zone, `default` included, in `locking` until that job runs or
-`BLACKBOARD_PENDING_JOB_TIMEOUT` fails it: up to an hour with the default. A site whose network link or VPN is down is the usual cause, and
-two workers per zone do not help then. In a test with a 2 min timeout, new runs in `default` and
-another zone waited 73 s and 78 s, until the waiting job failed. The same rule means that one long
-run, in any zone, holds back new runs once another run of its batch writes back; that follows from
-the rule and was not measured. A batch in which no run writes back does not hold new runs, unless
-a `compose.override.yaml` sets the engine's `EPOCH_MAX_PARALLEL_RUNS`: reaching that cap holds new
-runs the same way. Compose does not set it.
+ended. So once a run of its batch is about to write back, a run whose job waits for a zone with
+no worker keeps new runs in every zone, `default` included, in `locking` until that job runs or
+`BLACKBOARD_PENDING_JOB_TIMEOUT` fails it: up to an hour with the default. A site whose network
+link or VPN is down is the usual cause, and two workers per zone do not help then. In a test with
+a 2 min timeout, new runs in `default` and another zone waited 73 s and 78 s, until the waiting
+job failed. The same rule means that one long run, in any zone, holds back new runs once another
+run of its batch is about to write back; that follows from the rule and was not measured. A
+batch in which no run writes back does not hold new runs, unless a `compose.override.yaml` sets
+the engine's `EPOCH_MAX_PARALLEL_RUNS`: reaching that cap holds new runs the same way. Compose does not set it.
+
+The hold ends when the waiting job runs, that is, when a worker serving its zone polls again:
+restore the site's link, or start a worker with that zone in `NEOPS_WORKER_NETWORK_ZONES` on a
+host that reaches those devices. Otherwise it ends when `BLACKBOARD_PENDING_JOB_TIMEOUT` fails the
+job. Aborting the run does not help: the engine does not implement it and answers `501`.
+Restarting the engine does not help either: its runs and jobs are kept in its database, and after
+a restart it fails no job that no worker has polled for at least 6 min (see
+[Choosing the pending timeout](#choosing-the-pending-timeout)).
 
 ### Seeing it
 
@@ -186,6 +194,23 @@ runs the same way. Compose does not set it.
   (needs `worker:read`), and `GET <NEOPS_ENGINE_URL>/blackboard/jobs?status=pending` lists the
   waiting jobs with their `networkZone` and `createdAt` (needs `workflow-execution:read`). Both
   take a CMS access token as `Authorization: Bearer`.
+
+The `operator` workflow profile grants both permissions, so give the account the script uses a
+role with it (`grant_workflow_permissions --role <role> --profile operator`, see
+[Adding users](10-install.md#adding-users)). The script gets its token from the CMS `login`
+mutation, the one `./neops doctor` uses:
+
+```bash
+curl -s <NEOPS_CMS_URL>/graphql -H 'Content-Type: application/json' -d \
+  '{"query":"mutation{login(username:\"<user>\",password:\"<password>\"){accessToken refreshToken}}"}'
+```
+
+The access token expires after 15 min, core's default, so a
+long-running script logs in again before each check, or trades its refresh token (valid 7 days,
+and replaced by each use) for a new pair with the `refreshToken(refreshToken:)` mutation. The CMS
+allows 5 logins a minute from one address. A static API key does not work here: the engine accepts
+only the CMS's signed access tokens. With `compose.oidc.yaml`, password login is disabled and this
+deployment has no unattended way to get a token, so use the Workers page there.
 
 Alert on how long a zone's oldest pending job has waited, against the step time you expect from
 [Sizing a zone](#sizing-a-zone), not on `workers.online`. The engine counts a killed worker as
@@ -229,9 +254,10 @@ developer-preview engine admits 2 workers in all, across every zone.
 
 ### Upgrading with site workers
 
-The 0.46 engine refuses workers of another minor version, so a site's zone has no worker from
-`./neops up` until its workers run the new image, and a run that needs that zone meanwhile holds
-every zone. Upgrade in this order:
+The 0.46 engine refuses workers built for another engine minor version. So when an upgrade changes
+the engine's minor version (the `engine` pin in `compose.yaml`, 0.46 to 0.47 for example), a
+site's zone has no worker from `./neops up` until its workers run the new image, and a run that
+needs that zone meanwhile holds every zone. Upgrade in this order:
 
 1. Let every run finish, and start none until step 4.
 2. Stop the workers at every site.
