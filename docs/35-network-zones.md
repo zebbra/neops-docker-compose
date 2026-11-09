@@ -28,7 +28,9 @@ worker is most likely to be started from, and from there it would hand that work
 zone too.
 
 To give the stock worker other zones, set the key in `compose.override.yaml` and append that file
-to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)):
+to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)). Every snippet on this page goes into that one
+file, under one `services:` key with one entry per service: a second `services:` key, or a second
+entry for the same service, is a YAML error.
 
 ```yaml
 services:
@@ -156,6 +158,77 @@ Each host that runs a zone's workers needs:
   counts it only as one of the workers the engine reports online.
 - A second worker for the zone, each with its own `WORKER_NAME` and container name, as
   [Two workers per zone](#two-workers-per-zone) explains.
+
+## Site links and outages
+
+The engine delivers a job at least once. A worker cut off from it keeps running the job it holds,
+device changes included, while the engine fails that job once it has waited long enough and, for
+a block that allows a retry, runs it again on a worker of the zone. When the link comes back,
+the engine refuses the cut-off worker's result and its own failure stands (see
+[A push after the engine gave up][engine-late-push]). An outage changes nothing only when it is
+shorter than `WORKER_OFFLINE_THRESHOLD_MS` and than the worker's `RESULT_PUSH_TIMEOUT`, and the
+job still finishes and pushes its result within `BLACKBOARD_STUCK_JOB_TIMEOUT` of the worker
+taking it. All three are described below.
+
+The engine fails a job a worker holds at whichever of these comes first, checked every minute
+(`BLACKBOARD_JOB_CHECK_INTERVAL`):
+
+| Variable | Default | Counted from | Reason code |
+|---|---|---|---|
+| `WORKER_OFFLINE_THRESHOLD_MS` | `360000` (6 min) | the worker's last heartbeat | `worker_lost` |
+| `BLACKBOARD_STUCK_JOB_TIMEOUT` | `720000` (12 min) | when the worker took the job | `job_timed_out` |
+
+With the defaults, an outage longer than about 6 minutes fails every job the site's workers hold,
+whatever their length, and from about 5 minutes a job that finishes during the outage already
+loses its result to the worker's `RESULT_PUSH_TIMEOUT` (see below). The stuck timeout fails a long
+job even with the link up, so size the offline threshold above the longest outage a site should
+ride out, and the stuck timeout above that outage plus the longest job. The engine's
+[threshold cascade][engine-thresholds] describes both.
+
+`compose.yaml` passes neither variable to the engine, so `.env` does not reach them. Set them in
+`compose.override.yaml`, append that file to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)),
+and run `./neops up`:
+
+```yaml
+services:
+  engine:
+    environment:
+      WORKER_OFFLINE_THRESHOLD_MS: "900000"
+      BLACKBOARD_STUCK_JOB_TIMEOUT: "1800000"
+```
+
+These keys join the engine's entry in the same file (see
+[The central worker](#the-central-worker)). With the published port from
+[Workers at another site](#workers-at-another-site), that entry reads:
+
+```yaml
+services:
+  engine:
+    ports:
+      - "10.99.0.1:3030:3030"
+    environment:
+      WORKER_OFFLINE_THRESHOLD_MS: "900000"
+      BLACKBOARD_STUCK_JOB_TIMEOUT: "1800000"
+```
+
+A variable left unset follows the one before it: the stuck timeout defaults to twice the offline
+threshold, and `BLACKBOARD_PENDING_JOB_TIMEOUT`, when `.env` leaves it empty, to five times the
+stuck timeout, which lengthens how long a zone without workers holds up runs (see
+[Two workers per zone](#two-workers-per-zone)). A longer offline threshold also keeps a dead
+worker on the license's worker count longer, and after a restart the engine waits that long
+before it judges any worker offline.
+
+A site's worker re-sends a result it could not deliver for `RESULT_PUSH_TIMEOUT` seconds (`300`)
+from when the job finished, then drops it, and the engine later fails the job although it
+succeeded. Set it with `-e RESULT_PUSH_TIMEOUT=...` on the site's workers to at least the longest
+outage to ride out, and below the earlier of the two engine settings. That also meets the worker
+SDK's [configuration][sdk-config], which asks for less than the stuck timeout.
+
+A job the engine failed this way is retried only when its block is registered pure or idempotent,
+and such a block then runs twice, once on the cut-off worker and once on the retry. Any other
+block's step fails and goes to the rollback while the cut-off worker's change still lands on the
+device. Make the blocks that change devices at a site idempotent, or reversible with a rollback
+(see [Retry & Rollback][engine-retry]).
 
 ## Creating a zone
 
@@ -326,3 +399,7 @@ Going back below neops-core 2.4.0 deletes every zone and every device's zone; se
 in its notes.
 
 [engine-zones]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/
+[engine-late-push]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/60-retry-and-rollback/#a-push-after-the-engine-gave-up
+[engine-retry]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/60-retry-and-rollback/
+[engine-thresholds]: https://docs.neops.io/neops-workflow-engine/docs/50-deployment/30-worker-management/#threshold-cascade
+[sdk-config]: https://docs.neops.io/neops-worker-sdk-py/docs/deployment/20-configuration/
