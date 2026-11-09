@@ -165,10 +165,11 @@ The engine delivers a job at least once. A worker cut off from it keeps running 
 device changes included, while the engine fails that job once it has waited long enough and, for
 a block that allows a retry, runs it again on a worker of the zone. When the link comes back,
 the engine refuses the cut-off worker's result and its own failure stands (see
-[A push after the engine gave up][engine-late-push]). An outage changes nothing only when it is
-shorter than `WORKER_OFFLINE_THRESHOLD_MS` and than the worker's `RESULT_PUSH_TIMEOUT`, and the
-job still finishes and pushes its result within `BLACKBOARD_STUCK_JOB_TIMEOUT` of the worker
-taking it. All three are described below.
+[A push after the engine gave up][engine-late-push]). An outage changes nothing when it is
+shorter than `WORKER_OFFLINE_THRESHOLD_MS`, it ends before the worker's `RESULT_PUSH_TIMEOUT`
+gives up on a finished job's result, and the job still finishes and pushes its result within
+`BLACKBOARD_STUCK_JOB_TIMEOUT` of the worker taking it. All three are described below, and the
+engine's [Sizing the timeouts][engine-sizing] gives the rule for each.
 
 The engine fails a job a worker holds at whichever of these comes first, checked every minute
 (`BLACKBOARD_JOB_CHECK_INTERVAL`):
@@ -220,9 +221,13 @@ before it judges any worker offline.
 
 A site's worker re-sends a result it could not deliver for `RESULT_PUSH_TIMEOUT` seconds (`300`)
 from when the job finished, then drops it, and the engine later fails the job although it
-succeeded. Set it with `-e RESULT_PUSH_TIMEOUT=...` on the site's workers to at least the longest
-outage to ride out, and below the earlier of the two engine settings. That also meets the worker
-SDK's [configuration][sdk-config], which asks for less than the stuck timeout.
+succeeded. The engine fails a job as `worker_lost` only at a check that still finds its worker
+offline, so it can accept a result until `WORKER_OFFLINE_THRESHOLD_MS` plus one
+`BLACKBOARD_JOB_CHECK_INTERVAL` after the last heartbeat. Set it with `-e RESULT_PUSH_TIMEOUT=...`
+on the site's workers to at least the longest outage to ride out and to at least
+`WORKER_OFFLINE_THRESHOLD_MS` plus `BLACKBOARD_JOB_CHECK_INTERVAL` (420 s with the engine's
+defaults), and below `BLACKBOARD_STUCK_JOB_TIMEOUT`. That also meets the worker SDK's
+[configuration][sdk-config], which asks for less than the stuck timeout.
 
 A job the engine failed this way is retried only when its block is registered pure or idempotent,
 and such a block then runs twice, once on the cut-off worker and once on the retry. Any other
@@ -401,5 +406,6 @@ in its notes.
 [engine-zones]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/
 [engine-late-push]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/60-retry-and-rollback/#a-push-after-the-engine-gave-up
 [engine-retry]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/60-retry-and-rollback/
+[engine-sizing]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/#sizing-the-timeouts
 [engine-thresholds]: https://docs.neops.io/neops-workflow-engine/docs/50-deployment/30-worker-management/#threshold-cascade
 [sdk-config]: https://docs.neops.io/neops-worker-sdk-py/docs/deployment/20-configuration/
