@@ -13,7 +13,7 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from neops_compose.rules import LOG_BACKEND
+from neops_compose import rules
 from neops_compose.scenario import Scenario
 
 ENGINE_SERVICE = "neops-workflow-engine"
@@ -55,10 +55,7 @@ STORES = {
 
 
 def log_backend(values: Mapping[str, str]) -> str:
-    """compose.logs.yaml sets the backend itself; without it the .env names the operator's own."""
-    if Scenario.from_env(values).logs:
-        return "victorialogs"
-    return values.get(LOG_BACKEND) or DB_BACKEND
+    return rules.log_backend(values, Scenario.from_env(values))
 
 
 def store_of(values: Mapping[str, str]) -> LogStore | None:

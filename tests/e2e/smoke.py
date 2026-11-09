@@ -40,6 +40,7 @@ from run_scenario import (  # noqa: E402
 
 from neops_compose.compose import Compose  # noqa: E402
 from neops_compose.doctor import LOGS_PROBE, NAME_WIDTH  # noqa: E402
+from neops_compose.rules import writes_to_log_store  # noqa: E402
 from neops_compose.scenario import Scenario  # noqa: E402
 from neops_compose.token import mint_access_token  # noqa: E402
 
@@ -87,7 +88,7 @@ def exit_code(checks: Iterable[Check]) -> int:
 
 
 def doctor_verdict(code: int, stdout: str, expects_logs_probe: bool) -> tuple[bool, str]:
-    """Doctor's own exit code, and its log-store line when compose.logs.yaml is on: `OK`, since
+    """Doctor's own exit code, and its log-store line when the engine writes to one: `OK`, since
     a WARN there (an unreachable store) passes doctor and still is no green smoke."""
     line = next((ln for ln in stdout.splitlines() if ln[5 : 5 + NAME_WIDTH].strip() == LOGS_PROBE), None)
     if code != 0:
@@ -160,7 +161,8 @@ class Smoke:
     def s1(self) -> Check:
         out = neops(self.base, "doctor", *self.doctor_flags(), check=False, capture=True)
         print(out.stdout, flush=True)
-        expects = Scenario.from_env(self.deployment.values).logs
+        values = self.deployment.values
+        expects = writes_to_log_store(values, Scenario.from_env(values))
         return judged("S1", *doctor_verdict(out.returncode, out.stdout, expects))
 
     def s2(self) -> Check:
