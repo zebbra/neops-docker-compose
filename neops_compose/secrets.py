@@ -112,6 +112,20 @@ def _mint_ca(now: dt.datetime) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
         .not_valid_before(now - BACKDATE)
         .not_valid_after(now + dt.timedelta(days=CA_DAYS))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                key_encipherment=False,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
         .sign(key, hashes.SHA256())
     )
