@@ -174,15 +174,16 @@ a 2 min timeout, new runs in `default` and another zone waited 73 s and 78 s, un
 job failed. The same rule means that one long run, in any zone, holds back new runs once another
 run of its batch is about to write back; that follows from the rule and was not measured. A
 batch in which no run writes back does not hold new runs, unless a `compose.override.yaml` sets
-the engine's `EPOCH_MAX_PARALLEL_RUNS`: reaching that cap holds new runs the same way. Compose does not set it.
+the engine's `EPOCH_MAX_PARALLEL_RUNS`: reaching that cap holds new runs the same way. Compose
+does not set it.
 
 The hold ends when the waiting job runs, that is, when a worker serving its zone polls again:
 restore the site's link, or start a worker with that zone in `NEOPS_WORKER_NETWORK_ZONES` on a
 host that reaches those devices. Otherwise it ends when `BLACKBOARD_PENDING_JOB_TIMEOUT` fails the
 job. Aborting the run does not help: the engine does not implement it and answers `501`.
-Restarting the engine does not help either: its runs and jobs are kept in its database, and after
-a restart it fails no job that no worker has polled for at least 6 min (see
-[Choosing the pending timeout](#choosing-the-pending-timeout)).
+Restarting the engine does not help either: its runs and jobs are kept in its database, and for
+its first 6 min after a restart it fails no never-polled job, so a restart delays the timeout
+rather than ending the hold (see [Choosing the pending timeout](#choosing-the-pending-timeout)).
 
 ### Seeing it
 
@@ -209,8 +210,9 @@ The access token expires after 15 min, core's default, so a
 long-running script logs in again before each check, or trades its refresh token (valid 7 days,
 and replaced by each use) for a new pair with the `refreshToken(refreshToken:)` mutation. The CMS
 allows 5 logins a minute from one address. A static API key does not work here: the engine accepts
-only the CMS's signed access tokens. With `compose.oidc.yaml`, password login is disabled and this
-deployment has no unattended way to get a token, so use the Workers page there.
+only the CMS's signed access tokens. With `compose.oidc.yaml`, password login is disabled:
+`./neops doctor` then has the CMS issue its token from inside the `cms` container, but compose
+ships no command that hands a script a token, so use the Workers page there.
 
 Alert on how long a zone's oldest pending job has waited, against the step time you expect from
 [Sizing a zone](#sizing-a-zone), not on `workers.online`. The engine counts a killed worker as
