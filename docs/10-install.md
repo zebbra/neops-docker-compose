@@ -21,6 +21,20 @@ tags: [howto]
   watermark, which on a default install is 10% of the whole disk. `./neops check` prints the
   figure; `NEOPS_ES_HEADROOM` caps it on a large shared filesystem (see `examples/local.env`).
 
+## Get the deployment
+
+Clone the repository's `develop` branch onto the host, and run every later command from that
+directory:
+
+```bash
+git clone --branch develop https://github.com/zebbra/neops-docker-compose.git
+cd neops-docker-compose
+```
+
+`develop` carries the current Neops 2.0 release, and an [upgrade](30-operations.md#upgrades) is
+a `git pull` on it. `main` holds the old pre-2.0 tree, and the Neops 1.0 files are on
+`release/1.0`: install from neither.
+
 ## Choose a scenario
 
 Copy the `examples/*.env` file that matches your setup to `.env`:
