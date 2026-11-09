@@ -116,6 +116,60 @@ A zone routes jobs and authorizes nothing: every host the path reaches can regis
 `default` included, and receive its devices' passwords. Restrict the path to the zone's worker
 hosts, and encrypt it, with a VPN or with TLS in front of the published port.
 
+## Site links and outages
+
+The engine delivers a job at least once. A worker cut off from it keeps running the job it holds,
+device changes included, while the engine fails that job once it has waited long enough and, for
+a block that allows a retry, runs it again on a worker of the zone. When the link comes back,
+the engine refuses the cut-off worker's result and its own failure stands (see
+[A push after the engine gave up][engine-late-push]). An outage shorter than both settings below
+changes nothing: the worker pushes its result once the link is back.
+
+The engine fails a job a worker holds at whichever of these comes first, checked every minute
+(`BLACKBOARD_JOB_CHECK_INTERVAL`):
+
+| Variable | Default | Counted from | Reason code |
+|---|---|---|---|
+| `WORKER_OFFLINE_THRESHOLD_MS` | `360000` (6 min) | the worker's last heartbeat | `worker_lost` |
+| `BLACKBOARD_STUCK_JOB_TIMEOUT` | `720000` (12 min) | when the worker took the job | `job_timed_out` |
+
+With the defaults, an outage longer than about 6 minutes fails every job the site's workers hold,
+whatever their length. The stuck timeout fails a long job even with the link up, so size the
+offline threshold above the longest outage a site should ride out, and the stuck timeout above
+that outage plus the longest job. The engine's [threshold cascade][engine-thresholds] describes
+both.
+
+`compose.yaml` passes neither variable to the engine, so `.env` does not reach them. Set them in
+`compose.override.yaml`, append that file to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)),
+and run `./neops up`:
+
+```yaml
+services:
+  engine:
+    environment:
+      WORKER_OFFLINE_THRESHOLD_MS: "900000"
+      BLACKBOARD_STUCK_JOB_TIMEOUT: "1800000"
+```
+
+A variable left unset follows the one before it: the stuck timeout defaults to twice the offline
+threshold, and `BLACKBOARD_PENDING_JOB_TIMEOUT`, when `.env` leaves it empty, to five times the
+stuck timeout, which lengthens how long a zone without workers holds up runs (see
+[Two workers per zone](#two-workers-per-zone)). A longer offline threshold also keeps a dead
+worker on the license's worker count longer, and after a restart the engine waits that long
+before it judges any worker offline.
+
+A site's worker re-sends a result it could not deliver for `RESULT_PUSH_TIMEOUT` seconds (`300`)
+from when the job finished, then drops it, and the engine later fails the job although it
+succeeded. Set it with `-e RESULT_PUSH_TIMEOUT=...` on the site's workers to at least the longest
+outage to ride out, and below the earlier of the two engine settings. That also meets the worker
+SDK's [configuration][sdk-config], which asks for less than the stuck timeout.
+
+A job the engine failed this way is retried only when its block is registered pure or idempotent,
+and such a block then runs twice, once on the cut-off worker and once on the retry. Any other
+block's step fails and goes to the rollback while the cut-off worker's change still lands on the
+device. Make the blocks that change devices at a site idempotent, or reversible with a rollback
+(see [Retry & Rollback][engine-retry]).
+
 ## Creating a zone
 
 1. Make sure every central worker lists `default`. The stock `worker` does, and so does every
@@ -167,3 +221,7 @@ Going back below neops-core 2.4.0 deletes every zone and every device's zone; se
 in its notes.
 
 [engine-zones]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/45-network-zones/
+[engine-late-push]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/60-retry-and-rollback/#a-push-after-the-engine-gave-up
+[engine-retry]: https://docs.neops.io/neops-workflow-engine/docs/20-workflows/60-retry-and-rollback/
+[engine-thresholds]: https://docs.neops.io/neops-workflow-engine/docs/50-deployment/30-worker-management/#threshold-cascade
+[sdk-config]: https://docs.neops.io/neops-worker-sdk-py/docs/deployment/20-configuration/
