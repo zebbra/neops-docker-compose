@@ -160,6 +160,96 @@ restored later is in `default`.
 Afterwards, a worker that still lists the zone is refused at its next start, and a run that names
 it fails before its first step.
 
+## Running zones
+
+### One unserved zone holds every zone
+
+A run takes its locks in a batch with the other runs that start around it. Once a run of the batch
+is about to write back to the CMS, the engine locks no new run until every run of the batch has
+ended. So once a run of its batch has written back, a run whose job waits for a zone with no
+worker keeps new runs in every zone, `default` included, in `locking` until that job runs or
+`BLACKBOARD_PENDING_JOB_TIMEOUT` fails it: up to an hour with the default. A site whose network link or VPN is down is the usual cause, and
+two workers per zone do not help then. In a test with a 2 min timeout, new runs in `default` and
+another zone waited 73 s and 78 s, until the waiting job failed. The same rule means that one long
+run, in any zone, holds back new runs once another run of its batch writes back; that follows from
+the rule and was not measured. A batch in which no run writes back does not hold new runs, unless
+a `compose.override.yaml` sets the engine's `EPOCH_MAX_PARALLEL_RUNS`: reaching that cap holds new
+runs the same way. Compose does not set it.
+
+### Seeing it
+
+`./neops doctor` does not check zones. Look in these places instead:
+
+- The Monitor App's **Workers** page shows *Jobs wait in zones no online worker serves*, naming
+  each zone and how many of its jobs wait, and flags a zone with only one online worker.
+- `GET <NEOPS_ENGINE_URL>/network-zones` lists every zone with `workers.online` and `jobs.pending`
+  (needs `worker:read`), and `GET <NEOPS_ENGINE_URL>/blackboard/jobs?status=pending` lists the
+  waiting jobs with their `networkZone` and `createdAt` (needs `workflow-execution:read`). Both
+  take a CMS access token as `Authorization: Bearer`.
+
+Alert on how long a zone's oldest pending job has waited, against the step time you expect from
+[Sizing a zone](#sizing-a-zone), not on `workers.online`. The engine counts a killed worker as
+online until `WORKER_UNREACHABLE_THRESHOLD_MS` (2 min by default) has passed since its last ping,
+so `workers.online` and the Workers page notice stay quiet that long; a test still saw `online: 1`
+86 s after the kill.
+
+### Choosing the pending timeout
+
+`BLACKBOARD_PENDING_JOB_TIMEOUT` (see [Engine limits](30-operations.md#engine-limits)) is both how
+long a zone's queue may take and how long an unserved zone may hold every other zone:
+
+- Keep it above the longest wait a job sees in your busiest zone, with margin; see
+  [Sizing a zone](#sizing-a-zone). When the timeout fails a job whose zone has a live but busy
+  worker, an `EXECUTE` job is retried, but an `ACQUIRE` job is not, and its run fails. In a test
+  with a 2 min timeout, 10 of 50 runs started at once failed this way; with the default 1 h the same
+  burst completed.
+- Keep it no longer than you accept new runs to wait while a site is cut off.
+
+After the engine starts, it fails no never-polled job until it has served for
+`WORKER_OFFLINE_THRESHOLD_MS` (6 min by default), so the first such failure after a restart comes
+after at least that long, whatever the timeout.
+
+### Sizing a zone
+
+A worker takes one job per poll and then waits about 11 s before it polls again (1 s plus the
+worker's default 10 s poll interval), also while jobs wait. With N jobs waiting in a zone at once,
+from all runs together, W workers serving it and t seconds per job on the device:
+
+- the last job waits about N / W × (11 s + t), and a run takes about that long per step;
+- keep N / W ≤ 3600 / (11 + t) against the default 1 h timeout: about 320 jobs per worker for
+  instant jobs, 87 for 30 s jobs, 50 for 60 s jobs;
+- for a target step time of T minutes, run W ≥ N × (11 + t) / (60 × T) workers. For example, 120
+  devices with t = 20 s and 7.5 min per step need 9 workers.
+
+Measured on engine 0.46.0 and worker 0.5.0 with two workers, 120 devices and a two-step workflow
+whose jobs took 0.05 s: 5.4 jobs per worker per minute, a run of 22.5 min, a median wait of 5.5
+min and a longest of 11.1 min per job. Runs on the same devices take turns, each starting about 3.5
+min after the one before released its locks: three such runs took 22.5, 48.1 and 73.5 min. The
+developer-preview engine admits 2 workers in all, across every zone.
+
+### Upgrading with site workers
+
+The 0.46 engine refuses workers of another minor version, so a site's zone has no worker from
+`./neops up` until its workers run the new image, and a run that needs that zone meanwhile holds
+every zone. Upgrade in this order:
+
+1. Let every run finish, and start none until step 4.
+2. Stop the workers at every site.
+3. Upgrade this checkout as [Upgrades](30-operations.md#upgrades) describes.
+4. Start each site's workers on the worker image `compose.yaml` now pins
+   (`./neops compose -- config --images` lists it), and start runs again once every zone shows an
+   online worker on the Workers page or in `GET /network-zones`.
+
+### Secrets, backup and restore
+
+- No `./neops rotate` target touches a site's workers: the engine's worker routes are
+  unauthenticated, so a worker holds no secret to rotate.
+- A worker keeps no state. Nothing at a site needs a backup; the zones and the devices' zones are in
+  the CMS database, which `./neops backup` dumps.
+- After a restore, `GET /workers` and the Workers page also list the restored engine database's
+  worker records, `unreachable` or `offline`, beside the workers that registered again. They are
+  left over from the backup and take no jobs.
+
 ## Going back
 
 Going back below neops-core 2.4.0 deletes every zone and every device's zone; see
