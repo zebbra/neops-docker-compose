@@ -469,12 +469,17 @@ release you upgrade from as well:
 SELECT w.id, string_agg(DISTINCT m[1], ', ') AS stale_pins
 FROM workflow w,
   regexp_matches(w.workflow_definition::text,
-    'fb\.base\.neops\.io/((?:global_discover_network|global_add_devices|device_update_device|network_device_get_interfaces):[0-9.]+)', 'g') AS m
+    'fb\.base\.neops\.io/((?:global_discover_network|global_add_devices|device_update_device|network_device_get_interfaces):[0-9]+[.][0-9]+[.][0-9]+)', 'g') AS m
 WHERE w.deleted_at IS NULL
   AND m[1] NOT IN ('global_discover_network:0.2.0', 'global_add_devices:0.2.0',
                    'device_update_device:0.2.0', 'network_device_get_interfaces:0.1.1')
 GROUP BY w.id ORDER BY w.id;"
 ```
+
+The query lists only full `x.y.z` pins. A partial pin runs the highest registered version it
+matches: `:0.1` of `global_discover_network`, `global_add_devices` or `device_update_device` stops
+working too, `network_device_get_interfaces:0.1` moves to `0.1.1`, and a `:0` pin moves to `0.2.0`
+with its changed parameters.
 
 For each one you still run, publish a new version with its pins moved to the Worker 0.5 column.
 Published content is immutable, so the new document needs a higher version of its own, or
