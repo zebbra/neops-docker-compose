@@ -9,7 +9,9 @@ tags: [howto, operations]
 A network zone is a network that only its own workers reach, so only a worker that serves a
 job's zone can claim it; a device nobody assigned is in `default`. The workflow engine's
 [Network Zones][engine-zones] page owns the rules; this page covers what is particular to a
-compose install. Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 or later.
+compose install. Zones need neops-core 2.4, workflow engine 0.46 and worker 0.5 or later; before
+upgrading to them, republish the workflows that pin a
+[re-versioned base block](30-operations.md#workflows-that-pin-a-re-versioned-base-block).
 
 A worker serves the zones listed in `NEOPS_WORKER_NETWORK_ZONES`, comma-separated. Once the CMS
 holds any zone, the engine refuses a worker that lists none: it exits at startup and asks for the
