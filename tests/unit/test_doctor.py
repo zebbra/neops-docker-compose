@@ -524,6 +524,15 @@ def test_https_reaches_a_self_signed_server_and_reads_its_certificate(tmp_path):
     assert 395 <= days <= 397, days
 
 
+def test_https_verifies_a_self_signed_server_once_its_ca_is_trusted(tmp_path, monkeypatch):
+    tls_dir = selfsigned(tmp_path, "neops.example.com")
+    monkeypatch.setenv("SSL_CERT_FILE", str(tls_dir / "ca.pem"))
+    with serving(tls_dir) as port:
+        url = PublicUrl.parse(f"https://neops.example.com:{port}")
+        status, _, _ = doctor.Http(connect="127.0.0.1").fetch(url, "/")
+    assert status == 200
+
+
 def test_a_certificate_close_to_expiry_fails_the_tls_probe(tmp_path):
     tls_dir = tmp_path / "tls"
     secrets.ensure_selfsigned(tls_dir, ["neops.example.com"], days=10)

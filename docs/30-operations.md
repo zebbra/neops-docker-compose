@@ -13,7 +13,7 @@ Every command below runs from the repo root, against the `.env` in place there. 
 
 | Command | What it does |
 |---|---|
-| `./neops up [--allow-downgrade]` | migrate, render, pull, start every service, doctor. Run this after every `git pull` or `.env` edit. |
+| `./neops up [--allow-downgrade] [--connect ADDR] [--insecure]` | migrate, render, pull, start every service, doctor. Run this after every `git pull` or `.env` edit. `--connect` and `--insecure` apply to its `doctor` step only, as below. |
 | `./neops down` | stop and remove every container (`docker compose down --remove-orphans`); data is kept |
 | `./neops ps` | container status |
 | `./neops logs [service ...]` | follow logs, no services means all |
@@ -25,7 +25,7 @@ Every command below runs from the repo root, against the `.env` in place there. 
 | `./neops keys` | generate any missing key material; never overwrites |
 | `./neops token` | mint the engine's CMS API key if missing or invalid |
 | `./neops render [--diff]` | rebuild `generated/` from `.env`; `--diff` shows what would change without writing |
-| `./neops doctor [--connect ADDR] [--insecure] [--probe-ratelimit]` | health report through the public URLs |
+| `./neops doctor [--connect ADDR] [--insecure] [--probe-ratelimit]` | health report through the public URLs; `--insecure` skips certificate verification for a certificate this host does not trust, see [When this host does not trust the certificate](10-install.md#when-this-host-does-not-trust-the-certificate) |
 | `./neops status` | pinned vs. running image tags, pending migrations, last successful `up` |
 | `./neops backup [--dir DIR] [--keep N]` | logical backup, see below |
 | `./neops rotate <what> [...]` | secret rotation, see the matrix below |
