@@ -544,7 +544,7 @@ bytes. If you pin an older engine, write plain integers.
 | `ROLLBACK_DATA_MAX_BYTES` | bytes | `5242880` (5 MiB) | the rollback data one job attempt may store; larger data is dropped |
 | `ROLLBACK_DATA_RETENTION_DAYS` | days | `30` | how long a run in `FAILED_UNSAFE_ACK` keeps its rollback data before it is purged |
 | `ROLLBACK_DATA_SWEEP_INTERVAL_MS` | ms | `3600000` (1 h) | how often that purge runs |
-| `BLACKBOARD_PENDING_JOB_TIMEOUT` | ms | `3600000` (1 h), five times the stuck timeout (see [Site links and outages](35-network-zones.md#site-links-and-outages)) | how long a job no worker has polled waits before the engine fails it; with network zones, see [Choosing the pending timeout](35-network-zones.md#choosing-the-pending-timeout) |
+| `BLACKBOARD_PENDING_JOB_TIMEOUT` | ms | `3600000` (1 h): five times the stuck timeout, so it grows with it (see [Site links and outages](35-network-zones.md#site-links-and-outages)) | how long a job no worker has polled waits before the engine fails it; with network zones, see [Choosing the pending timeout](35-network-zones.md#choosing-the-pending-timeout) |
 
 ## Purge
 
