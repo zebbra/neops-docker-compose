@@ -121,16 +121,16 @@ lock with backoff, so the run stays in `locking`, and `./neops logs engine` repe
 - `CMS refused the lock (INDEX_SYNC_PENDING): The search index rebuild started ... stopped without
   finishing (no heartbeat since ...)`: the rebuild failed or was aborted (`./neops restart cms`, a
   killed container), and nothing will finish it on its own. Waiting does not help: the refusal
-  holds until a rebuild succeeds. Fix what stopped it (the failed `./neops up` printed the
-  rebuild's error), then run a rebuild, which takes over the stopped one:
+  holds until a rebuild succeeds. Fix what stopped it, then run a rebuild, which takes over the
+  stopped one; if the cause persists, the same command prints the rebuild's error again:
 
-  ```bash
-  ./neops compose -- exec -T cms python manage.py elastic_index --rebuild-if-stale
-  ```
+    ```bash
+    ./neops compose -- exec -T cms python manage.py elastic_index --rebuild-if-stale
+    ```
 
-  or `./neops up`, which runs the same command. Exit 0 means done, and exit 3 that it finished
-  but set refused documents aside (see [Search index out of sync](#search-index-out-of-sync)).
-  Both clear the refusal, and the waiting runs lock on their next retry.
+    `./neops up` runs the same command. Exit 0 means done, and exit 3 that it finished but set
+    refused documents aside (see [Search index out of sync](#search-index-out-of-sync)). Both
+    clear the refusal, and the waiting runs lock on their next retry.
 
 The same code with "Elasticsearch has not indexed those unlocks yet" is a different case, see
 `unlocks have waited` under [Search index out of sync](#search-index-out-of-sync).
