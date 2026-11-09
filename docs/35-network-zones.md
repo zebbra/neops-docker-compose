@@ -28,7 +28,9 @@ worker is most likely to be started from, and from there it would hand that work
 zone too.
 
 To give the stock worker other zones, set the key in `compose.override.yaml` and append that file
-to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)):
+to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)). Every snippet on this page goes into that one
+file, under one `services:` key with one entry per service: a second `services:` key, or a second
+entry for the same service, is a YAML error.
 
 ```yaml
 services:
@@ -180,8 +182,8 @@ With the defaults, an outage longer than about 6 minutes fails every job the sit
 whatever their length, and from about 5 minutes a job that finishes during the outage already
 loses its result to the worker's `RESULT_PUSH_TIMEOUT` (see below). The stuck timeout fails a long
 job even with the link up, so size the offline threshold above the longest outage a site should
-ride out, and the stuck timeout above that outage plus the longest job. The engine's [threshold cascade][engine-thresholds] describes
-both.
+ride out, and the stuck timeout above that outage plus the longest job. The engine's
+[threshold cascade][engine-thresholds] describes both.
 
 `compose.yaml` passes neither variable to the engine, so `.env` does not reach them. Set them in
 `compose.override.yaml`, append that file to `COMPOSE_FILE` (see [Scenarios](20-scenarios.md)),
@@ -195,10 +197,9 @@ services:
       BLACKBOARD_STUCK_JOB_TIMEOUT: "1800000"
 ```
 
-Every snippet on this page goes into the same `compose.override.yaml`, under one `services:` key
-with one entry per service: a second `services:` or `engine:` key in the file is a YAML error.
-With the published port from [Workers at another site](#workers-at-another-site), the engine's
-entry reads:
+These keys join the engine's entry in the same file (see
+[The central worker](#the-central-worker)). With the published port from
+[Workers at another site](#workers-at-another-site), that entry reads:
 
 ```yaml
 services:
