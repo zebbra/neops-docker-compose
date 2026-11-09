@@ -88,6 +88,7 @@ with every upgrade of this checkout:
 
 ```bash
 docker run -d --name neops-worker-b-1 --network host --restart unless-stopped \
+  --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
   -e URL_BLACKBOARD=http://10.99.0.1:3030 \
   -e DIR_FUNCTION_BLOCKS=neops/fb \
   -e WORKER_NAME=neops-worker-b-1 \
@@ -108,13 +109,51 @@ Worker registration failed: HTTP 403 Forbidden. Check URL_BLACKBOARD and any pro
 With an external proxy (`compose.expose.yaml`) compose denies nothing itself: your proxy must
 deny them (see [External proxy](40-external-proxy.md)), and the engine port that overlay publishes
 answers every process that reaches its bind address. A remote site's workers therefore need a
-private network path to the engine, such as a site-to-site VPN, and a `compose.override.yaml` you
-write that publishes the engine's port on an address only that path reaches. Both are yours to
-build and secure; Neops does not provide or check them.
+private network path to the engine, such as a site-to-site VPN, and the engine's port published
+on an address only that path reaches. Both are yours to build and secure; Neops does not provide
+or check them.
+
+Publish the port in `compose.override.yaml` and append that file to `COMPOSE_FILE` (see
+[Scenarios](20-scenarios.md)), then run `./neops up`:
+
+```yaml
+services:
+  engine:
+    ports:
+      - "10.99.0.1:3030:3030"
+```
+
+The first part is the compose host's own address on the private path, the one the site's
+`URL_BLACKBOARD` names; the last `3030` is the engine's port inside its container. Always write
+the address: without one, or with `0.0.0.0`, Docker publishes the port on every address of the
+host. The address must exist on the host when the engine starts, or Docker refuses to start it
+with `cannot assign requested address`, so bring the VPN up before `./neops up` and before the
+Docker service starts at boot. With `compose.expose.yaml` the port that overlay publishes on
+`NEOPS_BIND_ADDRESS` stays as it is, and this one is added beside it.
 
 A zone routes jobs and authorizes nothing: every host the path reaches can register for any zone,
 `default` included, and receive its devices' passwords. Restrict the path to the zone's worker
 hosts, and encrypt it, with a VPN or with TLS in front of the published port.
+
+### The site host
+
+Each host that runs a zone's workers needs:
+
+- Docker Engine, and a `docker pull` of the pinned worker image that succeeds there. If Quay
+  refuses it, run `docker login quay.io` on that host with the account the compose host uses (see
+  the prerequisites in `README.md`).
+- Outbound connections to the engine's published address and port, and to the zone's devices.
+  The worker connects to nothing else of Neops, neither the CMS nor the log store, and nothing
+  connects to it: it polls the engine, and its health check reads a local file.
+- Log rotation for the worker container. The `docker run` above sets the same rotation compose
+  gives its own services; without those options the log grows for as long as the container runs.
+- Its own upkeep, since the container is not part of the compose project: `./neops up`, `down`
+  and `purge` never start, stop, upgrade or remove it, and `./neops status` does not list it.
+  After an upgrade of this checkout, remove it and run it again with the new pinned tag. After a
+  `purge` it keeps running and retries an engine that is gone, until you remove it. `./neops doctor`
+  counts it only as one of the workers the engine reports online.
+- A second worker for the zone, each with its own `WORKER_NAME` and container name, as
+  [Two workers per zone](#two-workers-per-zone) explains.
 
 ## Creating a zone
 
