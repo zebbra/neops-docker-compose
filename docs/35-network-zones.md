@@ -178,9 +178,9 @@ The engine fails a job a worker holds at whichever of these comes first, checked
 
 With the defaults, an outage longer than about 6 minutes fails every job the site's workers hold,
 whatever their length, and from about 5 minutes a job that finishes during the outage already
-loses its result to the worker's `RESULT_PUSH_TIMEOUT` (see below). The stuck timeout fails a long job even with the link up, so size the
-offline threshold above the longest outage a site should ride out, and the stuck timeout above
-that outage plus the longest job. The engine's [threshold cascade][engine-thresholds] describes
+loses its result to the worker's `RESULT_PUSH_TIMEOUT` (see below). The stuck timeout fails a long
+job even with the link up, so size the offline threshold above the longest outage a site should
+ride out, and the stuck timeout above that outage plus the longest job. The engine's [threshold cascade][engine-thresholds] describes
 both.
 
 `compose.yaml` passes neither variable to the engine, so `.env` does not reach them. Set them in
@@ -190,6 +190,21 @@ and run `./neops up`:
 ```yaml
 services:
   engine:
+    environment:
+      WORKER_OFFLINE_THRESHOLD_MS: "900000"
+      BLACKBOARD_STUCK_JOB_TIMEOUT: "1800000"
+```
+
+Every snippet on this page goes into the same `compose.override.yaml`, under one `services:` key
+with one entry per service: a second `services:` or `engine:` key in the file is a YAML error.
+With the published port from [Workers at another site](#workers-at-another-site), the engine's
+entry reads:
+
+```yaml
+services:
+  engine:
+    ports:
+      - "10.99.0.1:3030:3030"
     environment:
       WORKER_OFFLINE_THRESHOLD_MS: "900000"
       BLACKBOARD_STUCK_JOB_TIMEOUT: "1800000"
