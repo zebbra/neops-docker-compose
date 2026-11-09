@@ -109,6 +109,22 @@ and `./neops compose -- top cms` lists the `elastic_index` process. Let it finis
 `./neops restart cms` and run `./neops up` again, which rebuilds what the aborted run left
 unfinished.
 
+### `Error while syncing permission elements` in `cms-init` on a first install
+
+On a first install, or any start against an empty CMS database, `./neops logs cms-init` shows
+
+```text
+ERROR ... neops.core.auth.settings ... Error while syncing permission elements: relation "core_permissionelement" does not exist
+LINE 1: ...core_permissionelement"."default_permission" FROM "core_perm...
+```
+
+before the `Apply all migrations` output. It is harmless. Every core process syncs its permission
+elements at startup, and `manage.py migrate` is the first one `cms-init` runs, so that sync runs
+before the migrations have created the table. The commands after `migrate` start against the
+migrated database and sync the elements without error. A `cms-init` that really failed exits
+non-zero, which the container status row of `./neops doctor` reports; one that logged only this
+line and exited 0 needs nothing.
+
 ### Elasticsearch and `vm.max_map_count`
 
 Elasticsearch refuses to start below `vm.max_map_count = 262144` (the stock Linux default is
