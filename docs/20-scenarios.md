@@ -166,8 +166,8 @@ Three modes, all requiring the Traefik overlay:
 
 | Mode | `.env` | Notes |
 |---|---|---|
-| Your certificate | `compose.tls-files.yaml`, `NEOPS_TLS_CERT_FILE` / `NEOPS_TLS_KEY_FILE` | a SAN or wildcard certificate covering every hostname in use, dropped into `certs/` |
-| Self-signed | `compose.tls-files.yaml`, `NEOPS_TLS_SELF_SIGNED=true` | `./neops keys` mints a private CA and a server certificate under `data/secrets/tls/`, with a SAN for every hostname your URLs name; import `data/secrets/tls/ca.pem` into your browser, or accept the warning |
+| Your certificate | `compose.tls-files.yaml`, `NEOPS_TLS_CERT_FILE` / `NEOPS_TLS_KEY_FILE` | a SAN or wildcard certificate covering every hostname in use, dropped into `certs/`; one from an internal CA needs that CA trusted on this host for `doctor`, see [When this host does not trust the certificate](10-install.md#when-this-host-does-not-trust-the-certificate) |
+| Self-signed | `compose.tls-files.yaml`, `NEOPS_TLS_SELF_SIGNED=true` | `./neops keys` mints a private CA and a server certificate under `data/secrets/tls/`, with a SAN for every hostname your URLs name; import `data/secrets/tls/ca.pem` into your browser, or accept the warning. `doctor` does not trust it either, so `install` and `up` exit 1 until you trust it on the host or pass `--insecure`: see [When this host does not trust the certificate](10-install.md#when-this-host-does-not-trust-the-certificate) |
 | Let's Encrypt | `compose.tls-acme.yaml`, `NEOPS_ACME_EMAIL` | HTTP-01, so `NEOPS_HTTP_PORT` must be 80 and reachable from the internet on every hostname; certificates land in `data/traefik/acme/acme.json` |
 | None (evaluation) | `compose.traefik.yaml` alone | plain HTTP on `NEOPS_HTTP_PORT` |
 

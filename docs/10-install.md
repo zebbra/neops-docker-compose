@@ -21,6 +21,20 @@ tags: [howto]
   watermark, which on a default install is 10% of the whole disk. `./neops check` prints the
   figure; `NEOPS_ES_HEADROOM` caps it on a large shared filesystem (see `examples/local.env`).
 
+## Get the deployment
+
+Clone the repository's `develop` branch onto the host, and run every later command from that
+directory:
+
+```bash
+git clone --branch develop https://github.com/zebbra/neops-docker-compose.git
+cd neops-docker-compose
+```
+
+`develop` carries the current Neops 2.0 release, and an [upgrade](30-operations.md#upgrades) is
+a `git pull` on it. `main` holds the old pre-2.0 tree, and the Neops 1.0 files are on
+`release/1.0`: install from neither.
+
 ## Choose a scenario
 
 Copy the `examples/*.env` file that matches your setup to `.env`:
@@ -74,7 +88,9 @@ message:
 8. **Start everything else**: the engine, the monitor, the worker, the web client, and any
    overlay services (Traefik, Keycloak, the metrics stack).
 9. **`doctor`**: a health report through the public URLs. `install` exits non-zero if anything
-   fails here, even though every container may already be running.
+   fails here, even though every container may already be running. A certificate this host does
+   not trust fails here too: see
+   [When this host does not trust the certificate](#when-this-host-does-not-trust-the-certificate).
 
 `./neops up` repeats every step except the image check: resolving images is `check`'s job, and
 repeating it on each start would make every restart depend on the registry. Run `./neops check`
@@ -99,6 +115,59 @@ Running `install` again on an already-installed deployment changes nothing: ever
 idempotent, and the second run reports the existing state rather than erroring. Use `./neops up`
 for that case instead (see [Operations](30-operations.md)); it is the command for "the repo or
 `.env` changed, bring the deployment in line."
+
+## When this host does not trust the certificate
+
+`doctor` reaches every public URL over HTTPS and verifies the certificate chain and hostname
+against the default trust store of the Python that `./neops` runs. When this host does not trust
+the certificate, every HTTPS probe fails with `CERTIFICATE_VERIFY_FAILED`, and `install` and `up`
+end with `error: the stack is up but doctor reports failures` and exit 1. Every step before
+`doctor` has run and the containers are up. This happens with:
+
+- the self-signed certificate (`NEOPS_TLS_SELF_SIGNED=true`): its private CA,
+  `data/secrets/tls/ca.pem`, is trusted nowhere until you add it;
+- a certificate from an internal or enterprise CA that this host's trust store does not carry.
+
+Pick one of the fixes below, then run the same command again; running `install` twice is safe
+(see above). Until an `install` or `up` passes `doctor`, `./neops status` reports `doctor FAILED`;
+a `./neops doctor` run on its own does not change that.
+
+**Point `SSL_CERT_FILE` at a bundle that holds your CA.** Python reads that file *instead of* its
+default bundle, so concatenate the system bundle and your CA rather than naming the CA alone. In
+self-signed mode the CA is `data/secrets/tls/ca.pem`.
+
+```bash
+# Debian/Ubuntu; on RHEL the system bundle is /etc/pki/tls/certs/ca-bundle.crt
+cat /etc/ssl/certs/ca-certificates.crt /path/to/your-ca.pem > ~/neops-ca-bundle.pem
+export SSL_CERT_FILE=~/neops-ca-bundle.pem
+./neops install
+```
+
+Every later `./neops up` and `./neops doctor` needs the variable too, so put the `export` in the
+operator's shell profile.
+
+**Or add the CA to this host's trust store** (`update-ca-certificates` on Debian/Ubuntu,
+`update-ca-trust` on RHEL). This works only if that store is where the CLI's Python looks:
+`uv run python -c "import ssl; print(ssl.get_default_verify_paths())"`, run in this directory,
+prints the paths. If `doctor` still fails afterwards, use `SSL_CERT_FILE`.
+
+**Or pass `--insecure`.** `install`, `up` and `doctor` accept it, and it changes `doctor` only:
+every HTTPS probe skips verifying the certificate chain and the hostname. Every other step runs
+as without it, and the `tls certificate` probe still reads the certificate and still fails when
+14 days or fewer remain. What you give up is `doctor`'s proof that a client can trust the
+certificate for your hostnames; browsers and every other client still have to
+trust it themselves. Pass the flag to every later `up` as well, or that `up` exits 1 the same
+way.
+
+!!! note "A trusted CA that still fails"
+
+    From Python 3.13 on, verification is strict about RFC 5280, so a CA certificate the host does
+    trust can still be refused, for instance with
+    `Path length given without key usage keyCertSign` (the CA sets a path length but has no key
+    usage extension). Have your CA reissued, or use `--insecure`. A self-signed CA minted by an
+    older `./neops keys` has exactly that defect: `./neops rotate tls` mints a new CA and
+    certificate that verify, and every browser that imported the old `data/secrets/tls/ca.pem`
+    needs the new one.
 
 ## First login
 

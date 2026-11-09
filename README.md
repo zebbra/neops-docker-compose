@@ -20,8 +20,7 @@ Full documentation: `docs/` (and docs.neops.io once published).
 ## Install
 
 ```bash
-git clone https://github.com/zebbra/neops-docker-compose.git && cd neops-docker-compose
-git checkout release/2.0
+git clone --branch develop https://github.com/zebbra/neops-docker-compose.git && cd neops-docker-compose
 cp examples/traefik-tls-files.env .env      # pick the scenario that matches your setup
 $EDITOR .env                                 # hostnames
 ./neops secrets                              # fills every blank secret
@@ -29,9 +28,18 @@ cp /path/to/cert.pem certs/cert.pem && cp /path/to/key.pem certs/key.pem   # tls
 ./neops install
 ```
 
+Neops 2.0 is installed from the `develop` branch, the repository's default branch, and every
+upgrade is a `git pull` on it. `main` holds the old pre-2.0 tree: do not install from it.
+
 `install` validates `.env`, prepares `data/`, generates keys, renders the proxy configuration,
 starts the CMS, mints the engine's API key, starts everything else and runs `./neops doctor`.
 Log in at `NEOPS_WEB_URL` as `NEOPS_ADMIN_USER`.
+
+`doctor` verifies the certificate like any HTTPS client, so `install` exits 1 with
+`CERTIFICATE_VERIFY_FAILED` when this host does not trust it, even though every container is
+running: a self-signed certificate (`NEOPS_TLS_SELF_SIGNED=true`) or one from an internal CA. Trust
+the CA on this host, or add `--insecure` to `install`, `up` and `doctor`; see
+`docs/10-install.md#when-this-host-does-not-trust-the-certificate`.
 
 ## Scenarios
 
@@ -60,8 +68,8 @@ Overlays combine: edit `COMPOSE_FILE` in `.env`; `./neops check` tells you if a 
 
 | Command | Purpose |
 |---|---|
-| `./neops up` | after `git pull` or an `.env` edit: migrate, render, pull, start, doctor |
-| `./neops doctor` | health through the public URLs |
+| `./neops up [--insecure]` | after `git pull` or an `.env` edit: migrate, render, pull, start, doctor |
+| `./neops doctor [--insecure]` | health through the public URLs |
 | `./neops status` | pinned vs running images, migrations |
 | `./neops backup --keep 14` | logical dumps + `.env` + secrets + certs into `backups/<timestamp>/` |
 | `./neops rotate <what>` | `db-password --which cms\|engine\|keycloak`, `admin-password`, `secret-key`, `jwt`, `tls`, `token`, `keycloak-client` |
