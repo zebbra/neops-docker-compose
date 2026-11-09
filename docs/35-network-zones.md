@@ -122,8 +122,10 @@ The engine delivers a job at least once. A worker cut off from it keeps running 
 device changes included, while the engine fails that job once it has waited long enough and, for
 a block that allows a retry, runs it again on a worker of the zone. When the link comes back,
 the engine refuses the cut-off worker's result and its own failure stands (see
-[A push after the engine gave up][engine-late-push]). An outage shorter than both settings below
-changes nothing: the worker pushes its result once the link is back.
+[A push after the engine gave up][engine-late-push]). An outage changes nothing only when it is
+shorter than `WORKER_OFFLINE_THRESHOLD_MS` and than the worker's `RESULT_PUSH_TIMEOUT`, and the
+job still finishes and pushes its result within `BLACKBOARD_STUCK_JOB_TIMEOUT` of the worker
+taking it. All three are described below.
 
 The engine fails a job a worker holds at whichever of these comes first, checked every minute
 (`BLACKBOARD_JOB_CHECK_INTERVAL`):
@@ -134,7 +136,8 @@ The engine fails a job a worker holds at whichever of these comes first, checked
 | `BLACKBOARD_STUCK_JOB_TIMEOUT` | `720000` (12 min) | when the worker took the job | `job_timed_out` |
 
 With the defaults, an outage longer than about 6 minutes fails every job the site's workers hold,
-whatever their length. The stuck timeout fails a long job even with the link up, so size the
+whatever their length, and from about 5 minutes a job that finishes during the outage already
+loses its result to the worker's `RESULT_PUSH_TIMEOUT` (see below). The stuck timeout fails a long job even with the link up, so size the
 offline threshold above the longest outage a site should ride out, and the stuck timeout above
 that outage plus the longest job. The engine's [threshold cascade][engine-thresholds] describes
 both.
