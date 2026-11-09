@@ -317,7 +317,7 @@ both run `migrate` as their first real step, so a pending migration is never sil
 ## Upgrades
 
 ```bash
-git pull        # or: git checkout <next release tag>
+git pull
 ./neops up
 ```
 
