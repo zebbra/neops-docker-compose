@@ -378,14 +378,14 @@ FILES_LINE = re.compile(r"^COMPOSE_FILE=.*$", re.MULTILINE)
 TRAEFIK_BASE = "compose.yaml:compose.traefik.yaml:compose.tls-files.yaml"
 
 
-def merged(tmp_path: Path, overlays: str) -> dict:
-    """The project `docker compose config` resolves for the shared example with these overlays,
-    the cms-tasks profile on, and the scratch directory written as <repo>."""
+def merged(tmp_path: Path, overlays: str, example: str = EXAMPLE) -> dict:
+    """The project `docker compose config` resolves for the example (the shared one by default)
+    with these overlays, the cms-tasks profile on, and the scratch directory written as <repo>."""
     from tests.compose_config_check import compose_config, prepare
 
     scratch = tmp_path / overlays.replace(":", "+")
     scratch.mkdir()
-    env_text = FILES_LINE.sub(f"COMPOSE_FILE={TRAEFIK_BASE}:{overlays}", EXAMPLE)
+    env_text = FILES_LINE.sub(f"COMPOSE_FILE={TRAEFIK_BASE}:{overlays}", example)
     prepare(scratch, env_text + "COMPOSE_PROFILES=cms-tasks\n")
     result = compose_config(scratch, "--format", "json")
     assert result.returncode == 0, result.stderr
@@ -414,6 +414,19 @@ def test_the_metrics_overlays_grafana_is_the_one_the_grafana_overlay_builds(tmp_
     alone = merged(tmp_path, "compose.metrics.yaml")["services"]["grafana"]
     split = merged(tmp_path, "compose.grafana.yaml:compose.metrics.yaml")["services"]["grafana"]
     assert alone == split
+
+
+@needs_docker
+@pytest.mark.parametrize(
+    "overlays",
+    ["compose.metrics.yaml", "compose.grafana.yaml:compose.logs.yaml"],
+    ids=["previous-release-metrics", "logs"],
+)
+def test_grafanas_root_url_follows_its_published_port_when_it_has_no_public_url(tmp_path, overlays):
+    loopback_only = re.sub(r"^NEOPS_GRAFANA_URL=.*\n", "", EXAMPLE, flags=re.MULTILINE)
+    example = loopback_only + "NEOPS_GRAFANA_PORT=24030\n"
+    grafana = merged(tmp_path, overlays, example)["services"]["grafana"]
+    assert grafana["environment"]["GF_SERVER_ROOT_URL"] == "http://localhost:24030"
 
 
 @needs_docker
