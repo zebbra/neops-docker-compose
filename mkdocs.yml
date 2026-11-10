@@ -8,7 +8,7 @@
 # -------------------------------------------
 # 
 copyright: Copyright &copy; Zebbra AG
-edit_uri: edit/release/2.0/docs
+edit_uri: edit/develop/docs
 extra:
   social:
   - icon: fontawesome/solid/house
