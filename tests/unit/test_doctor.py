@@ -205,13 +205,30 @@ def test_an_unreachable_store_is_a_warning_because_the_engine_spools_meanwhile()
     assert not probe.ok and probe.severity == "warn"
 
 
-def test_the_logs_probe_runs_only_with_the_logs_overlay(tmp_path, monkeypatch):
-    without = _run_with(tmp_path, monkeypatch, "compose.yaml:compose.traefik.yaml")
-    assert doctor.LOGS_PROBE not in [p.name for p in without]
-    with_logs = _run_with(
-        tmp_path, monkeypatch, "compose.yaml:compose.traefik.yaml:compose.grafana.yaml:compose.logs.yaml"
-    )
-    assert doctor.LOGS_PROBE in [p.name for p in with_logs]
+@pytest.mark.parametrize(
+    ("compose_file", "extra_env", "probed"),
+    [
+        ("compose.yaml:compose.traefik.yaml", "", False),
+        ("compose.yaml:compose.traefik.yaml", "NEOPS_LOG_BACKEND=db\n", False),
+        ("compose.yaml:compose.traefik.yaml:compose.grafana.yaml:compose.logs.yaml", "", True),
+        (
+            "compose.yaml:compose.traefik.yaml",
+            "NEOPS_LOG_BACKEND=loki\nNEOPS_LOG_URL=http://loki:3100\n",
+            True,
+        ),
+        (
+            "compose.yaml:compose.traefik.yaml",
+            "NEOPS_LOG_BACKEND=victorialogs\nNEOPS_LOG_URL=http://vl:9428\n",
+            True,
+        ),
+    ],
+    ids=["no-backend", "db", "logs-overlay", "own-loki", "own-victorialogs"],
+)
+def test_the_logs_probe_runs_whenever_the_engine_writes_to_a_log_store(
+    tmp_path, monkeypatch, compose_file, extra_env, probed
+):
+    probes = _run_with(tmp_path, monkeypatch, compose_file, extra_env)
+    assert (doctor.LOGS_PROBE in [p.name for p in probes]) is probed
 
 
 def test_login_probe_never_accepts_500():
