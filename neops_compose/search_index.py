@@ -10,17 +10,20 @@ from __future__ import annotations
 
 import json
 
-from neops_compose.compose import ComposeError
+from neops_compose.compose import Compose, ComposeError
 from neops_compose.context import Ctx
 
 # -u: Python block-buffers a pipe, and the core image does not set PYTHONUNBUFFERED, so without it
 # a rebuild prints nothing until it exits.
 MANAGE = ("python", "-u", "manage.py", "elastic_index")
+REBUILD_IF_STALE = "--rebuild-if-stale"
 REBUILD_OWNERS = ("cms", "elasticsearch")
 DO_NOT_INTERRUPT = (
     "this can take minutes. Do not interrupt it: an interrupted rebuild keeps running inside cms"
 )
 SEE_DOCS = "(docs/30-operations.md#upgrades)"
+LEFT_RUNNING = "a search index rebuild from an earlier, interrupted ./neops up is still running in cms"
+ABORT_IT = f"To abort it: ./neops restart cms {SEE_DOCS}"
 # --rebuild-if-stale finished the rebuild but set aside documents Elasticsearch refused.
 SET_ASIDE = 3
 INDEX_SYNC_REPORT = ("python", "manage.py", "index_sync_status", "--json")
@@ -39,12 +42,12 @@ def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
     """Runs against the healthy `cms`, not in cms-init: `cms` waits for cms-init, so a rebuild
     there would take the whole CMS API down, not only search."""
     usage = ctx.compose.exec("cms", *MANAGE, "--help")
-    if "--rebuild-if-stale" in usage:
+    if REBUILD_IF_STALE in usage:
         ctx.log(
             f"neops-core checks the search index and rebuilds what is stale; {DO_NOT_INTERRUPT}, "
             f"and the next ./neops up waits for it at cms-init {SEE_DOCS}"
         )
-        if _stream(ctx, "--rebuild-if-stale", tolerated=(SET_ASIDE,)) == SET_ASIDE:
+        if _stream(ctx, REBUILD_IF_STALE, tolerated=(SET_ASIDE,)) == SET_ASIDE:
             _report_set_aside(ctx)
     elif images_moved(last_up, running):
         ctx.log(
@@ -54,6 +57,29 @@ def refresh(ctx: Ctx, last_up: dict | None, running: dict[str, str]) -> None:
         )
         lookups = ["--sync-lookups"] if "--sync-lookups" in usage else []
         _stream(ctx, "--rebuild", "--force", *lookups)
+
+
+def warn_if_rebuild_running(ctx: Ctx) -> None:
+    """Otherwise the next up waits on core's rebuild lock at cms-init with nothing on the screen."""
+    processes = _cms_processes(ctx.compose)
+    if MANAGE[-1] not in processes:
+        return
+    if REBUILD_IF_STALE in processes:
+        ctx.log(f"{LEFT_RUNNING}; up will wait for it. {ABORT_IT}")
+    else:
+        ctx.log(f"{LEFT_RUNNING}; nothing waits for it, and up may start a second one beside it. {ABORT_IT}")
+
+
+def _cms_processes(compose: Compose) -> str:
+    """`top`, not `pgrep`, which the core image may lack. Its table differs across compose
+    versions, so callers match command names only; an unreadable table must not stop the start."""
+    if "cms" not in compose.running_services():
+        return ""
+    try:
+        result = compose.run("top", "cms", capture=True, check=False)
+    except ComposeError:
+        return ""
+    return (result.stdout or "") if result.returncode == 0 else ""
 
 
 def images_moved(last_up: dict | None, running: dict[str, str]) -> bool:

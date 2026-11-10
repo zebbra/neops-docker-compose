@@ -54,6 +54,9 @@ class FakeCompose:
     def ps(self):
         return [{"Service": "cms", "Image": self.image, "State": "running"}]
 
+    def running_services(self):
+        return {row["Service"] for row in self.ps() if row.get("State") == "running"}
+
     def images(self):
         return [self.image]
 
@@ -216,6 +219,26 @@ def test_up_pulls_and_starts_once_when_the_engine_token_is_already_valid(tmp_pat
     workflow.up(ctx)
     assert order == ["check(images=False)", "migrate", "keys", "render", "finish"]
     assert ctx.compose.calls == ["pull", "up"]
+
+
+class StillRebuilding(FakeCompose):
+    def run(self, *args, capture=False, check=True, env=None):
+        if args == ("top", "cms"):
+            self.calls.append("top")
+            return subprocess.CompletedProcess(
+                args, 0, stdout="python -u manage.py elastic_index --rebuild-if-stale\n"
+            )
+        return super().run(*args, capture=capture, check=check, env=env)
+
+
+def test_up_says_it_will_wait_for_a_rebuild_left_running_before_it_starts(tmp_path, monkeypatch):
+    _stub_up(monkeypatch, [])
+    ctx = _with_engine_token(make_ctx(tmp_path, compose=StillRebuilding()))
+    ctx.log = lambda m: ctx.compose.calls.append("log:" + m)
+    workflow.up(ctx)
+    pulled, looked, notice, started = ctx.compose.calls
+    assert (pulled, looked, started) == ("pull", "top", "up")
+    assert notice.startswith("log:" + search_index.LEFT_RUNNING) and "up will wait for it" in notice
 
 
 def test_up_starts_a_second_time_when_a_token_was_minted(tmp_path, monkeypatch):
@@ -488,7 +511,7 @@ def test_a_failed_help_stops_up_before_it_records_the_start(tmp_path, monkeypatc
     with pytest.raises(ComposeError):
         _up_after(tmp_path, monkeypatch, compose, _last_up(), order)
     assert "finish" not in order
-    assert compose.runs == []
+    assert compose.streamed == []
 
 
 def test_an_older_core_is_rebuilt_whole_after_elasticsearch_moved(tmp_path, monkeypatch):
@@ -520,7 +543,7 @@ def test_an_older_core_is_left_alone_while_neither_image_moved(tmp_path, monkeyp
     compose = IndexedCompose(OLD_CORE_WITH_LOOKUPS)
     _up_after(tmp_path, monkeypatch, compose, _last_up())
 
-    assert compose.runs == []
+    assert compose.streamed == []
 
 
 def test_install_on_a_live_deployment_asks_core_as_up_does(tmp_path, monkeypatch):

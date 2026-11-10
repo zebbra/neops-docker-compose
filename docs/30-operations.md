@@ -395,8 +395,10 @@ stop at refused documents of a later type.
 **Do not interrupt a rebuild.** Ctrl-C stops `./neops up`, not the rebuild: `docker compose exec`
 cannot signal the process it started, so it keeps running inside `cms`. On a core with
 `--rebuild-if-stale`, every `elastic_index` command that creates, deletes or fills indices takes
-the same lock, so the next `./neops up` waits for that rebuild at `cms-init` with nothing on the
-screen, and can fail with a compose timeout once that wait passes 15 minutes. On an older core
+the same lock, so the next `./neops up` waits for that rebuild at `cms-init`, and can fail with a
+compose timeout once that wait passes 15 minutes. Before it starts the stack, `./neops up` looks for
+an `elastic_index` process in a running `cms` and, if it finds one, says whether it will wait for
+it and how to abort it. On an older core
 nothing waits, and the next `up` starts a second full rebuild beside the first. Either way:
 
 ```bash
