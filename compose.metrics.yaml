@@ -102,7 +102,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${NEOPS_GRAFANA_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SERVER_ROOT_URL: ${NEOPS_GRAFANA_URL:-http://localhost:3000}
+      GF_SERVER_ROOT_URL: ${NEOPS_GRAFANA_URL:-http://localhost:${NEOPS_GRAFANA_PORT:-3000}}
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       # Read by the log datasource ./neops render writes for a Loki of your own.
       NEOPS_LOG_URL: ${NEOPS_LOG_URL:-}

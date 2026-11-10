@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
+from neops_compose.rules import writes_to_log_store
 from neops_compose.token import mint_access_token
 from neops_compose.urls import BASE_URLS, PublicUrl, public_urls
 
@@ -530,7 +531,7 @@ def run(
     urls = public_urls(ctx.env, ctx.scenario)
     http = Http(connect=connect, insecure=insecure)
     probes += http_probes(urls, http, deny_severity(ctx, urls["NEOPS_ENGINE_URL"]))
-    if ctx.scenario.logs:
+    if writes_to_log_store(ctx.env, ctx.scenario):
         probes.append(logs_probe(urls["NEOPS_ENGINE_URL"], http))
     probes += _login_probes(ctx, urls["NEOPS_CMS_URL"], urls["NEOPS_ENGINE_URL"], http, worker_grace)
     probes += index_sync_probes(ctx.compose, ctx.scenario.cms_tasks)

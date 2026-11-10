@@ -192,6 +192,7 @@ def up(ctx: Ctx, allow_downgrade: bool = False, connect: str | None = None, inse
     keys(ctx)
     render(ctx.env, ctx.scenario, ctx.paths)
     ctx.compose.pull()
+    search_index.warn_if_rebuild_running(ctx)
     _start(ctx)
     search_index.refresh(ctx, ctx.state.last_up, images_by_service(ctx.compose))
     _finish(ctx, connect, insecure)

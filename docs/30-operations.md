@@ -317,7 +317,7 @@ both run `migrate` as their first real step, so a pending migration is never sil
 ## Upgrades
 
 ```bash
-git pull        # or: git checkout <next release tag>
+git pull
 ./neops up
 ```
 
@@ -384,8 +384,10 @@ configured not to auto-create the Neops indices (`action.auto_create_index`), si
 auto-created one would carry a dynamic mapping that breaks search. The rebuild re-indexes those
 rows from the database anyway. If the rebuild fails, which is any non-zero exit other than
 `--rebuild-if-stale`'s exit 3 above (on an older core, any non-zero exit at all), `up` says so and
-stops before recording the start, so the next `./neops up` tries it again, and search stays
-partial until a rebuild succeeds. On an older core a document Elasticsearch refuses is such a
+stops before recording the start, so the next `./neops up` tries it again. Until a rebuild
+succeeds, search stays partial and, on a core with `--rebuild-if-stale`, the engine's locks that
+resolve their entities through search stay refused with `INDEX_SYNC_PENDING`, and their runs
+wait in `locking`: see [Workflow runs stay in `locking`](50-troubleshooting.md#workflow-runs-stay-in-locking-with-index_sync_pending). On an older core a document Elasticsearch refuses is such a
 failure, and fails every retry the same way. The rebuild stops at the first type with refused
 documents, and its output names each of them by `_id` (`device-6` is device 6), with
 Elasticsearch's reason. Such a row is not marked `rejected`, so neither `index_sync_status` nor
@@ -395,8 +397,10 @@ stop at refused documents of a later type.
 **Do not interrupt a rebuild.** Ctrl-C stops `./neops up`, not the rebuild: `docker compose exec`
 cannot signal the process it started, so it keeps running inside `cms`. On a core with
 `--rebuild-if-stale`, every `elastic_index` command that creates, deletes or fills indices takes
-the same lock, so the next `./neops up` waits for that rebuild at `cms-init` with nothing on the
-screen, and can fail with a compose timeout once that wait passes 15 minutes. On an older core
+the same lock, so the next `./neops up` waits for that rebuild at `cms-init`, and can fail with a
+compose timeout once that wait passes 15 minutes. Before it starts the stack, `./neops up` looks for
+an `elastic_index` process in a running `cms` and, if it finds one, says whether it will wait for
+it and how to abort it. On an older core
 nothing waits, and the next `up` starts a second full rebuild beside the first. Either way:
 
 ```bash
@@ -406,9 +410,11 @@ nothing waits, and the next `up` starts a second full rebuild beside the first. 
 
 Wait for it to finish, or abort it with `./neops restart cms`. On a core with
 `--rebuild-if-stale`, the indices it did not finish carry no stamp, so the next `./neops up`
-rebuilds them, and the engine's searching locks stay refused until core notices the aborted
-rebuild (its heartbeat goes stale after 5 minutes). On an older core the next `up` rebuilds
-everything again only if the core or Elasticsearch image moved since the last successful `up`.
+rebuilds them. The engine's searching locks stay refused until a rebuild succeeds: aborting the
+rebuild changes only the message they are refused with, from "being rebuilt" to "stopped without
+finishing" (see [Workflow runs stay in `locking`](50-troubleshooting.md#workflow-runs-stay-in-locking-with-index_sync_pending)).
+On an older core the next `up` rebuilds everything again only if the core or Elasticsearch image
+moved since the last successful `up`.
 
 To run the check or a rebuild by hand:
 

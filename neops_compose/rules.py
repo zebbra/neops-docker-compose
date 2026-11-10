@@ -192,6 +192,11 @@ def log_backend(env: Env, scenario: Scenario) -> str:
     return env.get(LOG_BACKEND) or "db"
 
 
+def writes_to_log_store(env: Env, scenario: Scenario) -> bool:
+    """The engine pushes its lines to a queryable store: the bundled one or the operator's own."""
+    return log_backend(env, scenario) in REMOTE_LOG_BACKENDS
+
+
 def _log_backend_problems(env: Env, scenario: Scenario) -> list[str]:
     """compose.logs.yaml sets the backend and its URL itself; without it they are the
     operator's own store, which the engine refuses to start without a URL for."""

@@ -24,7 +24,7 @@ below are keyed to those probe names and the messages `check` prints.
 | `grafana` | `/api/health` did not return 200 (Grafana overlay only, and only when `NEOPS_GRAFANA_URL` is set). With the logs overlay, a Grafana that never becomes healthy on its first start usually could not download its VictoriaLogs plugin: see `logs/README.md` |
 | `engine worker API denied` | a `POST /blackboard/job` from outside reached the engine instead of being refused: see [External proxy](40-external-proxy.md). Behind the bundled Traefik this fails `doctor`, because the deny rule is one the CLI rendered and it is not working. In external-proxy mode it is a `WARN` that does not fail `doctor`, because the deny belongs to a proxy the CLI knows nothing about and which may not be routing yet. The route must never be reachable either way, so a warning still standing once your proxy is up is a real problem. With the engine URL and `NEOPS_BIND_ADDRESS` both on loopback (`examples/local.env`) the probe is `skipped` and `OK`: there is no proxy and no network path |
 | `engine worker logs denied` | a `POST /workers/00000000-0000-0000-0000-000000000000/logs` from outside reached the engine instead of being refused; same severity rules as the probe above. Your proxy's deny list lacks `/workers/*/logs`: see [External proxy](40-external-proxy.md) |
-| `engine log store` (logs overlay only) | the engine's `GET /version` says it has no queryable log store, or that the store rejects its pushes (`misconfigured`, with the status and the store's answer). A `WARN` saying the store is unreachable does not fail `doctor`: the engine spools lines to its database and delivers them once VictoriaLogs answers again; check `./neops logs victorialogs` |
+| `engine log store` (whenever the engine writes to VictoriaLogs or Loki: the logs overlay, or `NEOPS_LOG_BACKEND` naming a store you run yourself) | the engine's `GET /version` says it has no queryable log store, or that the store rejects its pushes (`misconfigured`, with the status and the store's answer: check `NEOPS_LOG_USERNAME`, `NEOPS_LOG_PASSWORD` and, for Loki, `NEOPS_LOG_TENANT`). A `WARN` saying the store is unreachable does not fail `doctor`: the engine spools lines to its database and delivers them once the store answers again; check `./neops logs victorialogs` for the bundled one, or that `NEOPS_LOG_URL` is reachable from the engine for your own |
 | `cms login path` | a deliberately bad login answered 5xx instead of 4xx, or answered `internal error`, which is what core says while its database is unreachable: see *500 on login* below, and check `postgres-cms`. Under OIDC, where core refuses password login before it reaches its rate limiter or its database, doctor sends an OIDC code exchange with a well-formed code that was never issued instead, and expects `Invalid authorization code`; any other answer names what came back. That makes core log `exchangeOidcCode: code not found` on every OIDC doctor run, so do not alert on it. `rate limit, 20/min` behind an external proxy without `RATELIMIT_IP_META_KEY` means every user shares the proxy's address and its one bucket of code exchanges |
 | `worker registered` | asking the engine for `/workers` as the admin user did not find an `ONLINE` worker: check the `worker` container's logs. A 403 from the engine still passes the probe, since the request itself was accepted. Without OIDC doctor gets its token by logging in with `NEOPS_ADMIN_PASSWORD`, and `the CMS cannot reach its database` means the login never got far enough to ask, so start with `postgres-cms`. Under OIDC, where password login is disabled, the CMS issues a short-lived token for `NEOPS_ADMIN_USER` through `docker compose exec cms`, and `could not mint an admin token` gives the reason: `is deactivated` means reactivate that user in the CMS admin site (core 2.2 also refuses the engine's static API key while it is); anything else, start with `docker compose logs cms` |
 | `X-Real-IP trusted from client` (`--probe-ratelimit` only) | every request with a forged `X-Real-IP` was accepted as a distinct client (six logins, or under OIDC twenty-one `exchangeOidcCode` calls): your proxy is not overwriting the header, see [External proxy](40-external-proxy.md) |
@@ -124,6 +124,32 @@ before the migrations have created the table. The commands after `migrate` start
 migrated database and sync the elements without error. A `cms-init` that really failed exits
 non-zero, which the container status row of `./neops doctor` reports; one that logged only this
 line and exited 0 needs nothing.
+
+### Workflow runs stay in `locking` with `INDEX_SYNC_PENDING`
+
+On a neops-core with `elastic_index --rebuild-if-stale`, core refuses every lock that resolves
+its entities through search while a search index rebuild is unfinished. The engine retries the
+lock with backoff, so the run stays in `locking`, and `./neops logs engine` repeats
+"Failed to lock CMS resources" with the reason. The reason says which case you are in:
+
+- `CMS refused the lock (INDEX_SYNC_PENDING): The search indices are being rebuilt (started ...)`:
+  a rebuild is running. Wait for it; the runs lock once it finishes.
+- `CMS refused the lock (INDEX_SYNC_PENDING): The search index rebuild started ... stopped without
+  finishing (no heartbeat since ...)`: the rebuild failed or was aborted (`./neops restart cms`, a
+  killed container), and nothing will finish it on its own. Waiting does not help: the refusal
+  holds until a rebuild succeeds. Fix what stopped it, then run a rebuild, which takes over the
+  stopped one; if the cause persists, the same command prints the rebuild's error again:
+
+    ```bash
+    ./neops compose -- exec -T cms python manage.py elastic_index --rebuild-if-stale
+    ```
+
+    `./neops up` runs the same command. Exit 0 means done, and exit 3 that it finished but set
+    refused documents aside (see [Search index out of sync](#search-index-out-of-sync)). Both
+    clear the refusal, and the waiting runs lock on their next retry.
+
+The same code with "Elasticsearch has not indexed those unlocks yet" is a different case, see
+`unlocks have waited` under [Search index out of sync](#search-index-out-of-sync).
 
 ### Elasticsearch and `vm.max_map_count`
 
