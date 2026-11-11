@@ -255,9 +255,8 @@ has, such as a shared mailbox.
 
 An app role's *Value* becomes a Neops role name, and this deployment seeds a role named
 `NEOPS_ADMIN_ROLE` (`admin` by default) with full rights: never give an app role that value, and
-treat whoever manages the app roles and their assignments as a Neops administrator. Removing an
-assignment in Entra does not end a session that is already open, since sessions refresh
-without asking Entra; deactivate the user in the CMS admin site to cut someone off.
+treat whoever manages the app roles and their assignments as a Neops administrator. To take
+someone's access away, deactivate the user in the CMS admin site.
 
 The client secret expires after at most 24 months. Put the new value in
 `NEOPS_OIDC_CLIENT_SECRET`, then apply it, since the CMS keeps the provider it stored at first
@@ -267,11 +266,6 @@ start:
 ./neops up
 ./neops compose -- exec cms python manage.py seed_oidc_providers --force
 ```
-
-Every account, including one an OIDC login just created without any role, may delete facts and
-archived devices and tasks as shipped: the CMS permission elements `delete-facts`,
-`device-archive` and `tasks-archive` default to every flag. Set their default to none under
-*Permission elements* in the CMS admin site and grant them to the roles that need them.
 
 ### Bundled Keycloak
 
