@@ -45,7 +45,7 @@ the CA on this host, or add `--insecure` to `install`, `up` and `doctor`; see
 
 | Example | What you get |
 |---|---|
-| `examples/local.env` | one machine, no proxy, no TLS, `http://localhost:<port>` per service (evaluation on a laptop) |
+| `examples/local.env` | one machine, no proxy, no TLS, `http://localhost:<port>` per service, logs in VictoriaLogs with Grafana (evaluation on a laptop) |
 | `examples/local-legacy.env` | the same plus core's Celery worker and beat (`COMPOSE_PROFILES=cms-tasks`), for a deployment that still runs Neops tasks |
 | `examples/external-proxy.env` | services on `127.0.0.1` ports for your own reverse proxy (see `docs/40-external-proxy.md`) |
 | `examples/traefik-http.env` | bundled Traefik, plain HTTP (evaluation) |
