@@ -215,7 +215,7 @@ Core reads roles from the ID token or the userinfo response, never the access to
 providers). A `resource_access` without an entry for Neops' client clears the user's roles. The
 bundled Keycloak overlay configures this automatically (see below). A token that carries roles
 replaces the user's Neops roles at every login, roles assigned by hand included; a token with no
-role claim leaves them as they are, so a new user lands with no permissions until one is
+role claim leaves them as they are, so a new user lands with no roles until one is
 assigned by hand. A `groups` claim is not read.
 
 Core also refuses any login whose token does not say `email_verified: true`, because a matching

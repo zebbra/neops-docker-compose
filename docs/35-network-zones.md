@@ -100,9 +100,8 @@ docker run -d --name neops-worker-b-1 --network host --restart unless-stopped \
   quay.io/zebbra/neops-worker-sdk:<pinned tag>
 ```
 
-`10.99.0.1` stands for an engine address the site can reach. The engine's worker routes are
-unauthenticated by design, and the jobs they hand out carry device passwords. Behind the bundled
-Traefik those routes answer `403` to every client outside the compose network, so a worker
+`10.99.0.1` stands for an engine address the site can reach. Behind the bundled Traefik the
+engine's worker routes answer `403` to every client outside the compose network, so a worker
 pointed at Traefik's engine address exits at startup with this line and needs the private path
 described below:
 
@@ -392,8 +391,7 @@ needs that zone meanwhile holds every zone. Upgrade in this order:
 
 ### Secrets, backup and restore
 
-- No `./neops rotate` target touches a site's workers: the engine's worker routes are
-  unauthenticated, so a worker holds no secret to rotate.
+- No `./neops rotate` target touches a site's workers: a worker holds no secret to rotate.
 - A worker keeps no state. Nothing at a site needs a backup; the zones and the devices' zones are in
   the CMS database, which `./neops backup` dumps.
 - After a restore, `GET /workers` and the Workers page also list the restored engine database's
