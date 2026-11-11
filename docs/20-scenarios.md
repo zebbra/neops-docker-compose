@@ -200,10 +200,14 @@ In shared-hostname mode `NEOPS_CMS_URL` is the web client's origin, so the callb
 one hostname too: `examples/oidc-external-shared-host.env` is the same scenario with paths
 instead of subdomains.
 
-Core reads roles out of the token's `resource_access.<client_id>.roles` claim, so the
-provider's client needs to put that claim on the ID token or userinfo response, exactly what the
-bundled Keycloak overlay configures automatically (see below). Without it, users can log in but
-land with no permissions until one is assigned by hand.
+Core reads roles from the ID token or the userinfo response, never the access token: out of
+`resource_access.<client_id>.roles` (Keycloak's shape), or, when the token has no
+`resource_access` at all, out of a top-level `roles` array (Entra app roles and most other
+providers). A `resource_access` without an entry for Neops' client clears the user's roles. The
+bundled Keycloak overlay configures this automatically (see below). A token that carries roles
+replaces the user's Neops roles at every login, roles assigned by hand included; a token with no
+role claim leaves them as they are, so a new user lands with no permissions until one is
+assigned by hand. A `groups` claim is not read.
 
 Core also refuses any login whose token does not say `email_verified: true`, because a matching
 email links the OIDC identity to an existing local user. A provider that never emits that claim
@@ -223,15 +227,42 @@ Register a web app under *Microsoft Entra ID, App registrations* with:
   registered redirect URI.
 - A client secret under *Certificates and secrets*; `NEOPS_OIDC_CLIENT_SECRET` is its value, not
   its ID, and it expires.
-- The optional claim `email` on the ID token under *Token configuration*; core derives the
-  username from it and links accounts by it.
+- The optional claim `email` on the ID token under *Token configuration*, so later logins see
+  the address in the ID token too; a new user's username comes from the address in Entra's
+  userinfo response.
 
 Then in `.env`: `NEOPS_OIDC_CLIENT_ID` is the *Application (client) ID*, the discovery URL is
 `https://login.microsoftonline.com/<Directory (tenant) ID>/v2.0/.well-known/openid-configuration`
 (the tenant ID rather than `common`, so only your tenant signs in), and
 `NEOPS_OIDC_TRUST_EMAIL_WITHOUT_VERIFICATION=true`, because Entra does not emit `email_verified`.
-Entra puts app roles in a top-level `roles` claim that core does not read yet, so roles are
-assigned in Neops by hand until core learns that claim shape.
+Entra puts app roles in a top-level `roles` claim, which core reads: define *App roles* whose
+*Value* is the Neops role name, and assign them under *Enterprise apps*, *Users and groups*.
+Without app roles, roles are assigned in Neops by hand. Under *Enterprise apps*, *Properties*,
+set *Assignment required?* to *Yes*: it defaults to *No*, which lets every member of the tenant,
+guests included, sign in and get a Neops account. Because Entra sends no `email_verified`, an
+Entra login is never linked to an existing Neops user by address, so a local account whose address an Entra
+user also has blocks that user's Entra login: give `NEOPS_ADMIN_EMAIL` an address no Entra user
+has, such as a shared mailbox.
+
+An app role's *Value* becomes a Neops role name, and this deployment seeds a role named
+`NEOPS_ADMIN_ROLE` (`admin` by default) with full rights: never give an app role that value, and
+treat whoever manages the app roles and their assignments as a Neops administrator. Removing an
+assignment in Entra does not end a session that is already open, since sessions refresh
+without asking Entra; deactivate the user in the CMS admin site to cut someone off.
+
+The client secret expires after at most 24 months. Put the new value in
+`NEOPS_OIDC_CLIENT_SECRET`, then apply it, since the CMS keeps the provider it stored at first
+start:
+
+```bash
+./neops up
+./neops compose -- exec cms python manage.py seed_oidc_providers --force
+```
+
+Every account, including one an OIDC login just created without any role, may delete facts and
+archived devices and tasks as shipped: the CMS permission elements `delete-facts`,
+`device-archive` and `tasks-archive` default to every flag. Set their default to none under
+*Permission elements* in the CMS admin site and grant them to the roles that need them.
 
 ### Bundled Keycloak
 
