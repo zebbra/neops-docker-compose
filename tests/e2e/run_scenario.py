@@ -272,8 +272,6 @@ def apply_traefik_ports(values: dict[str, str], scenario: Scenario, ports: Ports
         values["NEOPS_WORKFLOWS_URL"] = _at(values["NEOPS_WORKFLOWS_URL"], scheme, ports.monitor)
     if scenario.keycloak:
         values["NEOPS_KEYCLOAK_PORT"] = str(ports.keycloak)
-    if scenario.runs_grafana:
-        values["NEOPS_GRAFANA_PORT"] = str(ports.grafana)
 
 
 def _monitor_has_own_port(values: dict[str, str]) -> bool:
@@ -314,6 +312,8 @@ def build_env(example: Path, name: str, ports: Ports, extra: dict[str, str]) -> 
         apply_expose_ports(values, ports)
     else:
         apply_traefik_ports(values, scenario, ports)
+    if scenario.runs_grafana:
+        values["NEOPS_GRAFANA_PORT"] = str(ports.grafana)
     values["COMPOSE_FILE"] = values["COMPOSE_FILE"] + ":" + OVERRIDE_FILE
     values["COMPOSE_PROJECT_NAME"] = f"{E2E_PROJECT_PREFIX}{name}-{ports.base}"
     values.update(extra)

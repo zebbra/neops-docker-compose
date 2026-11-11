@@ -221,3 +221,10 @@ def test_extra_env_cannot_point_a_scenario_at_another_project():
             run_scenario.Ports(18000),
             {"COMPOSE_PROJECT_NAME": "some-other-project"},
         )
+
+
+@pytest.mark.parametrize("example", ["local", "logs"])
+def test_a_scenario_running_grafana_publishes_it_on_the_runs_own_port(example):
+    ports = run_scenario.Ports(18000)
+    values = run_scenario.build_env(run_scenario.chosen_example(example), example, ports, {})
+    assert values["NEOPS_GRAFANA_PORT"] == str(ports.grafana)

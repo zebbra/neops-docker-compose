@@ -101,6 +101,15 @@ loopback, `./neops doctor` skips the deny probe rather than warning forever, and
 either leaves loopback the warning is back. Put a proxy in front and switch to
 `examples/external-proxy.env` before exposing it to a network.
 
+It also selects the [logs overlay](#logs) with Grafana, so run logs are searchable from the
+first workflow on: Grafana is on `http://localhost:3000` (user `admin`, password
+`NEOPS_GRAFANA_ADMIN_PASSWORD`). Grafana's first start downloads its VictoriaLogs plugin and
+refuses to start without it, so it needs outbound internet from the containers; the offline
+procedure is in `logs/README.md`.
+`./neops install` also writes `NEOPS_LOG_BACKEND=db` into `.env`; the logs overlay overrides it,
+and it is the fallback once the overlay is dropped. Drop `compose.grafana.yaml:compose.logs.yaml`
+from `COMPOSE_FILE` for a lighter stack that keeps the CMS's task logs in its database instead.
+
 ### Shared hostname
 
 ```
