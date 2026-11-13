@@ -111,6 +111,19 @@ def test_cms_env_omits_the_ratelimit_key_when_unset(tmp_repo):
     assert "RATELIMIT_IP_META_KEY" not in envfile(paths.generated / "cms.env")
 
 
+def test_cms_env_carries_the_lock_query_limit_from_dotenv(tmp_repo):
+    """Core reads it from its environment only, and a workflow acquiring more entities than it
+    allows is refused, so .env must reach core."""
+    _, paths = run(tmp_repo, EXPOSE_SHARED + "NEOPS_LOCK_MAX_QUERY_RESULTS=10000\n")
+    assert envfile(paths.generated / "cms.env")["NEOPS_LOCK_MAX_QUERY_RESULTS"] == "10000"
+
+
+def test_cms_env_omits_the_lock_query_limit_when_unset(tmp_repo):
+    """Unset, core keeps its own default."""
+    _, paths = run(tmp_repo, EXPOSE_SHARED)
+    assert "NEOPS_LOCK_MAX_QUERY_RESULTS" not in envfile(paths.generated / "cms.env")
+
+
 def test_external_oidc_providers(tmp_repo):
     _, paths = run(tmp_repo, EXTERNAL)
     doc = json.loads((paths.generated / "providers.json").read_text())

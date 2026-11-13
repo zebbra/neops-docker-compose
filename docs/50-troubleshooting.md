@@ -151,6 +151,20 @@ lock with backoff, so the run stays in `locking`, and `./neops logs engine` repe
 The same code with "Elasticsearch has not indexed those unlocks yet" is a different case, see
 `unlocks have waited` under [Search index out of sync](#search-index-out-of-sync).
 
+### A workflow cannot lock: `returned more than 1000 results`
+
+Core locks at most `NEOPS_LOCK_MAX_QUERY_RESULTS` entities per acquire query (1000 by default) and
+refuses a query matching more with "Search query '...' returned more than 1000 results. Please
+refine your search." A workflow over a large inventory (an import or a sync over every device)
+needs a higher limit. Set it in `.env` and apply it:
+
+```bash
+echo 'NEOPS_LOCK_MAX_QUERY_RESULTS=10000' >> .env
+./neops up
+```
+
+Each run then locks up to that many entities at once, for as long as it runs.
+
 ### Elasticsearch and `vm.max_map_count`
 
 Elasticsearch refuses to start below `vm.max_map_count = 262144` (the stock Linux default is

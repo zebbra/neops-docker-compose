@@ -19,7 +19,13 @@ KEYCLOAK_PROVIDER_ID = "keycloak"
 # an empty EMAIL_URL is an invalid email schema, not "use consolemail://".
 # RATELIMIT_IP_META_KEY only means something behind a proxy that overwrites the header,
 # so it stays the operator's call in .env; compose.traefik.yaml sets it for its own proxy.
-OPTIONAL_CORE_KEYS = ("SENTRY_DSN", "SENTRY_ENVIRONMENT", "EMAIL_URL", "RATELIMIT_IP_META_KEY")
+OPTIONAL_CORE_KEYS = (
+    "SENTRY_DSN",
+    "SENTRY_ENVIRONMENT",
+    "EMAIL_URL",
+    "RATELIMIT_IP_META_KEY",
+    "NEOPS_LOCK_MAX_QUERY_RESULTS",
+)
 # The compose fragment compose.traefik-shared-host.yaml extends its traefik service from.
 TRAEFIK_PORTS_FRAGMENT = "traefik/ports.yaml"
 GRAFANA_LOG_DATASOURCES = "grafana/log-datasources.yml"
