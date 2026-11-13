@@ -269,7 +269,9 @@ def _save(repo: Path, doc: CommentedMap) -> None:
     _round_trip().dump(doc, buf)
     path = (repo / OVERRIDE_FILE).resolve()
     tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(buf.getvalue())
-    if path.exists():
-        os.chmod(tmp, path.stat().st_mode & 0o7777)
+    mode = path.stat().st_mode & 0o7777 if path.exists() else 0o644
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as out:
+        out.write(buf.getvalue())
+    os.chmod(tmp, mode)
     os.replace(tmp, path)
