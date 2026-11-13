@@ -14,7 +14,13 @@ rules below — see [Backward compatibility](#backward-compatibility-is-the-hard
 
 `.env` is the single source of truth. It is operator-owned and gitignored; the CLI reads it,
 validates it, derives everything else from it, and only ever writes it through `./neops secrets`,
-`./neops rotate` and migrations.
+`./neops rotate`, migrations, and `./neops config set`, which appends `compose.override.yaml` to
+`COMPOSE_FILE`. All of them go through `Env.set`, which rewrites one key in place.
+
+`compose.override.yaml` is the operator's other file: gitignored, never rendered, merged last.
+`neops_compose/override.py` edits it only by round-trip (ruamel.yaml keeps their services, keys
+and comments) and only under the core services, which it derives from `compose.yaml` as the
+services reading `generated/cms.env`.
 
 ## Commands
 
@@ -133,6 +139,12 @@ Concretely, in new code:
 - **A migration that rewrites `COMPOSE_FILE` is not seen by the rest of that same run**: `Ctx`
   derives `Scenario` once, at build time, so `keys()` and `render()` still use the pre-migration
   scenario (Docker itself re-reads `.env`, so only the Python side is stale).
+- **The core services' names are public API too.** `./neops config set` writes a block for each
+  of them (`cms-init`, `cms`, `cms-worker`, `cms-beat`) into the operator's
+  `compose.override.yaml`, and compose refuses an override block for a service no shipped file
+  defines ("has neither an image nor a build context"). That fails in `check()`, before any
+  migration could clean the override, so renaming or dropping a core service needs the old name
+  kept defined for a release, or the override fixed by code that runs before compose loads.
 - Downgrades are refused on purpose: an older core does not undo a newer one's migrations and may
   not run on them, and `--allow-downgrade` lifts only the refusal. Backward compatibility means
   *forward* upgrade paths, not reversible releases.

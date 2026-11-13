@@ -32,6 +32,7 @@ def test_every_command_is_wired():
         "logs",
         "restart",
         "compose",
+        "config",
         "check",
         "migrate",
         "secrets",
@@ -116,3 +117,52 @@ def test_render_diff_names_nested_files_by_their_repo_relative_path(tmp_repo, ca
     out = capsys.readouterr().out
     assert "generated/traefik/dynamic.yml (rendered)" in out
     assert "generated/dynamic.yml" not in out
+
+
+@pytest.fixture
+def deployment(tmp_path, monkeypatch):
+    from neops_compose.scenario import BASE_FILE, OVERLAYS
+
+    for name in (BASE_FILE, *OVERLAYS.values()):
+        (tmp_path / name).symlink_to(cli.REPO / name)
+    (tmp_path / ".env").write_text("COMPOSE_FILE=compose.yaml:compose.traefik.yaml\n")
+    monkeypatch.setattr(cli, "REPO", tmp_path)
+    return tmp_path
+
+
+def test_config_set_lists_the_override_and_reminds_of_up(deployment, capsys):
+    assert cli.main(["config", "set", "CHECK_CLEANUP_ENABLED=True"]) == 0
+    out = capsys.readouterr().out
+    assert "added compose.override.yaml to COMPOSE_FILE in .env" in out
+    assert "./neops up" in out
+    from neops_compose.env import Env
+
+    compose_file = Env(deployment / ".env").get("COMPOSE_FILE")
+    assert compose_file == "compose.yaml:compose.traefik.yaml:compose.override.yaml"
+    assert cli.main(["config", "list"]) == 0
+    assert "CHECK_CLEANUP_ENABLED=True" in capsys.readouterr().out
+
+
+def test_config_unset_reports_what_it_removed(deployment, capsys):
+    cli.main(["config", "set", "CHECK_CLEANUP_ENABLED=True"])
+    capsys.readouterr()
+    assert cli.main(["config", "unset", "CHECK_CLEANUP_ENABLED", "NOT_THERE"]) == 0
+    out = capsys.readouterr().out
+    assert "removed CHECK_CLEANUP_ENABLED" in out
+    assert "NOT_THERE was not set" in out
+
+
+@pytest.mark.parametrize("argv", [["DATABASE_URL=x"], ["lower=x"]], ids=["managed", "invalid"])
+def test_a_refused_config_set_touches_neither_file(deployment, capsys, argv):
+    before = (deployment / ".env").read_text()
+    assert cli.main(["config", "set", *argv]) == 1
+    assert "error: " in capsys.readouterr().err
+    assert (deployment / ".env").read_text() == before
+    assert not (deployment / "compose.override.yaml").exists()
+
+
+def test_an_unparseable_override_leaves_compose_file_alone(deployment):
+    (deployment / "compose.override.yaml").write_text("services: [\n")
+    before = (deployment / ".env").read_text()
+    assert cli.main(["config", "set", "CHECK_CLEANUP_ENABLED=True"]) == 1
+    assert (deployment / ".env").read_text() == before
