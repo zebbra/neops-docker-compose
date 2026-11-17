@@ -44,6 +44,47 @@ Overlays combine freely, and `examples/` ships one complete `.env` per combinati
 anything of your own in `compose.override.yaml` (gitignored) and append it to `COMPOSE_FILE`;
 never edit a tracked compose file, or the next `git pull` conflicts with your change.
 
+## Core settings of your own
+
+The CMS reads many settings from its environment that `.env` does not carry, such as its cleanup
+tasks. `./neops config` keeps them in `compose.override.yaml` for you, under `environment:` of
+every service that runs the CMS's code (`cms-init`, `cms`, `cms-worker`, `cms-beat`), and adds
+that file to `COMPOSE_FILE` in `.env` if it is not there yet:
+
+```
+./neops config set KEY=VALUE [KEY=VALUE ...]   # add or replace
+./neops config unset KEY [KEY ...]             # remove; a service block left empty goes too
+./neops config list                            # what the override sets for the CMS
+```
+
+A change takes effect with the next `./neops up`; the command restarts nothing. In compose
+`environment:` beats `env_file:`, so the value reaches the CMS even though `generated/cms.env`
+does not carry it. A value is passed literally: a `$` is written as `$$`, so compose does not
+interpolate it.
+
+`config set` creates the file when it is missing. Everything else in the file is kept: other services, other keys and your comments. A file
+`config` cannot parse is refused and left as it is. It also refuses a key the deployment already
+sets, from the compose files, `generated/cms.env` or a `.env` secret (`DATABASE_URL`,
+`DJANGO_SECRET_KEY`, `FACT_CLEANUP_ENABLED`, `SENTRY_DSN`, ...), because the override would
+silently shadow it; change those in `.env`. `./neops check` warns when a `compose.override.yaml`
+exists that `COMPOSE_FILE` does not name, since compose then ignores it.
+
+### Enabling the check cleanup
+
+On a neops-core with the check cleanup task
+([neops-core#2338](https://github.com/zebbra/neops-core/pull/2338)):
+
+```
+./neops config set CHECK_CLEANUP_ENABLED=True
+./neops up
+```
+
+The other cleanup settings the CMS reads work the same way, for example `CHECK_CLEANUP_INTERVAL_MINUTES`,
+`CHECK_RETENTION_MAX_ENTRIES`, `FACT_CLEANUP_INTERVAL_MINUTES`,
+`NEOPS_EXECUTION_CLEANUP_INTERVAL_MINUTES` and `NEOPS_LOG_RETENTION_INTERVAL_MINUTES`. The
+periodic ones run in `cms-beat` and `cms-worker`, so they need `COMPOSE_PROFILES=cms-tasks`
+(see above).
+
 ## `./neops check` and invalid combinations
 
 `check` (also the first step of `install` and `up`) validates the scenario before anything

@@ -72,6 +72,7 @@ Overlays combine: edit `COMPOSE_FILE` in `.env`; `./neops check` tells you if a 
 | `./neops doctor [--insecure]` | health through the public URLs |
 | `./neops status` | pinned vs running images, migrations |
 | `./neops backup --keep 14` | logical dumps + `.env` + secrets + certs into `backups/<timestamp>/` |
+| `./neops config set KEY=VALUE` | a CMS setting of your own, kept in `compose.override.yaml` (`unset`, `list`); applied by the next `up` |
 | `./neops rotate <what>` | `db-password --which cms\|engine\|keycloak`, `admin-password`, `secret-key`, `jwt`, `tls`, `token`, `keycloak-client` |
 | `./neops logs cms engine` | follow logs |
 | `./neops down` | stop (data kept) |
@@ -91,4 +92,5 @@ database passwords `check` notices a mismatch and names it, by connecting with t
 that Postgres is running; it cannot do that for a stopped service, and no other secret is checked that way.
 
 **Local changes.** Put them in `compose.override.yaml` (gitignored) and append it to `COMPOSE_FILE`;
-edited tracked files break the next `git pull`.
+edited tracked files break the next `git pull`. For a CMS environment setting, `./neops config set`
+does both for you (see `docs/20-scenarios.md#core-settings-of-your-own`).

@@ -13,7 +13,7 @@ from neops_compose.ports import (
     PROXY_BIND_ADDRESS,
 )
 from neops_compose.routes import CORE_PREFIXES, WEB_RESERVED_PATHS
-from neops_compose.scenario import BASE_FILE, OVERLAYS, Scenario
+from neops_compose.scenario import BASE_FILE, OVERLAYS, OVERRIDE_FILE, Scenario
 from neops_compose.urls import (
     BASE_URLS,
     BadUrl,
@@ -180,9 +180,17 @@ def _overlay_problems(scenario: Scenario, repo: Path) -> list[str]:
 def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     """What check() reports and still passes: the previous release's .env, before the
     migration that brings it up to date has had its chance to run."""
+    out = []
     if scenario.metrics and not scenario.grafana:
-        return ["compose.metrics.yaml requires compose.grafana.yaml; migration 0003 adds it to COMPOSE_FILE"]
-    return []
+        out.append(
+            "compose.metrics.yaml requires compose.grafana.yaml; migration 0003 adds it to COMPOSE_FILE"
+        )
+    if (repo / OVERRIDE_FILE).is_file() and OVERRIDE_FILE not in scenario.files:
+        out.append(
+            f"{OVERRIDE_FILE} exists but COMPOSE_FILE does not name it, so compose ignores it: "
+            f"append :{OVERRIDE_FILE} to COMPOSE_FILE in .env"
+        )
+    return out
 
 
 def log_backend(env: Env, scenario: Scenario) -> str:

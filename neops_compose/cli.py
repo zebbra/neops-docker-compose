@@ -5,16 +5,18 @@ import getpass
 import sys
 from pathlib import Path
 
-from neops_compose import __version__, backup, databases, migrate, rotate, state, token, workflow
+from neops_compose import __version__, backup, databases, migrate, override, rotate, state, token, workflow
 from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.env import MissingEnv
 from neops_compose.ownership import OwnershipError
 from neops_compose.render import MissingSecret, RenderError, render
 from neops_compose.rules import BadPorts
+from neops_compose.scenario import OVERRIDE_FILE
 from neops_compose.urls import BadUrl
 
 REPO = Path(__file__).resolve().parent.parent
+APPLY_HINT = "takes effect with the next ./neops up"
 # Every exception this package defines: each one names something the operator did or a
 # state their deployment is in, so all of them belong in `error: ...` rather than a traceback.
 ERRORS = (
@@ -31,6 +33,7 @@ ERRORS = (
     token.TokenCheckUnavailable,
     BadPorts,
     BadUrl,
+    override.OverrideError,
 )
 
 
@@ -69,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
         "compose", "run docker compose with this deployment's COMPOSE_FILE (prints secrets with `config`)"
     )
     sp.add_argument("args", nargs=argparse.REMAINDER)
+    _add_config_parser(add("config", "core settings of your own, kept in compose.override.yaml"))
     sp = add("check", "preflight: host, .env, scenario, images")
     sp.add_argument("--no-images", action="store_true")
     sp = add("migrate", "apply pending deployment migrations")
@@ -101,6 +105,15 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _add_config_parser(sp: argparse.ArgumentParser) -> None:
+    actions = sp.add_subparsers(dest="action", required=True)
+    actions.add_parser("set", help="set core environment variables").add_argument(
+        "assignments", nargs="+", metavar="KEY=VALUE"
+    )
+    actions.add_parser("unset", help="remove them again").add_argument("keys", nargs="+", metavar="KEY")
+    actions.add_parser("list", help="show what compose.override.yaml sets for core")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "version":
@@ -131,6 +144,8 @@ def dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
         case "compose":
             extra = args.args[1:] if args.args[:1] == ["--"] else args.args
             return c.run(*extra, check=False).returncode
+        case "config":
+            _config(args, ctx)
         case "check":
             workflow.check(ctx, check_images=not args.no_images)
         case "migrate":
@@ -180,6 +195,45 @@ def _backup(args: argparse.Namespace, ctx: Ctx) -> None:
     if args.keep:
         for removed in backup.prune(target.parent, args.keep):
             log(f"pruned {removed}")
+
+
+def _config(args: argparse.Namespace, ctx: Ctx) -> None:
+    match args.action:
+        case "set":
+            _config_set(args.assignments, ctx)
+        case "unset":
+            _config_unset(args.keys, ctx)
+        case "list":
+            _config_list(ctx)
+
+
+def _config_set(assignments: list[str], ctx: Ctx) -> None:
+    values = override.parse_assignments(assignments)
+    override.require_dot_env(ctx.env)
+    override.set_settings(ctx.repo, values)
+    if override.ensure_listed(ctx.env):
+        log(f"added {OVERRIDE_FILE} to COMPOSE_FILE in .env")
+    services = ", ".join(override.core_services(ctx.repo))
+    for key, value in values.items():
+        log(f"set {key}={value} for {services}")
+    log(APPLY_HINT)
+
+
+def _config_unset(keys: list[str], ctx: Ctx) -> None:
+    removed = override.unset_settings(ctx.repo, keys)
+    for key in keys:
+        log(f"removed {key}" if key in removed else f"{key} was not set")
+    if removed:
+        log(APPLY_HINT)
+
+
+def _config_list(ctx: Ctx) -> None:
+    current = override.settings(ctx.repo)
+    if not current:
+        log(f"{OVERRIDE_FILE} sets no core settings")
+    for service, env in current.items():
+        for key, value in env.items():
+            log(f"{service}: {key}" + ("" if value is None else f"={value}"))
 
 
 def _render(args: argparse.Namespace, ctx: Ctx) -> None:

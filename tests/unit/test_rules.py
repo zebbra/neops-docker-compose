@@ -556,3 +556,20 @@ def test_a_log_store_of_your_own_needs_its_url(tmp_repo):
 def test_the_logs_overlay_brings_its_own_store_url(tmp_repo):
     env, sc = make(tmp_repo, LOGS_ENV + "NEOPS_LOG_BACKEND=victorialogs\n")
     assert problems(env, sc, tmp_repo) == []
+
+
+def test_an_override_file_left_out_of_compose_file_warns(tmp_repo):
+    (tmp_repo / "compose.override.yaml").write_text("services: {}\n")
+    env, sc = make(tmp_repo, GOOD)
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == [
+        "compose.override.yaml exists but COMPOSE_FILE does not name it, so compose ignores it: "
+        "append :compose.override.yaml to COMPOSE_FILE in .env"
+    ]
+
+
+def test_a_listed_override_file_does_not_warn(tmp_repo):
+    (tmp_repo / "compose.override.yaml").write_text("services: {}\n")
+    env, sc = make(tmp_repo, GOOD.replace("tls-files.yaml\n", "tls-files.yaml:compose.override.yaml\n", 1))
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == []

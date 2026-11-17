@@ -20,6 +20,15 @@ KEYCLOAK_PROVIDER_ID = "keycloak"
 # RATELIMIT_IP_META_KEY only means something behind a proxy that overwrites the header,
 # so it stays the operator's call in .env; compose.traefik.yaml sets it for its own proxy.
 OPTIONAL_CORE_KEYS = ("SENTRY_DSN", "SENTRY_ENVIRONMENT", "EMAIL_URL", "RATELIMIT_IP_META_KEY")
+# Every key cms_env() can write; ./neops config refuses them, since an override would shadow them.
+CMS_ENV_KEYS = (
+    "DJANGO_ALLOWED_HOSTS",
+    "ACCOUNT_DEFAULT_HTTP_PROTOCOL",
+    "CORS_ORIGIN_ALLOW_ALL",
+    "SESSION_COOKIE_SECURE",
+    "CSRF_COOKIE_SECURE",
+    *OPTIONAL_CORE_KEYS,
+)
 # The compose fragment compose.traefik-shared-host.yaml extends its traefik service from.
 TRAEFIK_PORTS_FRAGMENT = "traefik/ports.yaml"
 GRAFANA_LOG_DATASOURCES = "grafana/log-datasources.yml"
