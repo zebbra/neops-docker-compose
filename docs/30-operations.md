@@ -428,6 +428,16 @@ documents aside, so the next `up` leaves them alone; `--rebuild --models` stamps
 models' indices, and `--populate` stamps nothing. A hand-run `--rebuild-if-stale` that exits 3
 finished, but set documents aside as described above.
 
+### Upgrading to worker 0.6
+
+Worker 0.6 registers `fb.base.neops.io/network_device_save_configuration` as `0.1.1` instead of
+`0.1.0`; the block does the same. An install that once ran a worker before 0.2.0-beta.8 holds
+`0.1.0` registered as pure, and since engine 0.45 that refuses every later worker with
+*network_device_save_configuration:0.1.0 is already registered with different isPure*; worker 0.6
+registers cleanly. Upgrade with `git pull` and `./neops up`. A stored workflow that pins
+`network_device_save_configuration:0.1.0` needs a new version pinning `0.1.1`, as described in
+[Workflows that pin a re-versioned base block](#workflows-that-pin-a-re-versioned-base-block).
+
 ### Upgrading to engine 0.46
 
 This release moves neops-core to 2.4.0, the engine to 0.46 and the worker to 0.5, which bring
