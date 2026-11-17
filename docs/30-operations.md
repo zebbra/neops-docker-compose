@@ -428,11 +428,39 @@ documents aside, so the next `up` leaves them alone; `--rebuild --models` stamps
 models' indices, and `--populate` stamps nothing. A hand-run `--rebuild-if-stale` that exits 3
 finished, but set documents aside as described above.
 
+### Upgrading to engine 0.47
+
+This release moves neops-core to 2.6.1, the engine and monitor to 0.47 and the worker to 0.7. The
+0.47 engine needs neops-core 2.5.0 or later; `up` starts core first, so the new engine never meets
+the older core.
+
+- **Every search index is rebuilt.** Core 2.6 changes which fact and check values are indexed, so
+  `up` rebuilds all of them. Until it finishes, search is incomplete and a lock that searches the
+  index is refused with `INDEX_SYNC_PENDING`; the engine retries it, so runs wait in `locking`.
+  Plan a window that fits your row count; [above](#upgrades) says how a rebuild runs.
+- **Every worker must run SDK 0.7.** The 0.47 engine refuses a worker whose engine client is not
+  `0.47`. This covers workers you run outside compose, and the compose worker too when `.env` sets
+  `NEOPS_WORKER_IMAGE` or `NEOPS_WORKER_TAG`: build that image on `neops-worker-sdk` 0.7 first.
+  `doctor` does not catch a refused worker while an older registration is still online.
+- **Coming from before worker 0.6?** Do [Upgrading to worker 0.6](#upgrading-to-worker-06) as well.
+
+Let every workflow run finish first, for the reason given in
+[Upgrading to engine 0.46](#upgrading-to-engine-046). Then:
+
+```bash
+./neops backup
+git pull
+./neops up
+```
+
+[Going back to an earlier release](#going-back-to-an-earlier-release) needs no step beyond the
+restore it describes; the earlier core rebuilds the search indices again.
+
 ### Upgrading to worker 0.6
 
 Worker 0.6 registers `fb.base.neops.io/network_device_save_configuration` as `0.1.1` instead of
 `0.1.0`; the block does the same. An install that once ran a worker before 0.2.0-beta.8 holds
-`0.1.0` registered as pure, and since engine 0.45 that refuses every later worker with
+`0.1.0` registered as pure, and since engine 0.44 that refuses every later worker with
 *network_device_save_configuration:0.1.0 is already registered with different isPure*; worker 0.6
 registers cleanly. Upgrade with `git pull` and `./neops up`. A stored workflow that pins
 `network_device_save_configuration:0.1.0` needs a new version pinning `0.1.1`, as described in
