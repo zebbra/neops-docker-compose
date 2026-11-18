@@ -15,12 +15,17 @@ concurrency:
 jobs:
   check:
     name: Lint, tests, compose config
-    runs-on: ubuntu-latest
+    runs-on: hetzner
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
           enable-cache: true
+      - uses: docker/setup-compose-action@v2
       - run: uv sync --frozen
       - run: make check
+        env:
+          # The runner's docker daemon shares only the work volume with it, so a bind mount of
+          # a path under /tmp reaches an empty directory on the daemon's side.
+          TMPDIR: ${{ runner.temp }}
