@@ -79,6 +79,24 @@ def test_the_celery_containers_are_off_unless_the_profile_is_active():
         assert svc.get("profiles") == expected, name
 
 
+@pytest.mark.parametrize(
+    "files", [["compose.yaml"], ["compose.yaml", "compose.oidc.yaml"]], ids=["base", "oidc"]
+)
+def test_every_core_service_loads_the_same_plugins_extendable_from_env(files):
+    """Worker and beat share cms's database, so all four core services load the same Django apps;
+    NEOPS_CMS_WORKER_PLUGINS adds to the fixed set, never replaces it."""
+    plugins: dict[str, str] = {}
+    for f in files:
+        for name, svc in load(REPO / f)["services"].items():
+            env = svc.get("environment")
+            value = env.get("NEOPS_PLUGINS") if isinstance(env, dict) else None
+            if value is not None:
+                plugins[name] = value
+    assert set(plugins) == {"cms-init", "cms", "cms-worker", "cms-beat"}
+    assert len(set(plugins.values())) == 1, plugins
+    assert plugins["cms"].endswith(" ${NEOPS_CMS_WORKER_PLUGINS:-}")
+
+
 def test_no_interpolation_of_generated_only_keys():
     generated_only = {
         "DJANGO_ALLOWED_HOSTS",
