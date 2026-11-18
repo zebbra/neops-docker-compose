@@ -207,7 +207,9 @@ def purge(ctx: Ctx, confirmed: str) -> None:
     for p in (ctx.paths.data, ctx.paths.generated):
         if p.exists():
             shutil.rmtree(p)
-    ctx.log(f"removed {ctx.paths.data} and {ctx.paths.generated}; .env, certs/ and backups/ were kept")
+    ctx.log(
+        f"removed {ctx.paths.data} and {ctx.paths.generated}; .env, certs/ and {ctx.paths.backups} were kept"
+    )
 
 
 def _take_ownership(data: Path, log: Callable[[str], None]) -> None:

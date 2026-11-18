@@ -92,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also verify the proxy overwrites X-Real-IP (uses the login rate limit)",
     )
     add("status", "pinned vs running images, migrations, scenario")
-    sp = add("backup", "logical backup into backups/<timestamp>/")
+    sp = add("backup", "logical backup into NEOPS_BACKUP_DIR/<timestamp>/ (default backups/)")
     sp.add_argument("--dir", type=Path)
     sp.add_argument("--keep", type=int, help="prune to the newest N archives")
     sp = add("rotate", "rotate a secret: " + ", ".join(rotate.WHAT))

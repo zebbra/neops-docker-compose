@@ -71,7 +71,7 @@ Overlays combine: edit `COMPOSE_FILE` in `.env`; `./neops check` tells you if a 
 | `./neops up [--insecure]` | after `git pull` or an `.env` edit: migrate, render, pull, start, doctor |
 | `./neops doctor [--insecure]` | health through the public URLs |
 | `./neops status` | pinned vs running images, migrations |
-| `./neops backup --keep 14` | logical dumps + `.env` + secrets + certs into `backups/<timestamp>/` |
+| `./neops backup --keep 14` | logical dumps + `.env` + secrets + certs into the backup directory (default: `./backups`) |
 | `./neops config set KEY=VALUE` | a CMS setting of your own, kept in `compose.override.yaml` (`unset`, `list`); applied by the next `up` |
 | `./neops rotate <what>` | `db-password --which cms\|engine\|keycloak`, `admin-password`, `secret-key`, `jwt`, `tls`, `token`, `keycloak-client` |
 | `./neops logs cms engine` | follow logs |

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from neops_compose.env import Env
+from neops_compose.paths import Paths
 from neops_compose.ports import (
     DEFAULT_HTTP_PORT,
     DEFAULT_HTTPS_PORT,
@@ -105,6 +106,7 @@ class _Ports:
 def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     out: list[str] = []
     out += _overlay_problems(scenario, repo)
+    out += _backup_dir_problems(env, repo)
     out += _required(env, generated_secrets(scenario), secret=True, min_length=GENERATED_MIN_LENGTH)
     urls, url_problems = _parse_urls(env, BASE_URLS)
     out += url_problems
@@ -181,6 +183,18 @@ def _overlay_problems(scenario: Scenario, repo: Path) -> list[str]:
     if scenario.logs and not scenario.grafana:
         out.append("compose.logs.yaml requires compose.grafana.yaml")
     return out
+
+
+def _backup_dir_problems(env: Env, repo: Path) -> list[str]:
+    """purge deletes NEOPS_DATA_DIR, and every archive inside it with it. Only an explicit key is
+    checked: the default backups/ has sat beside data/ since the first release."""
+    if not env.is_set("NEOPS_BACKUP_DIR"):
+        return []
+    paths = Paths.for_repo(repo, env)
+    if paths.backups == paths.data or paths.data in paths.backups.parents:
+        value = env.get("NEOPS_BACKUP_DIR")
+        return [f"NEOPS_BACKUP_DIR={value} lies inside NEOPS_DATA_DIR, which purge deletes"]
+    return []
 
 
 def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:

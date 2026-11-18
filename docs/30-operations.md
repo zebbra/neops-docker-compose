@@ -37,7 +37,10 @@ Every command below runs from the repo root, against the `.env` in place there. 
 ./neops backup --keep 14
 ```
 
-Writes `backups/<UTC timestamp>/`, mode 0700 with every file inside 0600:
+Writes `backups/<UTC timestamp>/`, mode 0700 with every file inside 0600. `NEOPS_BACKUP_DIR` in
+`.env` moves `backups/` elsewhere, for example to a separate disk, and `--dir` overrides it for
+one run. Keep it outside `NEOPS_DATA_DIR`, which `purge` deletes; `check` refuses it there. The
+restore steps below write `backups/` for this directory.
 
 - `cms.dump`, `engine.dump`, `keycloak.dump`: a `pg_dump -Fc` of each database whose Postgres
   container is currently running (the keycloak dump only when that overlay is in use);
@@ -308,11 +311,12 @@ All three are idempotent, and the first two change ownership through a throwaway
 than asking you for `sudo`.
 
 `./neops migrate` applies every pending migration; `--dry-run` prints what would run without
-changing anything; `--fake NAME` records one migration as applied without running it. You are
-asked to retype the full name to confirm, because `./neops status` will flag the deployment as
-hand-patched (a `FAKED` migration in its output) afterwards. Before applying anything, a snapshot
-of `.env` and the state file is written to `backups/pre-migrate-<timestamp>/`. `up` and `install`
-both run `migrate` as their first real step, so a pending migration is never silently skipped.
+changing anything; `--fake NAME` records one migration as applied without running it. You are asked
+to retype the full name to confirm, because `./neops status` will flag the deployment as
+hand-patched (a `FAKED` migration in its output) afterwards. Before applying anything, a snapshot of
+`.env` and the state file is written to `backups/pre-migrate-<timestamp>/` (in `NEOPS_BACKUP_DIR`
+when set). `up` and `install` both run `migrate` as their first real step, so a pending migration is
+never silently skipped.
 
 ## Upgrades
 
@@ -615,7 +619,7 @@ bytes. If you pin an older engine, write plain integers.
 ```
 
 Stops every container, then deletes `data/` and `generated/`. `.env`, `certs/`, `cust-cert/` and
-`backups/` are kept. The `--confirm` argument must repeat the data directory path exactly, printed
+`backups/` (or `NEOPS_BACKUP_DIR`) are kept. The `--confirm` argument must repeat the data directory path exactly, printed
 by the command itself if you omit it. There is no separate "are you sure" prompt beyond that.
 This is the only sanctioned way to wipe an installation; `docker system prune -a --volumes` on its
 own removes containers and images but never touches the bind-mounted `data/`.
