@@ -42,7 +42,7 @@ x-core-env: &core-env
   ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "10000"
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
   DJANGO_ALLOW_ASYNC_UNSAFE: "True"
-  NEOPS_PLUGINS: neops_auth_static_api_key neops_auth_allauth neops_permissions_simple neops_reports neops_cron ${NEOPS_CMS_WORKER_PLUGINS:-}
+  NEOPS_PLUGINS: neops_auth_static_api_key neops_auth_django neops_permissions_simple neops_reports neops_cron ${NEOPS_CMS_WORKER_PLUGINS:-}
   NEOPS_JWT_PRIVATE_KEY_PATH: /etc/neops/jwt/private.pem
   NEOPS_JWT_PUBLIC_KEY_PATH: /etc/neops/jwt/public.pem
   NEOPS_PUBLIC_URL: ${NEOPS_CMS_URL}
