@@ -571,6 +571,24 @@ Elasticsearch upgrades its data directory in place on the first start of a newer
 open it with an older one afterwards. Going back to a previous release therefore needs
 `data/elasticsearch` emptied first; it is derived data, and the rebuild above refills it.
 
+## Scaling
+
+`cms`, `worker` and, with `COMPOSE_PROFILES=cms-tasks`, `cms-worker` run one container each.
+`NEOPS_CMS_REPLICAS`, `NEOPS_WORKER_REPLICAS` and `NEOPS_CMS_WORKER_REPLICAS` in `.env` raise
+that; the next `./neops up` starts or stops containers to match.
+
+- `cms`: more than one needs the bundled Traefik, because `compose.expose.yaml` publishes one host
+  port that only one container can bind (`./neops check` refuses it). Traefik and the engine reach
+  the replicas through Docker's DNS, which spreads them per connection rather than per request.
+  Each `cms` holds about 90 of the 300 connections `postgres-cms` allows, and `check` warns from
+  three replicas on.
+- `worker`: each replica appends its container hostname to `NEOPS_WORKER_NAME`, so the engine
+  lists them apart; a single worker keeps the name as configured. A worker added in
+  `compose.override.yaml` by extending `worker` ([Network zones](35-network-zones.md)) inherits
+  the same count.
+- `cms-worker`: each replica runs `NEOPS_CMS_WORKER_CONCURRENCY` tasks at a time. `cms-beat`
+  stays at one: a second scheduler would fire every cron job twice.
+
 ## Engine limits
 
 The engine reads these from `.env`. Unset or empty keeps the engine's default; run `./neops up`

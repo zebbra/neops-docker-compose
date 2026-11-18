@@ -635,3 +635,36 @@ def test_expose_mode_needs_no_legacy_url(tmp_repo):
     env, sc = make(tmp_repo, expose + LEGACY_PROFILE)
     assert problems(env, sc, tmp_repo) == []
     assert warnings(env, sc, tmp_repo) == []
+
+
+@pytest.mark.parametrize("key", ["NEOPS_CMS_REPLICAS", "NEOPS_WORKER_REPLICAS", "NEOPS_CMS_WORKER_REPLICAS"])
+@pytest.mark.parametrize("value", ["0", "-1", "two", "1.5"])
+def test_replicas_must_be_a_whole_number_of_at_least_one(tmp_repo, key, value):
+    env, sc = make(tmp_repo, GOOD + f"{key}={value}\n")
+    assert f"{key} must be a whole number of at least 1" in problems(env, sc, tmp_repo)
+
+
+def test_replicas_default_to_one_and_scale_behind_traefik(tmp_repo):
+    env, sc = make(
+        tmp_repo, GOOD + "NEOPS_CMS_REPLICAS=\nNEOPS_WORKER_REPLICAS=3\nNEOPS_CMS_WORKER_REPLICAS=4\n"
+    )
+    assert problems(env, sc, tmp_repo) == []
+    env, sc = make(tmp_repo, GOOD + "NEOPS_CMS_REPLICAS=2\n")
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == []
+
+
+def test_more_than_one_cms_needs_traefik(tmp_repo):
+    expose = GOOD.replace("compose.traefik.yaml:compose.tls-files.yaml", "compose.expose.yaml")
+    env, sc = make(tmp_repo, expose + "NEOPS_CMS_REPLICAS=2\n")
+    assert any(
+        "NEOPS_CMS_REPLICAS above 1 needs compose.traefik.yaml" in p for p in problems(env, sc, tmp_repo)
+    )
+    env, sc = make(tmp_repo, expose + "NEOPS_WORKER_REPLICAS=2\nNEOPS_CMS_WORKER_REPLICAS=2\n")
+    assert problems(env, sc, tmp_repo) == []
+
+
+def test_three_cms_replicas_warn_about_postgres_connections(tmp_repo):
+    env, sc = make(tmp_repo, GOOD + "NEOPS_CMS_REPLICAS=3\n")
+    assert problems(env, sc, tmp_repo) == []
+    assert any("too many clients" in w for w in warnings(env, sc, tmp_repo))

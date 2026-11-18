@@ -141,6 +141,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
         urls.update(legacy)
     out += _log_backend_problems(env, scenario)
     out += _log_retention_problems(env)
+    out += _replica_problems(env, scenario)
     if all(key in urls for key in BASE_URLS):
         try:
             ports = _ports(env)
@@ -196,7 +197,41 @@ def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             f"append :{OVERRIDE_FILE} to COMPOSE_FILE in .env"
         )
     out += _legacy_web_warnings(env, scenario)
+    out += _replica_warnings(env)
     return out
+
+
+REPLICA_KEYS = ("NEOPS_CMS_REPLICAS", "NEOPS_WORKER_REPLICAS", "NEOPS_CMS_WORKER_REPLICAS")
+# compose.yaml raises Postgres' max_connections to 300; one cms holds about 90 idle connections.
+CMS_REPLICAS_WITHIN_CONNECTIONS = 2
+
+
+def _replicas(env: Env, key: str) -> int | None:
+    raw = env.get(key, "1")
+    return int(raw) if raw.isdigit() and int(raw) >= 1 else None
+
+
+def _replica_problems(env: Env, scenario: Scenario) -> list[str]:
+    out = [
+        f"{key} must be a whole number of at least 1" for key in REPLICA_KEYS if _replicas(env, key) is None
+    ]
+    cms = _replicas(env, "NEOPS_CMS_REPLICAS")
+    if cms and cms > 1 and scenario.proxy != "traefik":
+        out.append(
+            "NEOPS_CMS_REPLICAS above 1 needs compose.traefik.yaml: compose.expose.yaml publishes one "
+            "host port, which only one cms container can bind"
+        )
+    return out
+
+
+def _replica_warnings(env: Env) -> list[str]:
+    cms = _replicas(env, "NEOPS_CMS_REPLICAS")
+    if cms and cms > CMS_REPLICAS_WITHIN_CONNECTIONS:
+        return [
+            f"NEOPS_CMS_REPLICAS={cms}: each cms holds about 90 Postgres connections and postgres-cms "
+            "allows 300 in all, so requests may fail with 'too many clients'"
+        ]
+    return []
 
 
 def _legacy_web_warnings(env: Env, scenario: Scenario) -> list[str]:
