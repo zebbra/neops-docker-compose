@@ -16,6 +16,7 @@ from neops_compose.routes import CORE_PREFIXES, WEB_RESERVED_PATHS
 from neops_compose.scenario import BASE_FILE, OVERLAYS, OVERRIDE_FILE, Scenario
 from neops_compose.urls import (
     BASE_URLS,
+    LEGACY_WEB_URL,
     BadUrl,
     MonitorPlacement,
     PublicUrl,
@@ -134,6 +135,10 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
         gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
         out += p
         urls.update(gf)
+    if scenario.cms_tasks and env.is_set(LEGACY_WEB_URL):
+        legacy, p = _parse_urls(env, (LEGACY_WEB_URL,))
+        out += p
+        urls.update(legacy)
     out += _log_backend_problems(env, scenario)
     out += _log_retention_problems(env)
     if all(key in urls for key in BASE_URLS):
@@ -190,7 +195,26 @@ def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             f"{OVERRIDE_FILE} exists but COMPOSE_FILE does not name it, so compose ignores it: "
             f"append :{OVERRIDE_FILE} to COMPOSE_FILE in .env"
         )
+    out += _legacy_web_warnings(env, scenario)
     return out
+
+
+def _legacy_web_warnings(env: Env, scenario: Scenario) -> list[str]:
+    """Warnings, not problems: a cms-tasks .env from before the legacy web client existed has no
+    NEOPS_LEGACY_WEB_URL, and an upgrade must not stop on it."""
+    if not scenario.cms_tasks:
+        if env.is_set(LEGACY_WEB_URL):
+            return [
+                f"{LEGACY_WEB_URL} is set, but COMPOSE_PROFILES has no cms-tasks, "
+                "so nothing serves it: add the profile or remove the key"
+            ]
+        return []
+    if scenario.proxy == "traefik" and not env.is_set(LEGACY_WEB_URL):
+        return [
+            "the cms-tasks profile runs the legacy web client, but Traefik routes it only once "
+            f"{LEGACY_WEB_URL} names its own hostname"
+        ]
+    return []
 
 
 def log_backend(env: Env, scenario: Scenario) -> str:
@@ -385,9 +409,10 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
             why = MONITOR_SAME_ORIGIN_WHY if key == "NEOPS_WORKFLOWS_URL" else ""
             out.append(f"{key} shares the web client's origin and needs a path prefix{why}")
     out += _prefix_collisions(urls)
+    out += _legacy_web_rules(urls)
     if scenario.proxy == "traefik" and not scenario.shared_host:
         for key, u in urls.items():
-            if key == "NEOPS_CMS_URL":
+            if key in ("NEOPS_CMS_URL", LEGACY_WEB_URL):
                 continue
             if u.path:
                 out.append(
@@ -395,6 +420,24 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
                     "paths need compose.traefik-shared-host.yaml"
                 )
     return out
+
+
+def _legacy_web_rules(urls: dict[str, PublicUrl]) -> list[str]:
+    """The legacy web client loads its assets from the root and calls core on another origin,
+    so it owns an origin of its own outright, in shared-host mode too."""
+    legacy = urls.get(LEGACY_WEB_URL)
+    if legacy is None:
+        return []
+    if legacy.path:
+        return [
+            f"{LEGACY_WEB_URL} must not have a path: "
+            "the legacy web client runs at the root of its origin only"
+        ]
+    return [
+        f"{LEGACY_WEB_URL} shares its origin with {key}: give the legacy web client a hostname of its own"
+        for key, u in urls.items()
+        if key != LEGACY_WEB_URL and u.same_origin(legacy)
+    ]
 
 
 def _prefix_collisions(urls: dict[str, PublicUrl]) -> list[str]:

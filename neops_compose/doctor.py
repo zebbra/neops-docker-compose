@@ -11,7 +11,7 @@ from neops_compose.compose import ComposeError
 from neops_compose.context import Ctx
 from neops_compose.rules import writes_to_log_store
 from neops_compose.token import mint_access_token
-from neops_compose.urls import BASE_URLS, PublicUrl, public_urls
+from neops_compose.urls import BASE_URLS, LEGACY_WEB_URL, PublicUrl, public_urls
 
 ONE_SHOTS = {"cms-init"}
 NAME_WIDTH = 28
@@ -271,6 +271,8 @@ def _specs(urls: dict[str, PublicUrl]) -> list[ProbeSpec]:
         )
     if "NEOPS_GRAFANA_URL" in urls:
         specs.append(ProbeSpec("grafana", urls["NEOPS_GRAFANA_URL"], "/api/health"))
+    if LEGACY_WEB_URL in urls:
+        specs.append(ProbeSpec("legacy web client", urls[LEGACY_WEB_URL], "/", contains="injectEnv.js"))
     return specs
 
 

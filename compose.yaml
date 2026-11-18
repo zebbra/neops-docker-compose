@@ -12,6 +12,7 @@ x-versions:
   monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.47.0}}
   worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.7.0}}
   web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.1.0}}
+  legacy-web: &legacy-web-image ${NEOPS_LEGACY_WEB_IMAGE:-quay.io/zebbra/neops-legacy-frontend:${NEOPS_LEGACY_WEB_TAG:-3.0.0}}
 
 x-logging: &logging
   driver: json-file
@@ -333,6 +334,26 @@ services:
       FRONTEND_FILEAPI_ENDPOINT: ${NEOPS_CMS_URL}/
       FRONTEND_WORKFLOW_MANAGER_URL: ${NEOPS_WORKFLOWS_URL}
       FRONTEND_DEVMODE: "false"
+    depends_on:
+      cms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging: *logging
+    restart: unless-stopped
+
+  # The 1.0 web client, for the same deployments that still run the 1.0 task path. It talks to
+  # core's GraphQL only, so it needs an origin of its own (NEOPS_LEGACY_WEB_URL) and no path:
+  # the build loads its assets from the root.
+  legacy-web:
+    image: *legacy-web-image
+    profiles: ["cms-tasks"]
+    environment:
+      FRONTEND_NEOPS_URL: ${NEOPS_CMS_URL}/graphql
     depends_on:
       cms:
         condition: service_healthy

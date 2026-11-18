@@ -64,6 +64,7 @@ def test_base_stack_has_the_expected_services():
         "monitor",
         "worker",
         "web",
+        "legacy-web",
     }
     for name, svc in doc["services"].items():
         assert "ports" not in svc, f"base file must publish nothing, {name} does"
@@ -72,10 +73,10 @@ def test_base_stack_has_the_expected_services():
 
 def test_the_celery_containers_are_off_unless_the_profile_is_active():
     """A 2.0 deployment automates through the engine and the worker SDK; the 1.0 task path
-    (Celery worker and beat) starts only with COMPOSE_PROFILES=cms-tasks."""
+    (Celery worker and beat, and the 1.0 web client) starts only with COMPOSE_PROFILES=cms-tasks."""
     services = load(REPO / "compose.yaml")["services"]
     for name, svc in services.items():
-        expected = ["cms-tasks"] if name in ("cms-worker", "cms-beat") else None
+        expected = ["cms-tasks"] if name in ("cms-worker", "cms-beat", "legacy-web") else None
         assert svc.get("profiles") == expected, name
 
 
@@ -281,16 +282,19 @@ def _binding(mapping: str, env) -> tuple[str, int]:
 
 def _published_ports(env, scenario) -> list[tuple[str, int]]:
     """The tracked files' port mappings plus the fragment the shared-host overlay extends. A
-    mapping two files repeat for one service is one port: Compose merges it."""
+    mapping two files repeat for one service is one port: Compose merges it. A service behind a
+    profile the scenario does not activate publishes nothing."""
     from neops_compose.render import traefik_ports
 
     docs = [load(REPO / name) for name in scenario.files]
     if scenario.shared_host:
         docs.append(traefik_ports(env, scenario))
+    services = [(name, svc) for doc in docs for name, svc in (doc.get("services") or {}).items()]
+    profiles = {name: set(svc["profiles"]) for name, svc in services if svc.get("profiles")}
     mappings = {
         (name, mapping)
-        for doc in docs
-        for name, service in (doc.get("services") or {}).items()
+        for name, service in services
+        if name not in profiles or profiles[name] & set(scenario.profiles)
         for mapping in service.get("ports") or []
     }
     return sorted(_binding(mapping, env) for _, mapping in mappings)

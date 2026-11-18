@@ -120,7 +120,9 @@ def cms_env(env: Env, scenario: Scenario) -> str:
         f"DJANGO_ALLOWED_HOSTS={','.join(hosts)}",
         f"ACCOUNT_DEFAULT_HTTP_PROTOCOL={web.scheme}",
     ]
-    if not web.same_origin(cms):
+    # The legacy web client never shares the CMS's origin: with the cms-tasks profile it runs on
+    # its own hostname or, without a proxy, its own port.
+    if not web.same_origin(cms) or scenario.cms_tasks:
         lines.append("CORS_ORIGIN_ALLOW_ALL=True")
     if web.scheme == "http":
         # Core defaults both to True outside DEBUG, which makes the admin unusable over
