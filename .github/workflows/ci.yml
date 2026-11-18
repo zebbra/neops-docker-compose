@@ -24,3 +24,7 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen
       - run: make check
+        env:
+          # The runner's docker daemon shares only the work volume with it, so a bind mount of
+          # a path under /tmp reaches an empty directory on the daemon's side.
+          TMPDIR: ${{ runner.temp }}
