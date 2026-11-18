@@ -229,7 +229,11 @@ def _verdict(last_up: dict) -> str:
 
 
 def status(ctx: Ctx) -> str:
-    lines = [f"scenario: {' : '.join(ctx.scenario.files)}", f"data: {ctx.paths.data}"]
+    lines = [
+        f"scenario: {' : '.join(ctx.scenario.files)}",
+        f"data: {ctx.paths.data}",
+        f"backups: {ctx.paths.backups}",
+    ]
     running = images_by_service(ctx.compose)
     lines.append("images (pinned):")
     lines += [f"  {img}" for img in ctx.compose.images()]
