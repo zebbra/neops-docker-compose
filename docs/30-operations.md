@@ -348,7 +348,7 @@ which; to check yourself:
 - **A neops-core with `--rebuild-if-stale`** decides itself (`up` logs "neops-core checks the
   search index and rebuilds what is stale"). Every index carries a stamp of the definition it was
   built from (names, mappings and settings, including the `ELASTICSEARCH_DSL_INDEX_*` values in
-  `compose.yaml`'s `x-core-env`, plus core's own content version) and of the Elasticsearch version
+  `compose.yaml`'s `x-core-env` and `ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT` from `.env`, plus core's own content version) and of the Elasticsearch version
   that built it. Core rebuilds the indices whose stamp is missing or differs, plus the ones that
   share documents with them or that they mirror: a stale lookup index also rebuilds `network`,
   `groups` and `clients`, which is close to a full rebuild. When every stamp matches it does

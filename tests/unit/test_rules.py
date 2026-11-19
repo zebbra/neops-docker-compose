@@ -668,3 +668,15 @@ def test_three_cms_replicas_warn_about_postgres_connections(tmp_repo):
     env, sc = make(tmp_repo, GOOD + "NEOPS_CMS_REPLICAS=3\n")
     assert problems(env, sc, tmp_repo) == []
     assert any("too many clients" in w for w in warnings(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "lots", "1e4"])
+def test_fields_limit_must_be_a_whole_number(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT={value}\n")
+    assert any("ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT must be" in p for p in problems(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize("value", ["", "10000", "30000"])
+def test_fields_limit_defaults_and_accepts_a_count(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT={value}\n")
+    assert problems(env, sc, tmp_repo) == []

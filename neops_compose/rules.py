@@ -144,6 +144,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     out += _log_backend_problems(env, scenario)
     out += _log_retention_problems(env)
     out += _replica_problems(env, scenario)
+    out += _fields_limit_problems(env)
     if all(key in urls for key in BASE_URLS):
         try:
             ports = _ports(env)
@@ -246,6 +247,17 @@ def _replica_warnings(env: Env) -> list[str]:
             "allows 300 in all, so requests may fail with 'too many clients'"
         ]
     return []
+
+
+FIELDS_LIMIT = "ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT"
+
+
+def _fields_limit_problems(env: Env) -> list[str]:
+    # Core parses it with env.int at import, so a bad value would crash cms-init, not this check.
+    raw = env.get(FIELDS_LIMIT, "10000")
+    if raw.isdigit() and int(raw) >= 1:
+        return []
+    return [f"{FIELDS_LIMIT} must be a whole number of at least 1 (default 10000)"]
 
 
 def _legacy_web_warnings(env: Env, scenario: Scenario) -> list[str]:
