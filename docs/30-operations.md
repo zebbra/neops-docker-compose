@@ -586,8 +586,8 @@ that; the next `./neops up` starts or stops containers to match.
   the replicas through Docker's DNS, which spreads them per connection rather than per request.
   Each `cms` holds about 90 of the 300 connections `postgres-cms` allows, and `check` warns from
   three replicas on.
-- `worker`: each replica appends its container hostname to `NEOPS_WORKER_NAME`, so the engine
-  lists them apart; a single worker keeps the name as configured. A worker added in
+- `worker`: every replica runs with the same `WORKER_NAME` (`NEOPS_WORKER_NAME`, default
+  `neops-worker`). A worker added in
   `compose.override.yaml` by extending `worker` ([Network zones](35-network-zones.md)) inherits
   the same count.
 - `cms-worker`: each replica runs `NEOPS_CMS_WORKER_CONCURRENCY` tasks at a time. `cms-beat`

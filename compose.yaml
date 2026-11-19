@@ -324,20 +324,11 @@ services:
       URL_BLACKBOARD: http://engine:3030
       DIR_FUNCTION_BLOCKS: neops/fb
       WORKER_NAME: ${NEOPS_WORKER_NAME:-neops-worker}
-      NEOPS_WORKER_REPLICAS: ${NEOPS_WORKER_REPLICAS:-1}
       # A literal, never read from .env: a remote site's worker copied from that file must still
       # be refused when it names no zone. See docs/35-network-zones.md.
       NEOPS_WORKER_NETWORK_ZONES: default
     deploy:
       replicas: ${NEOPS_WORKER_REPLICAS:-1}
-    # The image's own command, behind a name every replica keeps to itself: scaled, each one adds
-    # its container hostname to WORKER_NAME; a single worker keeps the name as configured.
-    command:
-      - /bin/sh
-      - -c
-      - |
-        if [ "$${NEOPS_WORKER_REPLICAS:-1}" -gt 1 ]; then export WORKER_NAME="$$WORKER_NAME-$$HOSTNAME"; fi
-        exec uv run --no-sync neops_worker
     depends_on:
       engine:
         condition: service_healthy

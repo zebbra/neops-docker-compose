@@ -492,18 +492,3 @@ def test_cms_the_worker_and_the_legacy_worker_scale_from_env_and_default_to_one(
         ("cms-worker", "NEOPS_CMS_WORKER_REPLICAS"),
     ):
         assert services[name]["deploy"]["replicas"] == f"${{{key}:-1}}", name
-    # The worker's name suffix reads the same count the replicas come from.
-    assert services["worker"]["environment"]["NEOPS_WORKER_REPLICAS"] == "${NEOPS_WORKER_REPLICAS:-1}"
-
-
-@pytest.mark.parametrize(("replicas", "name"), [("1", "neops-worker"), ("3", "neops-worker-abc123")])
-def test_a_scaled_worker_appends_its_hostname_and_a_single_one_keeps_its_name(replicas, name):
-    script = load(REPO / "compose.yaml")["services"]["worker"]["command"][2].replace("$$", "$")
-    probe = script.replace("exec uv run --no-sync neops_worker", 'printf %s "$WORKER_NAME"')
-    env = {
-        "WORKER_NAME": "neops-worker",
-        "NEOPS_WORKER_REPLICAS": replicas,
-        "HOSTNAME": "abc123",
-        "PATH": "/usr/bin:/bin",
-    }
-    assert subprocess.run(["/bin/sh", "-c", probe], env=env, capture_output=True, text=True).stdout == name
