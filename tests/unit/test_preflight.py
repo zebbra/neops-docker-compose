@@ -396,3 +396,12 @@ def test_disk_check_names_a_headroom_it_cannot_parse(tmp_path):
     check = preflight.disk_check(env_with(tmp_path, "NEOPS_ES_HEADROOM=plenty\n"), 812 * GIB, 22 * GIB)
     assert not check.ok
     assert "NEOPS_ES_HEADROOM" in check.detail and "plenty" in check.detail
+
+
+def test_the_legacy_web_port_is_reserved_with_the_cms_tasks_profile_in_expose_mode(tmp_path):
+    expose = "COMPOSE_FILE=compose.yaml:compose.expose.yaml\n"
+    assert ("127.0.0.1", 8081) not in ports_for(tmp_path, expose)
+    assert ("127.0.0.1", 8081) in ports_for(tmp_path, expose + "COMPOSE_PROFILES=cms-tasks\n")
+    assert ("127.0.0.1", 18081) in ports_for(
+        tmp_path, expose + "COMPOSE_PROFILES=cms-tasks\nNEOPS_LEGACY_WEB_PORT=18081\n"
+    )

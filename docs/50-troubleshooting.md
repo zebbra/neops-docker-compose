@@ -244,7 +244,11 @@ automation that has been dormant since.
   `docker compose logs cms cms-worker | grep 'Re-indexing'` shows the sweep's own attempts.
 - `rows rejected by Elasticsearch`: Elasticsearch refused the document itself, usually a value
   its mapping cannot take. That is a data or mapping bug in Neops, not an outage: report it with
-  the log line. `index_sync_status --list rejected --limit 0` names the rows, and
+  the log line. One reason is yours to fix: `Limit of total fields [N] has been exceeded`
+  means the synced keys need more fields than the index allows. Restrict them in
+  `/admin/core/elasticsyncconfig/` (schemas, or sync off for noisy keys) and rebuild, or raise
+  `ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT` in `.env` (default 10000); the next `./neops up` then
+  rebuilds the indices on its own. `index_sync_status --list rejected --limit 0` names the rows, and
   `docker compose logs cms cms-worker | grep 'Elasticsearch rejected the document of'` gives the
   reason (both containers sweep, and their logs rotate after 100 MB). If a manual
   `resync_unsynced_rows` run set the row aside, that line is in the run's output instead; the

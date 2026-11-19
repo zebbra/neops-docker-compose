@@ -37,7 +37,10 @@ Every command below runs from the repo root, against the `.env` in place there. 
 ./neops backup --keep 14
 ```
 
-Writes `backups/<UTC timestamp>/`, mode 0700 with every file inside 0600:
+Writes `backups/<UTC timestamp>/`, mode 0700 with every file inside 0600. `NEOPS_BACKUP_DIR` in
+`.env` moves `backups/` elsewhere, for example to a separate disk, and `--dir` overrides it for
+one run. Keep it outside `NEOPS_DATA_DIR`, which `purge` deletes; `check` refuses it there. The
+restore steps below write `backups/` for this directory.
 
 - `cms.dump`, `engine.dump`, `keycloak.dump`: a `pg_dump -Fc` of each database whose Postgres
   container is currently running (the keycloak dump only when that overlay is in use);
@@ -308,11 +311,12 @@ All three are idempotent, and the first two change ownership through a throwaway
 than asking you for `sudo`.
 
 `./neops migrate` applies every pending migration; `--dry-run` prints what would run without
-changing anything; `--fake NAME` records one migration as applied without running it. You are
-asked to retype the full name to confirm, because `./neops status` will flag the deployment as
-hand-patched (a `FAKED` migration in its output) afterwards. Before applying anything, a snapshot
-of `.env` and the state file is written to `backups/pre-migrate-<timestamp>/`. `up` and `install`
-both run `migrate` as their first real step, so a pending migration is never silently skipped.
+changing anything; `--fake NAME` records one migration as applied without running it. You are asked
+to retype the full name to confirm, because `./neops status` will flag the deployment as
+hand-patched (a `FAKED` migration in its output) afterwards. Before applying anything, a snapshot of
+`.env` and the state file is written to `backups/pre-migrate-<timestamp>/` (in `NEOPS_BACKUP_DIR`
+when set). `up` and `install` both run `migrate` as their first real step, so a pending migration is
+never silently skipped.
 
 ## Upgrades
 
@@ -344,7 +348,7 @@ which; to check yourself:
 - **A neops-core with `--rebuild-if-stale`** decides itself (`up` logs "neops-core checks the
   search index and rebuilds what is stale"). Every index carries a stamp of the definition it was
   built from (names, mappings and settings, including the `ELASTICSEARCH_DSL_INDEX_*` values in
-  `compose.yaml`'s `x-core-env`, plus core's own content version) and of the Elasticsearch version
+  `compose.yaml`'s `x-core-env` and `ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT` from `.env`, plus core's own content version) and of the Elasticsearch version
   that built it. Core rebuilds the indices whose stamp is missing or differs, plus the ones that
   share documents with them or that they mirror: a stale lookup index also rebuilds `network`,
   `groups` and `clients`, which is close to a full rebuild. When every stamp matches it does
@@ -571,6 +575,24 @@ Elasticsearch upgrades its data directory in place on the first start of a newer
 open it with an older one afterwards. Going back to a previous release therefore needs
 `data/elasticsearch` emptied first; it is derived data, and the rebuild above refills it.
 
+## Scaling
+
+`cms`, `worker` and, with `COMPOSE_PROFILES=cms-tasks`, `cms-worker` run one container each.
+`NEOPS_CMS_REPLICAS`, `NEOPS_WORKER_REPLICAS` and `NEOPS_CMS_WORKER_REPLICAS` in `.env` raise
+that; the next `./neops up` starts or stops containers to match.
+
+- `cms`: more than one needs the bundled Traefik, because `compose.expose.yaml` publishes one host
+  port that only one container can bind (`./neops check` refuses it). Traefik and the engine reach
+  the replicas through Docker's DNS, which spreads them per connection rather than per request.
+  Each `cms` holds about 90 of the 300 connections `postgres-cms` allows, and `check` warns from
+  three replicas on.
+- `worker`: every replica runs with the same `WORKER_NAME` (`NEOPS_WORKER_NAME`, default
+  `neops-worker`). A worker added in
+  `compose.override.yaml` by extending `worker` ([Network zones](35-network-zones.md)) inherits
+  the same count.
+- `cms-worker`: each replica runs `NEOPS_CMS_WORKER_CONCURRENCY` tasks at a time. `cms-beat`
+  stays at one: a second scheduler would fire every cron job twice.
+
 ## Engine limits
 
 The engine reads these from `.env`. Unset or empty keeps the engine's default; run `./neops up`
@@ -597,7 +619,7 @@ bytes. If you pin an older engine, write plain integers.
 ```
 
 Stops every container, then deletes `data/` and `generated/`. `.env`, `certs/`, `cust-cert/` and
-`backups/` are kept. The `--confirm` argument must repeat the data directory path exactly, printed
+`backups/` (or `NEOPS_BACKUP_DIR`) are kept. The `--confirm` argument must repeat the data directory path exactly, printed
 by the command itself if you omit it. There is no separate "are you sure" prompt beyond that.
 This is the only sanctioned way to wipe an installation; `docker system prune -a --volumes` on its
 own removes containers and images but never touches the bind-mounted `data/`.

@@ -46,7 +46,7 @@ the CA on this host, or add `--insecure` to `install`, `up` and `doctor`; see
 | Example | What you get |
 |---|---|
 | `examples/local.env` | one machine, no proxy, no TLS, `http://localhost:<port>` per service, logs in VictoriaLogs with Grafana (evaluation on a laptop) |
-| `examples/local-legacy.env` | the same plus core's Celery worker and beat (`COMPOSE_PROFILES=cms-tasks`), for a deployment that still runs Neops tasks |
+| `examples/local-legacy.env` | the same plus core's Celery worker and beat and the 1.0 web client on `http://localhost:8081` (`COMPOSE_PROFILES=cms-tasks`), for a deployment that still runs Neops tasks |
 | `examples/external-proxy.env` | services on `127.0.0.1` ports for your own reverse proxy (see `docs/40-external-proxy.md`) |
 | `examples/traefik-http.env` | bundled Traefik, plain HTTP (evaluation) |
 | `examples/traefik-tls-files.env` | bundled Traefik, your certificate in `certs/` |
@@ -71,7 +71,7 @@ Overlays combine: edit `COMPOSE_FILE` in `.env`; `./neops check` tells you if a 
 | `./neops up [--insecure]` | after `git pull` or an `.env` edit: migrate, render, pull, start, doctor |
 | `./neops doctor [--insecure]` | health through the public URLs |
 | `./neops status` | pinned vs running images, migrations |
-| `./neops backup --keep 14` | logical dumps + `.env` + secrets + certs into `backups/<timestamp>/` |
+| `./neops backup --keep 14` | logical dumps + `.env` + secrets + certs into the backup directory (default: `./backups`) |
 | `./neops config set KEY=VALUE` | a CMS setting of your own, kept in `compose.override.yaml` (`unset`, `list`); applied by the next `up` |
 | `./neops rotate <what>` | `db-password --which cms\|engine\|keycloak`, `admin-password`, `secret-key`, `jwt`, `tls`, `token`, `keycloak-client` |
 | `./neops logs cms engine` | follow logs |

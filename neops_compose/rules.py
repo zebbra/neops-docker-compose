@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from neops_compose.env import Env
+from neops_compose.paths import Paths
 from neops_compose.ports import (
     DEFAULT_HTTP_PORT,
     DEFAULT_HTTPS_PORT,
@@ -16,6 +17,7 @@ from neops_compose.routes import CORE_PREFIXES, WEB_RESERVED_PATHS
 from neops_compose.scenario import BASE_FILE, OVERLAYS, OVERRIDE_FILE, Scenario
 from neops_compose.urls import (
     BASE_URLS,
+    LEGACY_WEB_URL,
     BadUrl,
     MonitorPlacement,
     PublicUrl,
@@ -104,6 +106,7 @@ class _Ports:
 def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     out: list[str] = []
     out += _overlay_problems(scenario, repo)
+    out += _backup_dir_problems(env, repo)
     out += _required(env, generated_secrets(scenario), secret=True, min_length=GENERATED_MIN_LENGTH)
     urls, url_problems = _parse_urls(env, BASE_URLS)
     out += url_problems
@@ -134,8 +137,14 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
         gf, p = _parse_urls(env, ("NEOPS_GRAFANA_URL",))
         out += p
         urls.update(gf)
+    if scenario.cms_tasks and env.is_set(LEGACY_WEB_URL):
+        legacy, p = _parse_urls(env, (LEGACY_WEB_URL,))
+        out += p
+        urls.update(legacy)
     out += _log_backend_problems(env, scenario)
     out += _log_retention_problems(env)
+    out += _replica_problems(env, scenario)
+    out += _fields_limit_problems(env)
     if all(key in urls for key in BASE_URLS):
         try:
             ports = _ports(env)
@@ -177,6 +186,18 @@ def _overlay_problems(scenario: Scenario, repo: Path) -> list[str]:
     return out
 
 
+def _backup_dir_problems(env: Env, repo: Path) -> list[str]:
+    """purge deletes NEOPS_DATA_DIR, and every archive inside it with it. Only an explicit key is
+    checked: the default backups/ has sat beside data/ since the first release."""
+    if not env.is_set("NEOPS_BACKUP_DIR"):
+        return []
+    paths = Paths.for_repo(repo, env)
+    if paths.backups == paths.data or paths.data in paths.backups.parents:
+        value = env.get("NEOPS_BACKUP_DIR")
+        return [f"NEOPS_BACKUP_DIR={value} lies inside NEOPS_DATA_DIR, which purge deletes"]
+    return []
+
+
 def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     """What check() reports and still passes: the previous release's .env, before the
     migration that brings it up to date has had its chance to run."""
@@ -190,7 +211,71 @@ def warnings(env: Env, scenario: Scenario, repo: Path) -> list[str]:
             f"{OVERRIDE_FILE} exists but COMPOSE_FILE does not name it, so compose ignores it: "
             f"append :{OVERRIDE_FILE} to COMPOSE_FILE in .env"
         )
+    out += _legacy_web_warnings(env, scenario)
+    out += _replica_warnings(env)
     return out
+
+
+REPLICA_KEYS = ("NEOPS_CMS_REPLICAS", "NEOPS_WORKER_REPLICAS", "NEOPS_CMS_WORKER_REPLICAS")
+# compose.yaml raises Postgres' max_connections to 300; one cms holds about 90 idle connections.
+CMS_REPLICAS_WITHIN_CONNECTIONS = 2
+
+
+def _replicas(env: Env, key: str) -> int | None:
+    raw = env.get(key, "1")
+    return int(raw) if raw.isdigit() and int(raw) >= 1 else None
+
+
+def _replica_problems(env: Env, scenario: Scenario) -> list[str]:
+    out = [
+        f"{key} must be a whole number of at least 1" for key in REPLICA_KEYS if _replicas(env, key) is None
+    ]
+    cms = _replicas(env, "NEOPS_CMS_REPLICAS")
+    if cms and cms > 1 and scenario.proxy != "traefik":
+        out.append(
+            "NEOPS_CMS_REPLICAS above 1 needs compose.traefik.yaml: compose.expose.yaml publishes one "
+            "host port, which only one cms container can bind"
+        )
+    return out
+
+
+def _replica_warnings(env: Env) -> list[str]:
+    cms = _replicas(env, "NEOPS_CMS_REPLICAS")
+    if cms and cms > CMS_REPLICAS_WITHIN_CONNECTIONS:
+        return [
+            f"NEOPS_CMS_REPLICAS={cms}: each cms holds about 90 Postgres connections and postgres-cms "
+            "allows 300 in all, so requests may fail with 'too many clients'"
+        ]
+    return []
+
+
+FIELDS_LIMIT = "ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT"
+
+
+def _fields_limit_problems(env: Env) -> list[str]:
+    # Core parses it with env.int at import, so a bad value would crash cms-init, not this check.
+    raw = env.get(FIELDS_LIMIT, "10000")
+    if raw.isdigit() and int(raw) >= 1:
+        return []
+    return [f"{FIELDS_LIMIT} must be a whole number of at least 1 (default 10000)"]
+
+
+def _legacy_web_warnings(env: Env, scenario: Scenario) -> list[str]:
+    """Warnings, not problems: a cms-tasks .env from before the legacy web client existed has no
+    NEOPS_LEGACY_WEB_URL, and an upgrade must not stop on it."""
+    if not scenario.cms_tasks:
+        if env.is_set(LEGACY_WEB_URL):
+            return [
+                f"{LEGACY_WEB_URL} is set, but COMPOSE_PROFILES has no cms-tasks, "
+                "so nothing serves it: add the profile or remove the key"
+            ]
+        return []
+    if scenario.proxy == "traefik" and not env.is_set(LEGACY_WEB_URL):
+        return [
+            "the cms-tasks profile runs the legacy web client, but Traefik routes it only once "
+            f"{LEGACY_WEB_URL} names its own hostname"
+        ]
+    return []
 
 
 def log_backend(env: Env, scenario: Scenario) -> str:
@@ -385,9 +470,10 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
             why = MONITOR_SAME_ORIGIN_WHY if key == "NEOPS_WORKFLOWS_URL" else ""
             out.append(f"{key} shares the web client's origin and needs a path prefix{why}")
     out += _prefix_collisions(urls)
+    out += _legacy_web_rules(urls)
     if scenario.proxy == "traefik" and not scenario.shared_host:
         for key, u in urls.items():
-            if key == "NEOPS_CMS_URL":
+            if key in ("NEOPS_CMS_URL", LEGACY_WEB_URL):
                 continue
             if u.path:
                 out.append(
@@ -395,6 +481,24 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
                     "paths need compose.traefik-shared-host.yaml"
                 )
     return out
+
+
+def _legacy_web_rules(urls: dict[str, PublicUrl]) -> list[str]:
+    """The legacy web client loads its assets from the root and calls core on another origin,
+    so it owns an origin of its own outright, in shared-host mode too."""
+    legacy = urls.get(LEGACY_WEB_URL)
+    if legacy is None:
+        return []
+    if legacy.path:
+        return [
+            f"{LEGACY_WEB_URL} must not have a path: "
+            "the legacy web client runs at the root of its origin only"
+        ]
+    return [
+        f"{LEGACY_WEB_URL} shares its origin with {key}: give the legacy web client a hostname of its own"
+        for key, u in urls.items()
+        if key != LEGACY_WEB_URL and u.same_origin(legacy)
+    ]
 
 
 def _prefix_collisions(urls: dict[str, PublicUrl]) -> list[str]:

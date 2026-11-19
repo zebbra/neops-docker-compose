@@ -620,7 +620,7 @@ def test_status_reports_the_scenario_images_and_migration_counts(tmp_path):
     ctx.state.record_up({"cms": "quay.io/zebbra/neops-core:2.1.0"}, doctor_ok=True)
     text = workflow.status(ctx)
     assert "scenario: compose.yaml : compose.expose.yaml" in text
-    assert f"data: {ctx.paths.data}" in text
+    assert f"data: {ctx.paths.data}\nbackups: {ctx.paths.backups}\n" in text
     assert "  cms: quay.io/zebbra/neops-core:2.1.0" in text
     assert "migrations: 1 applied, 0 pending" in text
     assert "doctor ok" in text

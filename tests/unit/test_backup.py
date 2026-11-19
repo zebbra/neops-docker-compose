@@ -1,6 +1,9 @@
 import json
 import os
 import stat
+from pathlib import Path
+
+import pytest
 
 from neops_compose import backup
 from neops_compose.context import Ctx
@@ -118,3 +121,21 @@ def test_prune_never_touches_a_directory_it_did_not_create(tmp_path):
     removed = backup.prune(shared, keep=1)
     assert removed == [shared / "20260101T000000Z"]
     assert all((shared / name).exists() for name in strangers)
+
+
+def test_neops_backup_dir_moves_archives_and_pre_migrate_snapshots(tmp_path):
+    (tmp_path / ".env").write_text("NEOPS_BACKUP_DIR=/srv/neops-backups\n")
+    assert Paths.for_repo(tmp_path, Env(tmp_path / ".env")).backups == Path("/srv/neops-backups")
+    (tmp_path / ".env").write_text("")
+    assert Paths.for_repo(tmp_path, Env(tmp_path / ".env")).backups == tmp_path.resolve() / "backups"
+
+
+@pytest.mark.parametrize(
+    ("value", "refused"),
+    [("./data/backups", True), ("./data", True), ("./backups", False), ("/srv/b", False)],
+)
+def test_a_backup_dir_inside_the_data_dir_is_refused(tmp_path, value, refused):
+    from neops_compose.rules import _backup_dir_problems
+
+    (tmp_path / ".env").write_text(f"NEOPS_BACKUP_DIR={value}\n")
+    assert bool(_backup_dir_problems(Env(tmp_path / ".env"), tmp_path)) is refused

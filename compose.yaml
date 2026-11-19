@@ -12,6 +12,7 @@ x-versions:
   monitor: &monitor-image ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-monitor-app:${NEOPS_MONITOR_TAG:-0.47.0}}
   worker: &worker-image ${NEOPS_WORKER_IMAGE:-quay.io/zebbra/neops-worker-sdk:${NEOPS_WORKER_TAG:-0.7.0}}
   web: &web-image ${NEOPS_WEB_IMAGE:-quay.io/zebbra/neops-web-client:${NEOPS_WEB_TAG:-6.1.0}}
+  legacy-web: &legacy-web-image ${NEOPS_LEGACY_WEB_IMAGE:-quay.io/zebbra/neops-legacy-frontend:${NEOPS_LEGACY_WEB_TAG:-3.0.0}}
 
 x-logging: &logging
   driver: json-file
@@ -38,10 +39,10 @@ x-core-env: &core-env
   ELASTICSEARCH_HOSTS: http://elasticsearch:9200
   ELASTICSEARCH_DSL_INDEX_SHARDS: "1"
   ELASTICSEARCH_DSL_INDEX_REPLICAS: "0"
-  ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: "10000"
+  ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT: ${ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT:-10000}
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
   DJANGO_ALLOW_ASYNC_UNSAFE: "True"
-  NEOPS_PLUGINS: neops_cron neops_auth_static_api_key neops_auth_django neops_permissions_simple neops_reports
+  NEOPS_PLUGINS: neops_auth_static_api_key neops_auth_django neops_permissions_simple neops_reports neops_cron ${NEOPS_CMS_WORKER_PLUGINS:-}
   NEOPS_JWT_PRIVATE_KEY_PATH: /etc/neops/jwt/private.pem
   NEOPS_JWT_PUBLIC_KEY_PATH: /etc/neops/jwt/public.pem
   NEOPS_PUBLIC_URL: ${NEOPS_CMS_URL}
@@ -203,6 +204,10 @@ services:
   cms:
     <<: *core-service
     environment: *core-env
+    # More than one needs the bundled Traefik (./neops check): compose.expose.yaml publishes a
+    # fixed host port, and Docker's DNS spreads `cms` over the replicas per connection.
+    deploy:
+      replicas: ${NEOPS_CMS_REPLICAS:-1}
     volumes:
       - ${NEOPS_DATA_DIR:-./data}/secrets/jwt:/etc/neops/jwt:ro
       - ./cust-cert:/cust-cert:ro
@@ -228,6 +233,8 @@ services:
   cms-worker:
     <<: *core-service
     profiles: ["cms-tasks"]
+    deploy:
+      replicas: ${NEOPS_CMS_WORKER_REPLICAS:-1}
     environment:
       <<: *core-env
       ELASTICSEARCH_DSL_SIGNAL_PROCESSOR: neops.core.documents.neops_signal_processor.NeopsCacheSignalProcessor
@@ -320,6 +327,8 @@ services:
       # A literal, never read from .env: a remote site's worker copied from that file must still
       # be refused when it names no zone. See docs/35-network-zones.md.
       NEOPS_WORKER_NETWORK_ZONES: default
+    deploy:
+      replicas: ${NEOPS_WORKER_REPLICAS:-1}
     depends_on:
       engine:
         condition: service_healthy
@@ -333,6 +342,26 @@ services:
       FRONTEND_FILEAPI_ENDPOINT: ${NEOPS_CMS_URL}/
       FRONTEND_WORKFLOW_MANAGER_URL: ${NEOPS_WORKFLOWS_URL}
       FRONTEND_DEVMODE: "false"
+    depends_on:
+      cms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging: *logging
+    restart: unless-stopped
+
+  # The 1.0 web client, for the same deployments that still run the 1.0 task path. It talks to
+  # core's GraphQL only, so it needs an origin of its own (NEOPS_LEGACY_WEB_URL) and no path:
+  # the build loads its assets from the root.
+  legacy-web:
+    image: *legacy-web-image
+    profiles: ["cms-tasks"]
+    environment:
+      FRONTEND_NEOPS_URL: ${NEOPS_CMS_URL}/graphql
     depends_on:
       cms:
         condition: service_healthy

@@ -64,6 +64,7 @@ def test_base_stack_has_the_expected_services():
         "monitor",
         "worker",
         "web",
+        "legacy-web",
     }
     for name, svc in doc["services"].items():
         assert "ports" not in svc, f"base file must publish nothing, {name} does"
@@ -72,11 +73,29 @@ def test_base_stack_has_the_expected_services():
 
 def test_the_celery_containers_are_off_unless_the_profile_is_active():
     """A 2.0 deployment automates through the engine and the worker SDK; the 1.0 task path
-    (Celery worker and beat) starts only with COMPOSE_PROFILES=cms-tasks."""
+    (Celery worker and beat, and the 1.0 web client) starts only with COMPOSE_PROFILES=cms-tasks."""
     services = load(REPO / "compose.yaml")["services"]
     for name, svc in services.items():
-        expected = ["cms-tasks"] if name in ("cms-worker", "cms-beat") else None
+        expected = ["cms-tasks"] if name in ("cms-worker", "cms-beat", "legacy-web") else None
         assert svc.get("profiles") == expected, name
+
+
+@pytest.mark.parametrize(
+    "files", [["compose.yaml"], ["compose.yaml", "compose.oidc.yaml"]], ids=["base", "oidc"]
+)
+def test_every_core_service_loads_the_same_plugins_extendable_from_env(files):
+    """Worker and beat share cms's database, so all four core services load the same Django apps;
+    NEOPS_CMS_WORKER_PLUGINS adds to the fixed set, never replaces it."""
+    plugins: dict[str, str] = {}
+    for f in files:
+        for name, svc in load(REPO / f)["services"].items():
+            env = svc.get("environment")
+            value = env.get("NEOPS_PLUGINS") if isinstance(env, dict) else None
+            if value is not None:
+                plugins[name] = value
+    assert set(plugins) == {"cms-init", "cms", "cms-worker", "cms-beat"}
+    assert len(set(plugins.values())) == 1, plugins
+    assert plugins["cms"].endswith(" ${NEOPS_CMS_WORKER_PLUGINS:-}")
 
 
 def test_no_interpolation_of_generated_only_keys():
@@ -263,16 +282,19 @@ def _binding(mapping: str, env) -> tuple[str, int]:
 
 def _published_ports(env, scenario) -> list[tuple[str, int]]:
     """The tracked files' port mappings plus the fragment the shared-host overlay extends. A
-    mapping two files repeat for one service is one port: Compose merges it."""
+    mapping two files repeat for one service is one port: Compose merges it. A service behind a
+    profile the scenario does not activate publishes nothing."""
     from neops_compose.render import traefik_ports
 
     docs = [load(REPO / name) for name in scenario.files]
     if scenario.shared_host:
         docs.append(traefik_ports(env, scenario))
+    services = [(name, svc) for doc in docs for name, svc in (doc.get("services") or {}).items()]
+    profiles = {name: set(svc["profiles"]) for name, svc in services if svc.get("profiles")}
     mappings = {
         (name, mapping)
-        for doc in docs
-        for name, service in (doc.get("services") or {}).items()
+        for name, service in services
+        if name not in profiles or profiles[name] & set(scenario.profiles)
         for mapping in service.get("ports") or []
     }
     return sorted(_binding(mapping, env) for _, mapping in mappings)
@@ -460,3 +482,13 @@ def test_no_compose_file_mounts_the_cms_metrics_route():
     for f in COMPOSE_FILES:
         for key in ("NEOPS_METRICS_TOKEN", "NEOPS_METRICS_ALLOW_ANONYMOUS"):
             assert key not in f.read_text(), f"{f.name} sets {key}"
+
+
+def test_cms_the_worker_and_the_legacy_worker_scale_from_env_and_default_to_one():
+    services = load(REPO / "compose.yaml")["services"]
+    for name, key in (
+        ("cms", "NEOPS_CMS_REPLICAS"),
+        ("worker", "NEOPS_WORKER_REPLICAS"),
+        ("cms-worker", "NEOPS_CMS_WORKER_REPLICAS"),
+    ):
+        assert services[name]["deploy"]["replicas"] == f"${{{key}:-1}}", name

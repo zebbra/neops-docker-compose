@@ -114,15 +114,15 @@ def _proxy_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:
             ports.append((bind, int(env.get("NEOPS_MONITOR_PORT", str(DEFAULT_MONITOR_PORT)))))
         return ports
     bind = env.get("NEOPS_BIND_ADDRESS", "127.0.0.1")
-    return [
-        (bind, int(env.get(k, d)))
-        for k, d in (
-            ("NEOPS_WEB_PORT", "8080"),
-            ("NEOPS_CMS_PORT", "8000"),
-            ("NEOPS_ENGINE_PORT", "3030"),
-            ("NEOPS_MONITOR_PORT", "3031"),
-        )
+    published = [
+        ("NEOPS_WEB_PORT", "8080"),
+        ("NEOPS_CMS_PORT", "8000"),
+        ("NEOPS_ENGINE_PORT", "3030"),
+        ("NEOPS_MONITOR_PORT", "3031"),
     ]
+    if scenario.cms_tasks:
+        published.append(("NEOPS_LEGACY_WEB_PORT", "8081"))
+    return [(bind, int(env.get(k, d))) for k, d in published]
 
 
 def required_ports(env: Env, scenario: Scenario) -> list[tuple[str, int]]:

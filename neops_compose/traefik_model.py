@@ -7,10 +7,17 @@ from neops_compose.env import Env
 from neops_compose.ports import DEFAULT_HTTPS_PORT, MONITOR_CONTAINER_PORT
 from neops_compose.routes import CORE_DIRECTORY_PREFIXES, CORE_PREFIXES, ENGINE_PUBLIC_WORKER_ROUTES
 from neops_compose.scenario import Scenario
-from neops_compose.urls import PublicUrl, monitor_entrypoint_wanted, public_urls, trusted_proxy_ips
+from neops_compose.urls import (
+    LEGACY_WEB_URL,
+    PublicUrl,
+    monitor_entrypoint_wanted,
+    public_urls,
+    trusted_proxy_ips,
+)
 
 SERVICE_URLS = {
     "web": "http://web:8080",
+    "legacy-web": "http://legacy-web:8080",
     "cms": "http://cms:8000",
     "engine": "http://engine:3030",
     "monitor": "http://monitor:80",
@@ -198,10 +205,17 @@ def _core_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
 
 
 def _service_routers(layout: _Layout) -> list[Router]:
-    """The overlay services, routed only when their overlay put a public URL in .env."""
-    wanted = (("NEOPS_KEYCLOAK_URL", "keycloak"), ("NEOPS_GRAFANA_URL", "grafana"))
+    """The optional services, routed only when their overlay or profile put a public URL in
+    .env. The legacy web client owns its whole origin, like the web client: a catch-all."""
+    wanted = (
+        ("NEOPS_KEYCLOAK_URL", "keycloak", 10),
+        ("NEOPS_GRAFANA_URL", "grafana", 10),
+        (LEGACY_WEB_URL, "legacy-web", 1),
+    )
     return [
-        layout.router(service, layout.urls[key], service, 10) for key, service in wanted if key in layout.urls
+        layout.router(service, layout.urls[key], service, priority)
+        for key, service, priority in wanted
+        if key in layout.urls
     ]
 
 

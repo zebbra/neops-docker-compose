@@ -219,3 +219,23 @@ def test_slash_redirect_stays_http_on_a_plain_http_deployment(tmp_path):
     text = HOSTS.replace(":compose.tls-files.yaml", "").replace("https://", "http://")
     redirect = cfg(tmp_path, text).middlewares[CMS_SLASH_MIDDLEWARE]["redirectRegex"]
     assert redirect["replacement"] == "http://${1}/"
+
+
+LEGACY = "COMPOSE_PROFILES=cms-tasks\nNEOPS_LEGACY_WEB_URL=https://legacy.neops.example.com\n"
+
+
+def test_the_legacy_web_client_owns_its_hostname_like_the_web_client(tmp_path):
+    for text in (HOSTS, SHARED):
+        c = cfg(tmp_path, text + LEGACY)
+        legacy = by_name(c)["legacy-web"]
+        assert legacy.rule == "Host(`legacy.neops.example.com`)"
+        assert (legacy.priority, legacy.tls, legacy.middlewares) == (1, True, ())
+        assert c.services["legacy-web"] == "http://legacy-web:8080"
+
+
+def test_the_legacy_web_client_is_routed_only_with_its_profile_and_its_url(tmp_path):
+    without_profile = cfg(tmp_path, HOSTS + "NEOPS_LEGACY_WEB_URL=https://legacy.neops.example.com\n")
+    without_url = cfg(tmp_path, HOSTS + "COMPOSE_PROFILES=cms-tasks\n")
+    for c in (without_profile, without_url):
+        assert "legacy-web" not in by_name(c)
+        assert "legacy-web" not in c.services
