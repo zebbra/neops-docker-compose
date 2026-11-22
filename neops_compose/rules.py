@@ -145,6 +145,7 @@ def problems(env: Env, scenario: Scenario, repo: Path) -> list[str]:
     out += _log_retention_problems(env)
     out += _replica_problems(env, scenario)
     out += _fields_limit_problems(env)
+    out += _sync_without_schema_problems(env)
     if all(key in urls for key in BASE_URLS):
         try:
             ports = _ports(env)
@@ -258,6 +259,19 @@ def _fields_limit_problems(env: Env) -> list[str]:
     if raw.isdigit() and int(raw) >= 1:
         return []
     return [f"{FIELDS_LIMIT} must be a whole number of at least 1 (default 10000)"]
+
+
+SYNC_WITHOUT_SCHEMA = "NEOPS_ELASTIC_SYNC_WITHOUT_SCHEMA"
+# django-environ's env.bool reads every unknown spelling as False, so a typo would silently
+# stop indexing every key without a schema.
+_BOOL_SPELLINGS = {"true", "on", "ok", "y", "yes", "1", "false", "off", "no", "n", "0"}
+
+
+def _sync_without_schema_problems(env: Env) -> list[str]:
+    raw = env.get(SYNC_WITHOUT_SCHEMA, "True").strip().lower()
+    if not raw or raw in _BOOL_SPELLINGS:
+        return []
+    return [f"{SYNC_WITHOUT_SCHEMA} must be True or False (default True)"]
 
 
 def _legacy_web_warnings(env: Env, scenario: Scenario) -> list[str]:

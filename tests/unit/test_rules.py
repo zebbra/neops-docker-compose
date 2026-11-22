@@ -680,3 +680,15 @@ def test_fields_limit_must_be_a_whole_number(tmp_repo, value):
 def test_fields_limit_defaults_and_accepts_a_count(tmp_repo, value):
     env, sc = make(tmp_repo, GOOD + f"ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT={value}\n")
     assert problems(env, sc, tmp_repo) == []
+
+
+@pytest.mark.parametrize("value", ["Flase", "maybe", "2"])
+def test_sync_without_schema_must_be_a_boolean(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"NEOPS_ELASTIC_SYNC_WITHOUT_SCHEMA={value}\n")
+    assert any("NEOPS_ELASTIC_SYNC_WITHOUT_SCHEMA must be" in p for p in problems(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize("value", ["", "True", "False", "false", "0", "yes"])
+def test_sync_without_schema_accepts_booleans(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"NEOPS_ELASTIC_SYNC_WITHOUT_SCHEMA={value}\n")
+    assert problems(env, sc, tmp_repo) == []
