@@ -37,7 +37,7 @@ overlay model and the routing and TLS choices, [Operations](30-operations.md) fo
 | `cms` | `neops-core` | the CMS web process (network CMS + GraphQL API at `/graphql`) |
 | `cms-worker` | `neops-core` | Celery worker for the 1.0 task path and, on a core that has one, the periodic search index sweep; off unless `COMPOSE_PROFILES=cms-tasks` |
 | `cms-beat` | `neops-core` | Celery beat scheduler for the same: the 1.0 cron jobs and the search index sweep every minute; off unless `COMPOSE_PROFILES=cms-tasks` |
-| `legacy-web` | `neops-legacy-frontend` | the 1.0 web client, on an origin of its own (`NEOPS_LEGACY_WEB_URL`, or `NEOPS_LEGACY_WEB_PORT` without a proxy); off unless `COMPOSE_PROFILES=cms-tasks` |
+| `legacy-web` | `neops-legacy-frontend` | the 1.0 web client, on an origin of its own or under a path of the web client's (`NEOPS_LEGACY_WEB_URL`, or `NEOPS_LEGACY_WEB_PORT` without a proxy); off unless `COMPOSE_PROFILES=cms-tasks` |
 | `engine` | `neops-workflow-engine` | the 2.0 workflow engine (blackboard REST API) |
 | `monitor` | `neops-monitor-app` | the workflow manager UI (temporary, being folded into the web client) |
 | `worker` | `neops-worker-sdk` | polls the engine's blackboard and drives devices in the `default` network zone; base function blocks only. More workers, and workers for other zones: [Network zones](35-network-zones.md) |

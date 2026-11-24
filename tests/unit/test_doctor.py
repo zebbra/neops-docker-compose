@@ -758,3 +758,10 @@ def test_the_legacy_web_client_is_probed_when_it_has_a_public_url():
     assert [p for p in probes if p.name == "legacy web client"][0].ok
     assert ("https://legacy.neops.example.com/", "GET", {}) in http.calls
     assert "legacy web client" not in [p.name for p in doctor.http_probes(urls(), healthy())]
+
+
+def test_the_legacy_web_client_is_probed_under_its_path():
+    legacy = urls() | {"NEOPS_LEGACY_WEB_URL": PublicUrl.parse("https://neops.example.com/legacy")}
+    http = healthy({"/": (200, '<html><script src="/legacy/injectEnv.js"></script></html>')})
+    doctor.http_probes(legacy, http)
+    assert ("https://neops.example.com/legacy/", "GET", {}) in http.calls

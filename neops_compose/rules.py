@@ -58,7 +58,13 @@ ALL_SECRET_KEYS = (
 )
 GENERATED_MIN_LENGTH = 16
 # The URLs that may carry a path prefix. NEOPS_CMS_URL never does (see _cms_rules).
-PREFIXED_URLS = ("NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL", "NEOPS_KEYCLOAK_URL", "NEOPS_GRAFANA_URL")
+PREFIXED_URLS = (
+    "NEOPS_ENGINE_URL",
+    "NEOPS_WORKFLOWS_URL",
+    "NEOPS_KEYCLOAK_URL",
+    "NEOPS_GRAFANA_URL",
+    LEGACY_WEB_URL,
+)
 LOG_BACKEND = "NEOPS_LOG_BACKEND"
 LOG_BACKENDS = ("victorialogs", "loki", "db")
 REMOTE_LOG_BACKENDS = ("victorialogs", "loki")
@@ -498,21 +504,36 @@ def _path_rules(urls: dict[str, PublicUrl], scenario: Scenario) -> list[str]:
 
 
 def _legacy_web_rules(urls: dict[str, PublicUrl]) -> list[str]:
-    """The legacy web client loads its assets from the root and calls core on another origin,
-    so it owns an origin of its own outright, in shared-host mode too."""
+    """The legacy web client is served under its URL's path, unstripped (FRONTEND_BASE_PATH).
+    At the root it owns its origin outright; under a path it may share the web client's
+    origin, where the web catch-all and core's prefixes leave room, but no other origin a
+    service owns whole. The shared-web-origin-without-path case is _path_rules' message."""
     legacy = urls.get(LEGACY_WEB_URL)
     if legacy is None:
         return []
-    if legacy.path:
+    web = urls["NEOPS_WEB_URL"]
+    if not legacy.path:
+        if legacy.same_origin(web):
+            return []
         return [
-            f"{LEGACY_WEB_URL} must not have a path: "
-            "the legacy web client runs at the root of its origin only"
+            f"{LEGACY_WEB_URL} shares its origin with {key}: give the legacy web client a hostname "
+            "of its own, or a path of NEOPS_WEB_URL"
+            for key, u in urls.items()
+            if key != LEGACY_WEB_URL and u.same_origin(legacy)
         ]
-    return [
-        f"{LEGACY_WEB_URL} shares its origin with {key}: give the legacy web client a hostname of its own"
-        for key, u in urls.items()
-        if key != LEGACY_WEB_URL and u.same_origin(legacy)
-    ]
+    out = []
+    if "." in legacy.path:
+        # The image's nginx treats any URL with a dot as a static file, and its entrypoint
+        # refuses such a FRONTEND_BASE_PATH.
+        out.append(f"{LEGACY_WEB_URL} path {legacy.path} must not contain a dot")
+    if not legacy.same_origin(web):
+        out += [
+            f"{LEGACY_WEB_URL} shares its origin with {key}, which owns all of it: "
+            "use a path of NEOPS_WEB_URL or a hostname of its own"
+            for key, u in urls.items()
+            if key != LEGACY_WEB_URL and u.same_origin(legacy) and not u.path
+        ]
+    return out
 
 
 def _prefix_collisions(urls: dict[str, PublicUrl]) -> list[str]:

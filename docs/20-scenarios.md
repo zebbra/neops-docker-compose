@@ -34,10 +34,15 @@ cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with th
 `./neops up`; removing the line and running `./neops down` then `./neops up` stops them again.
 The profile also starts `legacy-web`, the 1.0 web client. It is reachable the way the web client
 is: with `compose.expose.yaml` on its own loopback port, `NEOPS_LEGACY_WEB_PORT` (8081), and
-behind the bundled Traefik on `NEOPS_LEGACY_WEB_URL`, a hostname of its own (routed, probed by
-`./neops doctor` and carried by the self-signed certificate like the others). It always needs an
-origin of its own, also in shared-host mode, because it serves from the root; it talks to core
-at `NEOPS_CMS_URL`, which is why the profile also turns on core's CORS. Behind Traefik without
+behind the bundled Traefik on `NEOPS_LEGACY_WEB_URL` (routed, probed by `./neops doctor` and
+carried by the self-signed certificate like the others). That URL is either a hostname of its
+own, `https://legacy.neops.example.com`, or a path of the web client's origin,
+`https://neops.example.com/legacy`, so that every Neops service shares one URL; a path works with
+hostname-per-service routing and in shared-host mode alike. The container serves that path itself
+(`./neops render` passes it on as `FRONTEND_BASE_PATH`), so a proxy in front must forward it
+unchanged, without stripping the prefix. The path must not contain a dot, nor overlap core's
+prefixes, the web client's `/auth`, `/login` and `/monitor`, or another service's path. It talks to
+core at `NEOPS_CMS_URL`, which is why the profile also turns on core's CORS. Behind Traefik without
 `NEOPS_LEGACY_WEB_URL` it runs unrouted and `./neops check` warns.
 `examples/local-legacy.env` is `examples/local.env` with that block (the 1.0 web client on
 `http://localhost:8081`): a task executed from the
