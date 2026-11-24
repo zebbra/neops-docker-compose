@@ -588,33 +588,64 @@ def test_the_legacy_web_client_on_its_own_hostname_passes(tmp_repo):
 @pytest.mark.parametrize(
     ("url", "needle"),
     [
-        ("https://legacy.neops.example.com/legacy", "NEOPS_LEGACY_WEB_URL must not have a path"),
-        ("https://neops.example.com", "NEOPS_LEGACY_WEB_URL shares its origin with NEOPS_WEB_URL"),
+        ("https://neops.example.com", "NEOPS_LEGACY_WEB_URL shares the web client's origin and needs a path"),
         ("https://cms.neops.example.com", "NEOPS_LEGACY_WEB_URL shares its origin with NEOPS_CMS_URL"),
+        ("https://cms.neops.example.com/legacy", "NEOPS_LEGACY_WEB_URL shares its origin with NEOPS_CMS_URL"),
+        ("https://neops.example.com/admin", "NEOPS_LEGACY_WEB_URL path /admin is reserved"),
+        ("https://neops.example.com/login", "NEOPS_LEGACY_WEB_URL path /login is reserved"),
+        ("https://neops.example.com/v1.0", "NEOPS_LEGACY_WEB_URL path /v1.0 must not contain a dot"),
         ("http://legacy.neops.example.com", "NEOPS_LEGACY_WEB_URL must use https://"),
         ("https://legacy.neops.example.com:8444", "NEOPS_LEGACY_WEB_URL must use port NEOPS_HTTPS_PORT"),
         ("not a url", "NEOPS_LEGACY_WEB_URL"),
     ],
 )
-def test_the_legacy_web_client_needs_an_origin_of_its_own(tmp_repo, url, needle):
+def test_the_legacy_web_client_needs_an_origin_or_a_path_of_its_own(tmp_repo, url, needle):
     env, sc = make(tmp_repo, GOOD + LEGACY_PROFILE + f"NEOPS_LEGACY_WEB_URL={url}\n")
     found = problems(env, sc, tmp_repo)
     assert any(needle in p for p in found), found
 
 
-def test_the_legacy_web_client_needs_its_own_hostname_in_shared_host_mode_too(tmp_repo):
-    shared = (
-        GOOD.replace("compose.traefik.yaml", "compose.traefik.yaml:compose.traefik-shared-host.yaml")
-        .replace("https://cms.neops.example.com", "https://neops.example.com")
-        .replace("https://engine.neops.example.com", "https://neops.example.com/engine")
-        .replace("https://workflows.neops.example.com", "https://neops.example.com/workflows")
-    )
-    env, sc = make(tmp_repo, shared + LEGACY_PROFILE + LEGACY_URL)
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://legacy.neops.example.com/legacy",
+        "https://neops.example.com/legacy",
+        "https://neops.example.com/neops/v1",
+    ],
+)
+def test_the_legacy_web_client_may_have_a_path_with_hostname_per_service_routing(tmp_repo, url):
+    """It serves its path itself, so unlike the stripped services it needs no shared-host mode."""
+    env, sc = make(tmp_repo, GOOD + LEGACY_PROFILE + f"NEOPS_LEGACY_WEB_URL={url}\n")
     assert problems(env, sc, tmp_repo) == []
-    env, sc = make(
-        tmp_repo, shared + LEGACY_PROFILE + "NEOPS_LEGACY_WEB_URL=https://neops.example.com/legacy\n"
-    )
-    assert any("must not have a path" in p for p in problems(env, sc, tmp_repo))
+
+
+SHARED_HOST = (
+    GOOD.replace("compose.traefik.yaml", "compose.traefik.yaml:compose.traefik-shared-host.yaml")
+    .replace("https://cms.neops.example.com", "https://neops.example.com")
+    .replace("https://engine.neops.example.com", "https://neops.example.com/engine")
+    .replace("https://workflows.neops.example.com", "https://neops.example.com/workflows")
+)
+
+
+def test_the_legacy_web_client_shares_the_one_url_in_shared_host_mode_under_a_path(tmp_repo):
+    for url in ("https://legacy.neops.example.com", "https://neops.example.com/legacy"):
+        env, sc = make(tmp_repo, SHARED_HOST + LEGACY_PROFILE + f"NEOPS_LEGACY_WEB_URL={url}\n")
+        assert problems(env, sc, tmp_repo) == [], url
+
+
+@pytest.mark.parametrize(
+    ("url", "needle"),
+    [
+        ("https://neops.example.com", "shares the web client's origin and needs a path"),
+        ("https://neops.example.com/workflows", "NEOPS_WORKFLOWS_URL (/workflows) and NEOPS_LEGACY_WEB_URL"),
+        ("https://neops.example.com/engine/legacy", "NEOPS_ENGINE_URL (/engine) and NEOPS_LEGACY_WEB_URL"),
+        ("https://neops.example.com/graphql", "path /graphql is reserved"),
+    ],
+)
+def test_the_legacy_web_path_must_not_collide_in_shared_host_mode(tmp_repo, url, needle):
+    env, sc = make(tmp_repo, SHARED_HOST + LEGACY_PROFILE + f"NEOPS_LEGACY_WEB_URL={url}\n")
+    found = problems(env, sc, tmp_repo)
+    assert any(needle in p for p in found), found
 
 
 def test_a_cms_tasks_env_without_the_legacy_url_upgrades_with_a_warning_only(tmp_repo):

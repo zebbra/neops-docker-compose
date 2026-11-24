@@ -145,6 +145,16 @@ def test_monitor_env_carries_the_path_of_the_workflows_url(tmp_repo):
     assert envfile(paths.generated / "monitor.env") == {"MONITOR_BASE_PATH": "/workflows"}
 
 
+def test_legacy_web_env_carries_the_path_of_the_legacy_url_with_a_trailing_slash(tmp_repo):
+    profile = "COMPOSE_PROFILES=cms-tasks\n"
+    _, paths = run(tmp_repo, HOSTS)
+    assert envfile(paths.generated / "legacy-web.env") == {"FRONTEND_BASE_PATH": "/"}
+    _, paths = run(tmp_repo, HOSTS + profile + "NEOPS_LEGACY_WEB_URL=https://legacy.neops.example.com\n")
+    assert envfile(paths.generated / "legacy-web.env") == {"FRONTEND_BASE_PATH": "/"}
+    _, paths = run(tmp_repo, HOSTS + profile + "NEOPS_LEGACY_WEB_URL=https://neops.example.com/legacy/\n")
+    assert envfile(paths.generated / "legacy-web.env") == {"FRONTEND_BASE_PATH": "/legacy/"}
+
+
 def test_traefik_ports_fragment_publishes_the_monitor_port_only_for_its_own_entrypoint(tmp_repo):
     _, paths = run(tmp_repo, SHARED_PORT + "NEOPS_MONITOR_PORT=9443\n")
     fragment = paths.generated / "traefik" / "ports.yaml"

@@ -233,6 +233,19 @@ def test_the_legacy_web_client_owns_its_hostname_like_the_web_client(tmp_path):
         assert c.services["legacy-web"] == "http://legacy-web:8080"
 
 
+def test_the_legacy_web_client_under_a_path_beats_the_web_catch_all_and_keeps_its_prefix(tmp_path):
+    for text in (HOSTS, SHARED):
+        c = cfg(
+            tmp_path,
+            text + "COMPOSE_PROFILES=cms-tasks\nNEOPS_LEGACY_WEB_URL=https://neops.example.com/legacy\n",
+        )
+        legacy, web = by_name(c)["legacy-web"], by_name(c)["web"]
+        assert legacy.rule == "Host(`neops.example.com`) && PathPrefix(`/legacy`)"
+        assert (legacy.priority, legacy.middlewares) == (10, ())
+        assert legacy.priority > web.priority
+        assert not any("legacy" in name for name in c.middlewares)
+
+
 def test_the_legacy_web_client_is_routed_only_with_its_profile_and_its_url(tmp_path):
     without_profile = cfg(tmp_path, HOSTS + "NEOPS_LEGACY_WEB_URL=https://legacy.neops.example.com\n")
     without_url = cfg(tmp_path, HOSTS + "COMPOSE_PROFILES=cms-tasks\n")

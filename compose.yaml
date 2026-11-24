@@ -356,18 +356,24 @@ services:
     restart: unless-stopped
 
   # The 1.0 web client, for the same deployments that still run the 1.0 task path. It talks to
-  # core's GraphQL only, so it needs an origin of its own (NEOPS_LEGACY_WEB_URL) and no path:
-  # the build loads its assets from the root.
+  # core's GraphQL only, and lives on an origin of its own or under a path of the web client's
+  # (NEOPS_LEGACY_WEB_URL), which the proxy forwards unstripped.
   legacy-web:
     image: *legacy-web-image
     profiles: ["cms-tasks"]
     environment:
       FRONTEND_NEOPS_URL: ${NEOPS_CMS_URL}/graphql
+    env_file:
+      # FRONTEND_BASE_PATH, the path of NEOPS_LEGACY_WEB_URL, derived by ./neops render. Optional
+      # so that an existing deployment's `up` can load this config before render has produced
+      # the file; the image then serves from the root, as before.
+      - path: ./generated/legacy-web.env
+        required: false
     depends_on:
       cms:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080$${FRONTEND_BASE_PATH:-/} >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 6

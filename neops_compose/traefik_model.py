@@ -206,11 +206,14 @@ def _core_routers(layout: _Layout) -> tuple[list[Router], dict[str, dict]]:
 
 def _service_routers(layout: _Layout) -> list[Router]:
     """The optional services, routed only when their overlay or profile put a public URL in
-    .env. The legacy web client owns its whole origin, like the web client: a catch-all."""
+    .env. The legacy web client at the root owns its whole origin, like the web client: a
+    catch-all. Under a path it serves that path itself (FRONTEND_BASE_PATH), so nothing is
+    stripped, and it sits above the web catch-all it may share an origin with."""
+    legacy = layout.urls.get(LEGACY_WEB_URL)
     wanted = (
         ("NEOPS_KEYCLOAK_URL", "keycloak", 10),
         ("NEOPS_GRAFANA_URL", "grafana", 10),
-        (LEGACY_WEB_URL, "legacy-web", 1),
+        (LEGACY_WEB_URL, "legacy-web", 10 if legacy and legacy.path else 1),
     )
     return [
         layout.router(service, layout.urls[key], service, priority)
