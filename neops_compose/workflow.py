@@ -207,7 +207,9 @@ def purge(ctx: Ctx, confirmed: str) -> None:
     for p in (ctx.paths.data, ctx.paths.generated):
         if p.exists():
             shutil.rmtree(p)
-    ctx.log(f"removed {ctx.paths.data} and {ctx.paths.generated}; .env, certs/ and backups/ were kept")
+    ctx.log(
+        f"removed {ctx.paths.data} and {ctx.paths.generated}; .env, certs/ and {ctx.paths.backups} were kept"
+    )
 
 
 def _take_ownership(data: Path, log: Callable[[str], None]) -> None:
@@ -227,7 +229,11 @@ def _verdict(last_up: dict) -> str:
 
 
 def status(ctx: Ctx) -> str:
-    lines = [f"scenario: {' : '.join(ctx.scenario.files)}", f"data: {ctx.paths.data}"]
+    lines = [
+        f"scenario: {' : '.join(ctx.scenario.files)}",
+        f"data: {ctx.paths.data}",
+        f"backups: {ctx.paths.backups}",
+    ]
     running = images_by_service(ctx.compose)
     lines.append("images (pinned):")
     lines += [f"  {img}" for img in ctx.compose.images()]

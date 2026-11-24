@@ -16,3 +16,7 @@ services:
   monitor:
     ports:
       - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_MONITOR_PORT:-3031}:80"
+  legacy-web:
+    # cms-tasks profile only; compose drops the mapping while the service is off.
+    ports:
+      - "${NEOPS_BIND_ADDRESS:-127.0.0.1}:${NEOPS_LEGACY_WEB_PORT:-8081}:8080"

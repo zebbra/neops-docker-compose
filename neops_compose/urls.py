@@ -15,6 +15,7 @@ _PATH_RE = re.compile(r"^(/[A-Za-z0-9._~-]+)*$")
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 TRUSTED_PROXY_IPS = "NEOPS_TRUSTED_PROXY_IPS"
 BASE_URLS = ("NEOPS_WEB_URL", "NEOPS_CMS_URL", "NEOPS_ENGINE_URL", "NEOPS_WORKFLOWS_URL")
+LEGACY_WEB_URL = "NEOPS_LEGACY_WEB_URL"
 
 
 class BadUrl(ValueError):
@@ -75,13 +76,17 @@ def public_urls(env: Env, scenario: Scenario) -> dict[str, PublicUrl]:
     Traefik routers, doctor's probes and the hostnames the self-signed certificate covers.
 
     Keycloak arrives with its overlay. Grafana only when the operator also routed it: its
-    overlay otherwise leaves it on loopback with no public name at all.
+    overlay otherwise leaves it on loopback with no public name at all. The legacy web client
+    only while the cms-tasks profile runs it and the operator named it: optional, so a .env
+    from before it existed still passes check.
     """
     keys = [*BASE_URLS]
     if scenario.keycloak:
         keys.append("NEOPS_KEYCLOAK_URL")
     if scenario.runs_grafana and env.is_set("NEOPS_GRAFANA_URL"):
         keys.append("NEOPS_GRAFANA_URL")
+    if scenario.cms_tasks and env.is_set(LEGACY_WEB_URL):
+        keys.append(LEGACY_WEB_URL)
     return {key: PublicUrl.parse(env.require(key)) for key in keys}
 
 

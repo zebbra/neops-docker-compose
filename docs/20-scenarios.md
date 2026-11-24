@@ -32,7 +32,15 @@ default: a 2.0 deployment runs its automation through the engine and the worker 
 writes the search index itself without them. A deployment that still runs 1.0 tasks or
 cron jobs adds `COMPOSE_PROFILES=cms-tasks` to `.env`, which starts both with the next
 `./neops up`; removing the line and running `./neops down` then `./neops up` stops them again.
-`examples/local-legacy.env` is `examples/local.env` with that line: a task executed from the
+The profile also starts `legacy-web`, the 1.0 web client. It is reachable the way the web client
+is: with `compose.expose.yaml` on its own loopback port, `NEOPS_LEGACY_WEB_PORT` (8081), and
+behind the bundled Traefik on `NEOPS_LEGACY_WEB_URL`, a hostname of its own (routed, probed by
+`./neops doctor` and carried by the self-signed certificate like the others). It always needs an
+origin of its own, also in shared-host mode, because it serves from the root; it talks to core
+at `NEOPS_CMS_URL`, which is why the profile also turns on core's CORS. Behind Traefik without
+`NEOPS_LEGACY_WEB_URL` it runs unrouted and `./neops check` warns.
+`examples/local-legacy.env` is `examples/local.env` with that block (the 1.0 web client on
+`http://localhost:8081`): a task executed from the
 CMS is queued on Redis, `cms-worker` runs its provider and writes the result back, and
 `cms-beat` fires the cron jobs. Without the profile such an execution stays `PENDING` forever.
 On a neops-core that repairs failed search index writes with a sweep, `cms-beat` also has

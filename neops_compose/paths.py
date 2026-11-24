@@ -10,12 +10,14 @@ from neops_compose.env import Env
 class Paths:
     repo: Path
     data: Path
+    # NEOPS_BACKUP_DIR; None is the repo's backups/, the only place before the key existed.
+    backup_root: Path | None = None
 
     @classmethod
     def for_repo(cls, repo: Path, env: Env) -> Paths:
-        raw = env.get("NEOPS_DATA_DIR", "./data")
-        data = (repo / Path(raw)).resolve()
-        return cls(repo=repo.resolve(), data=data)
+        data = (repo / Path(env.get("NEOPS_DATA_DIR", "./data"))).resolve()
+        backups = (repo / Path(env.get("NEOPS_BACKUP_DIR", "./backups"))).resolve()
+        return cls(repo=repo.resolve(), data=data, backup_root=backups)
 
     @property
     def env_file(self) -> Path:
@@ -27,7 +29,8 @@ class Paths:
 
     @property
     def backups(self) -> Path:
-        return self.repo / "backups"
+        """./neops backup's archives and the pre-migrate snapshots of .env and the state file."""
+        return self.backup_root or self.repo / "backups"
 
     @property
     def certs(self) -> Path:

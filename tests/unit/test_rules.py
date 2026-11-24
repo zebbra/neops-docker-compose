@@ -573,3 +573,122 @@ def test_a_listed_override_file_does_not_warn(tmp_repo):
     env, sc = make(tmp_repo, GOOD.replace("tls-files.yaml\n", "tls-files.yaml:compose.override.yaml\n", 1))
     assert problems(env, sc, tmp_repo) == []
     assert warnings(env, sc, tmp_repo) == []
+
+
+LEGACY_PROFILE = "COMPOSE_PROFILES=cms-tasks\n"
+LEGACY_URL = "NEOPS_LEGACY_WEB_URL=https://legacy.neops.example.com\n"
+
+
+def test_the_legacy_web_client_on_its_own_hostname_passes(tmp_repo):
+    env, sc = make(tmp_repo, GOOD + LEGACY_PROFILE + LEGACY_URL)
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == []
+
+
+@pytest.mark.parametrize(
+    ("url", "needle"),
+    [
+        ("https://legacy.neops.example.com/legacy", "NEOPS_LEGACY_WEB_URL must not have a path"),
+        ("https://neops.example.com", "NEOPS_LEGACY_WEB_URL shares its origin with NEOPS_WEB_URL"),
+        ("https://cms.neops.example.com", "NEOPS_LEGACY_WEB_URL shares its origin with NEOPS_CMS_URL"),
+        ("http://legacy.neops.example.com", "NEOPS_LEGACY_WEB_URL must use https://"),
+        ("https://legacy.neops.example.com:8444", "NEOPS_LEGACY_WEB_URL must use port NEOPS_HTTPS_PORT"),
+        ("not a url", "NEOPS_LEGACY_WEB_URL"),
+    ],
+)
+def test_the_legacy_web_client_needs_an_origin_of_its_own(tmp_repo, url, needle):
+    env, sc = make(tmp_repo, GOOD + LEGACY_PROFILE + f"NEOPS_LEGACY_WEB_URL={url}\n")
+    found = problems(env, sc, tmp_repo)
+    assert any(needle in p for p in found), found
+
+
+def test_the_legacy_web_client_needs_its_own_hostname_in_shared_host_mode_too(tmp_repo):
+    shared = (
+        GOOD.replace("compose.traefik.yaml", "compose.traefik.yaml:compose.traefik-shared-host.yaml")
+        .replace("https://cms.neops.example.com", "https://neops.example.com")
+        .replace("https://engine.neops.example.com", "https://neops.example.com/engine")
+        .replace("https://workflows.neops.example.com", "https://neops.example.com/workflows")
+    )
+    env, sc = make(tmp_repo, shared + LEGACY_PROFILE + LEGACY_URL)
+    assert problems(env, sc, tmp_repo) == []
+    env, sc = make(
+        tmp_repo, shared + LEGACY_PROFILE + "NEOPS_LEGACY_WEB_URL=https://neops.example.com/legacy\n"
+    )
+    assert any("must not have a path" in p for p in problems(env, sc, tmp_repo))
+
+
+def test_a_cms_tasks_env_without_the_legacy_url_upgrades_with_a_warning_only(tmp_repo):
+    """The previous release's cms-tasks .env has no NEOPS_LEGACY_WEB_URL: check must pass."""
+    env, sc = make(tmp_repo, GOOD + LEGACY_PROFILE)
+    assert problems(env, sc, tmp_repo) == []
+    assert any("NEOPS_LEGACY_WEB_URL" in w for w in warnings(env, sc, tmp_repo))
+
+
+def test_the_legacy_url_without_the_profile_is_a_warning(tmp_repo):
+    env, sc = make(tmp_repo, GOOD + LEGACY_URL)
+    assert problems(env, sc, tmp_repo) == []
+    assert any("no cms-tasks" in w for w in warnings(env, sc, tmp_repo))
+
+
+def test_expose_mode_needs_no_legacy_url(tmp_repo):
+    expose = GOOD.replace("compose.traefik.yaml:compose.tls-files.yaml", "compose.expose.yaml")
+    env, sc = make(tmp_repo, expose + LEGACY_PROFILE)
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == []
+
+
+@pytest.mark.parametrize("key", ["NEOPS_CMS_REPLICAS", "NEOPS_WORKER_REPLICAS", "NEOPS_CMS_WORKER_REPLICAS"])
+@pytest.mark.parametrize("value", ["0", "-1", "two", "1.5"])
+def test_replicas_must_be_a_whole_number_of_at_least_one(tmp_repo, key, value):
+    env, sc = make(tmp_repo, GOOD + f"{key}={value}\n")
+    assert f"{key} must be a whole number of at least 1" in problems(env, sc, tmp_repo)
+
+
+def test_replicas_default_to_one_and_scale_behind_traefik(tmp_repo):
+    env, sc = make(
+        tmp_repo, GOOD + "NEOPS_CMS_REPLICAS=\nNEOPS_WORKER_REPLICAS=3\nNEOPS_CMS_WORKER_REPLICAS=4\n"
+    )
+    assert problems(env, sc, tmp_repo) == []
+    env, sc = make(tmp_repo, GOOD + "NEOPS_CMS_REPLICAS=2\n")
+    assert problems(env, sc, tmp_repo) == []
+    assert warnings(env, sc, tmp_repo) == []
+
+
+def test_more_than_one_cms_needs_traefik(tmp_repo):
+    expose = GOOD.replace("compose.traefik.yaml:compose.tls-files.yaml", "compose.expose.yaml")
+    env, sc = make(tmp_repo, expose + "NEOPS_CMS_REPLICAS=2\n")
+    assert any(
+        "NEOPS_CMS_REPLICAS above 1 needs compose.traefik.yaml" in p for p in problems(env, sc, tmp_repo)
+    )
+    env, sc = make(tmp_repo, expose + "NEOPS_WORKER_REPLICAS=2\nNEOPS_CMS_WORKER_REPLICAS=2\n")
+    assert problems(env, sc, tmp_repo) == []
+
+
+def test_three_cms_replicas_warn_about_postgres_connections(tmp_repo):
+    env, sc = make(tmp_repo, GOOD + "NEOPS_CMS_REPLICAS=3\n")
+    assert problems(env, sc, tmp_repo) == []
+    assert any("too many clients" in w for w in warnings(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "lots", "1e4"])
+def test_fields_limit_must_be_a_whole_number(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT={value}\n")
+    assert any("ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT must be" in p for p in problems(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize("value", ["", "10000", "30000"])
+def test_fields_limit_defaults_and_accepts_a_count(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"ELASTICSEARCH_DSL_INDEX_FIELDS_LIMIT={value}\n")
+    assert problems(env, sc, tmp_repo) == []
+
+
+@pytest.mark.parametrize("value", ["Flase", "maybe", "2"])
+def test_sync_without_schema_must_be_a_boolean(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"NEOPS_ELASTIC_SYNC_WITHOUT_SCHEMA={value}\n")
+    assert any("NEOPS_ELASTIC_SYNC_WITHOUT_SCHEMA must be" in p for p in problems(env, sc, tmp_repo))
+
+
+@pytest.mark.parametrize("value", ["", "True", "False", "false", "0", "yes"])
+def test_sync_without_schema_accepts_booleans(tmp_repo, value):
+    env, sc = make(tmp_repo, GOOD + f"NEOPS_ELASTIC_SYNC_WITHOUT_SCHEMA={value}\n")
+    assert problems(env, sc, tmp_repo) == []

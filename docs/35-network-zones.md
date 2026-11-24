@@ -62,7 +62,9 @@ services:
 ```
 
 `worker-2` is the second central worker and inherits `default`. Give every worker its own
-`WORKER_NAME`. Another zone's workers do not belong on the compose host: they share its routing
+`WORKER_NAME`. For more identical central workers, `NEOPS_WORKER_REPLICAS` is the shorter way: it
+scales `worker`, every replica under the same name (see
+[Scaling](30-operations.md#scaling)); an extended `worker-2` inherits that count too. Another zone's workers do not belong on the compose host: they share its routing
 table with the default workers, so a zone whose addresses overlap the default network's would send
 its devices' credentials to whatever answers there. Run them inside the zone's own network, as
 described under [Workers at another site](#workers-at-another-site). A worker that serves several

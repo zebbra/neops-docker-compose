@@ -749,3 +749,12 @@ def test_a_compose_failure_or_timeout_is_a_warning():
 def test_run_reports_the_index_sync(tmp_path, monkeypatch):
     probes = _run_with(tmp_path, monkeypatch, "compose.yaml:compose.traefik.yaml")
     assert [p.detail for p in probes if p.name == doctor.INDEX_SYNC_PROBE] == [doctor.INDEX_SYNC_UNAVAILABLE]
+
+
+def test_the_legacy_web_client_is_probed_when_it_has_a_public_url():
+    legacy = urls() | {"NEOPS_LEGACY_WEB_URL": PublicUrl.parse("https://legacy.neops.example.com")}
+    http = healthy({"/": (200, '<html><script src="/injectEnv.js"></script><app-root></app-root>')})
+    probes = doctor.http_probes(legacy, http)
+    assert [p for p in probes if p.name == "legacy web client"][0].ok
+    assert ("https://legacy.neops.example.com/", "GET", {}) in http.calls
+    assert "legacy web client" not in [p.name for p in doctor.http_probes(urls(), healthy())]

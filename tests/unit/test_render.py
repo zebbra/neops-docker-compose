@@ -343,3 +343,9 @@ def test_the_previous_release_s_metrics_only_file_list_gets_the_grafana_files(tm
     starts Grafana with the same mounts."""
     _, paths = run(tmp_repo, GRAFANA.replace("compose.grafana.yaml", "compose.metrics.yaml"))
     assert grafana_files(paths)[0]["datasources"] == []
+
+
+def test_the_cms_tasks_profile_opens_cors_for_the_legacy_web_client(tmp_repo):
+    """The legacy web client never shares the CMS's origin, even where the web client does."""
+    _, paths = run(tmp_repo, EXPOSE_SHARED + "COMPOSE_PROFILES=cms-tasks\n")
+    assert envfile(paths.generated / "cms.env")["CORS_ORIGIN_ALLOW_ALL"] == "True"
